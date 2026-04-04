@@ -1,0 +1,12 @@
+com/dronefly/app/App.class
+com/cySdkyc/clx/Helper.class
+com/dronefly/app/dji/DJIHelper.class
+com/dronefly/app/dji/DJIHelper$1.class
+com/dronefly/app/dji/DJIHelper$ConnectionListener.class
+dji/sdk/sdkmanager/DJISDKManager.class
+dji/sdk/sdkmanager/DJISDKManager$SDKManagerCallback.class
+dji/common/error/DJIError.class
+dji/common/error/DJISDKError.class
+dji/sdk/base/BaseProduct.class
+dji/sdk/base/BaseComponent.class
+dji/sdk/sdkmanager/DJISDKInitEvent.class

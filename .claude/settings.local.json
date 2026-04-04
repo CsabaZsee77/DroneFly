@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:central.sonatype.com)",
+      "WebFetch(domain:repo1.maven.org)",
+      "WebFetch(domain:developer.dji.com)",
+      "WebFetch(domain:search.maven.org)",
+      "Bash(dir \"C:\\\\Users\\\\zsigm\\\\OneDrive\\\\Dokumentumok\\\\GitHub\\\\DroneFly\\\\sampledocs\")",
+      "Bash(dir \"C:\\\\Users\\\\zsigm\\\\OneDrive\\\\Dokumentumok\\\\GitHub\\\\DroneFly\\\\docs\")",
+      "Bash(\"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" devices:*)",
+      "Bash(\"/c/Users/zsigm/AppData/Local/Android/Sdk/platform-tools/adb.exe\" devices:*)",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(\"/c/Users/zsigm/.gradle/wrapper/dists/gradle-8.6-bin/afr5mpiioh2wthjmwnkmdsd5w/gradle-8.6/bin/gradle\" assembleDebug)",
+      "Read(//c/Program Files/Android/Android Studio/jbr/bin/**)",
+      "Read(//c/Users/zsigm/AppData/Local/Programs/Android Studio/jbr/**)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" \"/c/Users/zsigm/.gradle/wrapper/dists/gradle-8.6-bin/afr5mpiioh2wthjmwnkmdsd5w/gradle-8.6/bin/gradle\" assembleDebug)",
+      "Bash(\"/c/Users/zsigm/AppData/Local/Android/Sdk/platform-tools/adb.exe\" install:*)",
+      "Bash(\"/c/Users/zsigm/AppData/Local/Android/Sdk/platform-tools/adb.exe\" shell:*)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" \"/c/Users/zsigm/.gradle/wrapper/dists/gradle-8.6-bin/afr5mpiioh2wthjmwnkmdsd5w/gradle-8.6/bin/gradle\" clean assembleDebug)",
+      "Bash('/c/Program Files/Android/Android Studio/jbr/bin/java' -jar /c/Users/zsigm/.gradle/wrapper/dists/gradle-8.6-bin/afr5mpiioh2wthjmwnkmdsd5w/gradle-8.6/lib/plugins/android-tools-9.1.0.jar)",
+      "Read(//c/Users/zsigm/AppData/Local/Android/Sdk/build-tools//**)",
+      "Read(//tmp/**)",
+      "Bash(/c/Users/zsigm/AppData/Local/Android/Sdk/build-tools/34.0.0/dexdump.exe classes4.dex)",
+      "WebSearch",
+      "WebFetch(domain:blog.quarkslab.com)",
+      "Bash(unzip -l classes.jar)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" \"/c/Users/zsigm/.gradle/wrapper/dists/gradle-8.6-bin/afr5mpiioh2wthjmwnkmdsd5w/gradle-8.6/bin/gradle\" clean)",
+      "Bash(gh repo:*)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Users/zsigm/AppData/Local/Programs/**)"
+    ]
+  }
+}

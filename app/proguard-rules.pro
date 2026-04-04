@@ -1,0 +1,6 @@
+-keepattributes Exceptions,InnerClasses,Signature,Deprecated,SourceFile,LineNumberTable,*Annotation*,EnclosingMethod
+-keep class dji.** { *; }
+-keep class com.dji.** { *; }
+-dontwarn dji.**
+-dontwarn com.dji.**
+-keep class org.osmdroid.** { *; }

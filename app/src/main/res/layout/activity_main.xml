@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="24dp"
+    android:background="#1a1a2e">
+
+    <TextView
+        android:text="DroneFly"
+        android:textSize="32sp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView
+        android:text="Mezőgazdasági felmérés tervező"
+        android:textSize="14sp"
+        android:textColor="#AAAAAA"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="40dp"/>
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:text="Inicializálás..."
+        android:textSize="14sp"
+        android:textColor="#FFAA00"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView
+        android:id="@+id/tvDroneInfo"
+        android:text=""
+        android:textSize="16sp"
+        android:textColor="#00FF88"
+        android:textStyle="bold"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="40dp"/>
+
+    <Button
+        android:id="@+id/btnPlanMission"
+        android:text="Misszió tervezése"
+        android:layout_width="240dp"
+        android:layout_height="56dp"
+        android:textSize="16sp"
+        android:backgroundTint="#FF6600"/>
+
+</LinearLayout>
