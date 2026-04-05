@@ -41,6 +41,7 @@ import com.dronefly.app.mission.ElevationProvider;
 import com.dronefly.app.mission.GridMissionGenerator;
 import com.dronefly.app.mission.GsdCalculator;
 import com.dronefly.app.mission.MissionExporter;
+import com.dronefly.app.mission.ProjectManager;
 import com.dronefly.app.model.DroneProfile;
 import com.dronefly.app.model.DroneProfiles;
 import com.dronefly.app.model.MissionConfig;
@@ -114,6 +115,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private final List<Polygon>      obstacleOverlays = new ArrayList<>();
     private boolean obstacleMode = false;
     private Button  btnObstacle, btnClearObstacles;
+
+    // Projekt mentés / betöltés
+    private Button btnSaveProject, btnLoadProject;
+    private String lastLoadedProjectName = null; // betöltött terv neve (előtöltés a mentés dialóghoz)
 
     // Státuszsáv
     private TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt;
@@ -255,6 +260,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbAngle.setOnSeekBarChangeListener(listener);
         sbOffset.setOnSeekBarChangeListener(listener);
 
+        btnSaveProject    = findViewById(R.id.btnSaveProject);
+        btnLoadProject    = findViewById(R.id.btnLoadProject);
         btnUndoPoint      = findViewById(R.id.btnUndoPoint);
         btnObstacle       = findViewById(R.id.btnObstacle);
         btnClearObstacles = findViewById(R.id.btnClearObstacles);
@@ -302,6 +309,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnPauseMission.setOnClickListener(v -> togglePauseMission());
         btnStopMission.setOnClickListener(v -> confirmStopMission());
 
+        btnSaveProject.setOnClickListener(v -> showSaveProjectDialog());
+        btnLoadProject.setOnClickListener(v -> showLoadProjectDialog());
         btnUndoPoint.setOnClickListener(v -> removeLastPolygonPoint());
         btnObstacle.setOnClickListener(v -> toggleObstacleMode());
         btnClearObstacles.setOnClickListener(v -> clearAllObstacles());
@@ -849,6 +858,217 @@ public class MissionPlannerActivity extends AppCompatActivity {
             return;
         }
         removePolygonPoint(polygonPoints.size() - 1);
+    }
+
+    // ── Projekt mentés / betöltés ─────────────────────────────────────────
+
+    private void showSaveProjectDialog() {
+        final int pad = (int) (getResources().getDisplayMetrics().density * 16);
+        final EditText etName = new EditText(this);
+        etName.setInputType(InputType.TYPE_CLASS_TEXT);
+        etName.setTextColor(0xFF111111);
+        etName.setBackgroundColor(0xFFEEEEEE);
+        etName.setPadding(pad, pad / 2, pad, pad / 2);
+        etName.setSelectAllOnFocus(true);
+        // Alapértelmezett név: előző betöltött terv neve vagy dátum
+        String defaultName = (lastLoadedProjectName != null && !lastLoadedProjectName.isEmpty())
+            ? lastLoadedProjectName
+            : new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                .format(new java.util.Date());
+        etName.setText(defaultName);
+
+        FrameLayout container = new FrameLayout(this);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(pad, pad / 2, pad, 0);
+        etName.setLayoutParams(lp);
+        container.addView(etName);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Repülési terv mentése")
+            .setMessage("Add meg a terv nevét:")
+            .setView(container)
+            .setPositiveButton("Mentés", new android.content.DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(android.content.DialogInterface dialog, int which) {
+                    String name = etName.getText().toString().trim();
+                    if (name.isEmpty()) {
+                        Toast.makeText(MissionPlannerActivity.this,
+                            "A terv neve nem lehet üres!", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (polygonPoints.isEmpty()) {
+                        Toast.makeText(MissionPlannerActivity.this,
+                            "Nincs rajzolt terület — nincs mit menteni!", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    saveProject(name);
+                }
+            })
+            .setNegativeButton("Mégse", null)
+            .show();
+    }
+
+    private void saveProject(String name) {
+        try {
+            MissionConfig config = buildConfig();
+            File saved = ProjectManager.saveProject(
+                this, name, polygonPoints, startPoint, config);
+            lastLoadedProjectName = name;
+            Toast.makeText(this,
+                "Mentve: " + saved.getName(), Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this,
+                "Mentési hiba: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void showLoadProjectDialog() {
+        final List<File> files = ProjectManager.listProjects(this);
+        if (files.isEmpty()) {
+            Toast.makeText(this,
+                "Nincs elmentett repülési terv.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Fájlnevek megjelenítéshez (kiterjesztés nélkül)
+        final String[] names = new String[files.size()];
+        for (int i = 0; i < files.size(); i++) {
+            String fn = files.get(i).getName()
+                .replace(ProjectManager.FILE_EXT, "")
+                .replace('_', ' ');
+            // Utolsó módosítás dátuma
+            String date = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",
+                java.util.Locale.getDefault())
+                .format(new java.util.Date(files.get(i).lastModified()));
+            names[i] = fn + "\n" + date;
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Repülési terv betöltése")
+            .setItems(names, new android.content.DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(android.content.DialogInterface dialog, int which) {
+                    confirmLoadProject(files.get(which));
+                }
+            })
+            .setNegativeButton("Mégse", null)
+            .show();
+    }
+
+    private void confirmLoadProject(final File file) {
+        // Ha van aktuális terv, figyelmeztetés
+        if (!polygonPoints.isEmpty()) {
+            new AlertDialog.Builder(this)
+                .setTitle("Terv betöltése")
+                .setMessage("Az aktuális rajzolt terület elvész. Biztosan betöltöd?")
+                .setPositiveButton("Betöltés", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface dialog, int which) {
+                        loadProject(file);
+                    }
+                })
+                .setNegativeButton("Mégse", null)
+                .show();
+        } else {
+            loadProject(file);
+        }
+    }
+
+    private void loadProject(File file) {
+        try {
+            ProjectManager.ProjectData data = ProjectManager.loadProject(file);
+
+            // Töröljük a jelenlegi állapotot
+            clearAll();
+
+            // ── Polygon visszaállítása ────────────────────────────────────
+            for (GeoPoint p : data.polygon) {
+                addPolygonPoint(p);
+            }
+
+            // ── Start pont visszaállítása ─────────────────────────────────
+            if (data.startPoint != null) {
+                setStartPoint(data.startPoint);
+            }
+
+            // ── Beállítások visszaállítása a SeekBar-okra ─────────────────
+            restoreConfigToUI(data);
+
+            // ── Akadályok visszaállítása ──────────────────────────────────
+            for (ObstacleData obs : data.obstacles) {
+                addObstacle(new GeoPoint(obs.latitude, obs.longitude),
+                    obs.radiusM, obs.heightM);
+            }
+
+            // ── Térkép középpontja a polygon körülhatárolt területére ─────
+            if (!data.polygon.isEmpty()) {
+                GeoPoint center = data.polygon.get(0);
+                mapView.getController().animateTo(center);
+            }
+
+            lastLoadedProjectName = data.name;
+
+            // Ha van elég pont, automatikusan generáljuk
+            if (polygonPoints.size() >= 3) {
+                generateMission();
+            }
+
+            Toast.makeText(this, "Betöltve: " + data.name, Toast.LENGTH_SHORT).show();
+
+        } catch (Exception e) {
+            Toast.makeText(this,
+                "Betöltési hiba: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Seekbar-ok és switch-ek visszaállítása a betöltött projekt adataiból.
+     * Fordított mapping (buildConfig() inverze).
+     */
+    private void restoreConfigToUI(ProjectManager.ProjectData data) {
+        // gsdCm → sbGsd: progress = round((gsd - 0.5) / 0.1)
+        int gsdProg = (int) Math.round((data.gsdCm - 0.5) / 0.1);
+        sbGsd.setProgress(Math.max(0, Math.min(sbGsd.getMax(), gsdProg)));
+
+        // sidelapPercent → sbSidelap: progress = sidelap - 50
+        int sidelapProg = (int) Math.round(data.sidelapPercent - 50.0);
+        sbSidelap.setProgress(Math.max(0, Math.min(sbSidelap.getMax(), sidelapProg)));
+
+        // frontlapPercent → sbFrontlap: progress = frontlap - 60
+        int frontlapProg = (int) Math.round(data.frontlapPercent - 60.0);
+        sbFrontlap.setProgress(Math.max(0, Math.min(sbFrontlap.getMax(), frontlapProg)));
+
+        // speedMs → sbSpeed: progress = round(speed - 3)
+        int speedProg = Math.round(data.speedMs - 3.0f);
+        sbSpeed.setProgress(Math.max(0, Math.min(sbSpeed.getMax(), speedProg)));
+
+        // flightAngleDeg → sbAngle
+        int angleProg = (int) Math.round(data.flightAngleDeg);
+        sbAngle.setProgress(Math.max(0, Math.min(sbAngle.getMax(), angleProg)));
+
+        // offsetM → sbOffset
+        if (sbOffset != null) {
+            int offsetProg = (int) Math.round(data.offsetM);
+            sbOffset.setProgress(Math.max(0, Math.min(sbOffset.getMax(), offsetProg)));
+        }
+
+        // terrainFollowing → switchTerrain
+        if (switchTerrain != null) {
+            switchTerrain.setChecked(data.terrainFollowing);
+        }
+
+        // droneProfile → spinnerDrone (name alapján keresés)
+        if (!data.droneProfileName.isEmpty()) {
+            for (int i = 0; i < DroneProfiles.ALL.size(); i++) {
+                if (DroneProfiles.ALL.get(i).name.equals(data.droneProfileName)) {
+                    spinnerDrone.setSelection(i);
+                    break;
+                }
+            }
+        }
+
+        updateLabels();
     }
 
     // ── Akadály kezelés ───────────────────────────────────────────────────

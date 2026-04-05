@@ -2,9 +2,10 @@
 
 **Modul:** M03
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.0.0
+**Verzió:** v1.3.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.3.0)
 
 ---
 
@@ -12,10 +13,116 @@
 
 | Fájl | Szerepkör | Státusz |
 |------|-----------|---------|
+| `mission/ProjectManager.java` | JSON projekt mentés / betöltés | ✅ Implementálva |
 | `mission/MissionExporter.java` | Litchi CSV és KMZ generálás | ✅ Implementálva |
 | `mission/CsvMissionParser.java` | Litchi CSV beolvasás | ✅ Implementálva |
 | `res/xml/file_paths.xml` | FileProvider elérési út konfiguráció | ✅ Implementálva |
 | `AndroidManifest.xml` | FileProvider provider deklaráció | ✅ Implementálva |
+
+---
+
+## ProjectManager — teljes API
+
+```java
+public class ProjectManager {
+
+    public static final String FILE_EXT     = ".dronefly.json";
+    public static final String MISSIONS_DIR = "missions";
+
+    /**
+     * Projekt könyvtár: <external files>/missions/
+     * Automatikusan létrehozza, ha még nem létezik.
+     */
+    public static File getProjectsDir(Context ctx) { ... }
+
+    /**
+     * Repülési tervet ment JSON fájlba.
+     * Fájlnév: sanitizeFilename(name) + ".dronefly.json"
+     * Tartalom: version, name, savedAt, polygon, startPoint?, config, obstacles
+     * @return a létrehozott fájl
+     */
+    public static File saveProject(Context ctx,
+                                   String name,
+                                   List<GeoPoint> polygon,
+                                   GeoPoint startPoint,      // null ha nincs
+                                   MissionConfig config) throws Exception { ... }
+
+    /**
+     * Visszaolvas egy .dronefly.json fájlt.
+     * @return ProjectData (összes mező, obstacles lista)
+     */
+    public static ProjectData loadProject(File file) throws Exception { ... }
+
+    /**
+     * Összes elmentett projekt listázása (legújabb elöl).
+     * Bubble sort — API 22: lambda/Comparator.comparing nem elérhető.
+     */
+    public static List<File> listProjects(Context ctx) { ... }
+
+    /** Fájlnévben nem megengedett karakterek cseréje. */
+    private static String sanitizeFilename(String name) {
+        return name.trim().replace(' ', '_')
+                   .replaceAll("[/\\\\:*?\"<>|]", "_");
+    }
+}
+```
+
+### ProjectData adatstruktúra
+
+```java
+public static class ProjectData {
+    public String         name;            // terv neve
+    public List<GeoPoint> polygon;         // polygon csúcsai
+    public GeoPoint       startPoint;      // null ha nincs mentve
+    // config mezők (MissionConfig-ból kiemelve):
+    public double  gsdCm;
+    public double  sidelapPercent;
+    public double  frontlapPercent;
+    public float   speedMs;
+    public double  flightAngleDeg;
+    public double  offsetM;
+    public boolean returnHome;
+    public boolean terrainFollowing;
+    public String  droneProfileName;       // DroneProfile.name alapján keresés
+    // akadályok:
+    public List<ObstacleData> obstacles;
+}
+```
+
+### JSON formátum (v1)
+
+```json
+{
+  "version": 1,
+  "name": "Északi tábla",
+  "savedAt": "2026-04-05T14:30:00",
+  "polygon": [
+    {"lat": 47.5123, "lon": 19.0345},
+    {"lat": 47.5134, "lon": 19.0378},
+    {"lat": 47.5112, "lon": 19.0389}
+  ],
+  "startPoint": {"lat": 47.5110, "lon": 19.0330},
+  "config": {
+    "gsdCm": 2.5,
+    "sidelapPercent": 75.0,
+    "frontlapPercent": 80.0,
+    "speedMs": 7.0,
+    "flightAngleDeg": 0.0,
+    "offsetM": 5.0,
+    "returnHome": true,
+    "terrainFollowing": false,
+    "droneProfileName": "Phantom 4 Pro v1"
+  },
+  "obstacles": [
+    {"lat": 47.5128, "lon": 19.0360, "radiusM": 20.0, "heightM": 15.0}
+  ]
+}
+```
+
+**Fájlelérési út Crystal Sky-on:**
+```
+/sdcard/Android/data/com.dronefly.app/files/missions/<névvel>.dronefly.json
+```
 
 ---
 

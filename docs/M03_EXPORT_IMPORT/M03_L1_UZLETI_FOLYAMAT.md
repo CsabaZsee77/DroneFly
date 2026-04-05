@@ -2,16 +2,29 @@
 
 **Modul:** M03
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.0.0
+**Verzió:** v1.3.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.3.0)
 
 ---
 
 ## 1. Modul célja
 
-Az M03 modul a DroneFly app és a külső szoftverek (Litchi, DJI Pilot) közötti
-adatcserét valósítja meg:
+Az M03 modul kétféle adatkezelési igényt lát el:
+
+### 1a. Projekt mentés / betöltés (offline, belső)
+
+Az app saját `.dronefly.json` formátumban teljes projektet ment:
+- Poligon csúcsai, start pont
+- Összes beállítás (GSD, sidelap, frontlap, sebesség, szög, offset, domborzatkövetés, drón profil)
+- Akadályok listája (lat, lon, sugár, magasság)
+
+A waypontok **nem** kerülnek mentésre — betöltés után az app automatikusan újragenerálja.
+
+### 1b. Külső formátum export / import (CSV, KMZ)
+
+A DroneFly app és külső szoftverek (Litchi, DJI Pilot) közötti adatcsere:
 
 **Export:**
 - **Litchi CSV** — 48 oszlopos Litchi Mission Hub kompatibilis formátum,
@@ -22,6 +35,10 @@ adatcserét valósítja meg:
 **Import:**
 - **Litchi CSV** — a webes repüléstervező appból exportált missziók
   beolvasása, megjelenítése és feltöltése a drónra
+
+> **Fontos különbség:** A CSV/KMZ export csak waypontokat tartalmaz (nem a poligont
+> és a beállításokat), ezért szerkesztésre nem alkalmas. A `projekt mentés` (JSON)
+> tartalmazza az összes adatot és teljes mértékben újraszerkeszthető.
 
 ---
 
@@ -117,7 +134,81 @@ Toast: "X waypoint importálva"
 
 ---
 
-## 5. Export fájlok elérési útja
+## 5. Projekt mentés / betöltés folyamat
+
+### Mentés
+
+```
+"Terv mentése" gomb megnyomva
+      │
+      ▼
+AlertDialog: névbeviteli EditText
+  - Alapértelmezett: előző betöltött terv neve, vagy aktuális dátum
+  - setSelectAllOnFocus(true): egyszeri érintéssel felülírható
+      │
+      ▼
+polygonPoints üres?
+  │ IGEN → Toast: "Nincs rajzolt terület — nincs mit menteni!"
+  │ NEM
+  ▼
+ProjectManager.saveProject(ctx, name, polygon, startPoint, config)
+  - JSON összeállítása (version, name, savedAt, polygon, startPoint, config, obstacles)
+  - Fájlnév: name.replace(' ','_').replaceAll("[/\\:*?\"<>|]", "_") + ".dronefly.json"
+  - Írás: <external files>/missions/<fájlnév>
+      │
+      ▼
+Toast: "Mentve: <fájlnév>"
+lastLoadedProjectName = name
+```
+
+### Betöltés
+
+```
+"Terv betöltése" gomb megnyomva
+      │
+      ▼
+ProjectManager.listProjects(ctx) → List<File> (legújabb elöl, bubble sort)
+  Üres lista? → Toast: "Nincs elmentett repülési terv."
+      │
+      ▼
+AlertDialog fájllista:
+  - Megjelenítés: "terv neve\nyyyy-MM-dd HH:mm" soronként
+  - Kiválaszt egyet
+      │
+      ▼ (ha polygonPoints nem üres)
+Megerősítő dialog: "Az aktuális rajzolt terület elvész. Biztosan betöltöd?"
+      │
+      ▼
+clearAll() → minden overlay, marker, lista törlése
+      │
+      ▼
+ProjectManager.loadProject(file) → ProjectData
+  - polygon → addPolygonPoint() minden csúcsra
+  - startPoint → setStartPoint() ha nem null
+  - config mezők → restoreConfigToUI() (seekbar fordított mapping)
+  - obstacles → addObstacle() minden akadályra
+      │
+      ▼
+polygonPoints.size() >= 3 → generateMission() automatikus generálás
+mapView.animateTo(polygon[0]) → térkép a betöltött területre ugrik
+Toast: "Betöltve: <terv neve>"
+lastLoadedProjectName = data.name
+```
+
+### SeekBar fordított mapping (restoreConfigToUI)
+
+| SeekBar | Leolvasás (getX) | Visszaállítás (setProgress) |
+|---------|-----------------|----------------------------|
+| sbGsd | `0.5 + progress * 0.1` | `round((gsd - 0.5) / 0.1)` |
+| sbSidelap | `50 + progress` | `round(sidelap - 50)` |
+| sbFrontlap | `60 + progress` | `round(frontlap - 60)` |
+| sbSpeed | `3 + progress` | `round(speed - 3)` |
+| sbAngle | `progress` | `round(angle)` |
+| sbOffset | `progress` | `round(offsetM)` |
+
+---
+
+## 6. Export fájlok elérési útja
 
 ```
 Eszközön:

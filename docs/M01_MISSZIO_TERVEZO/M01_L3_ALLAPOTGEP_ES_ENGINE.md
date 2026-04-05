@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.2.0
+**Verzió:** v1.3.0
 **Létrehozva:** 2026-04-02
 **Utolsó módosítás:** 2026-04-05
-**Státusz:** ✅ Implementálva (v1.2.0)
+**Státusz:** ✅ Implementálva (v1.3.0)
 
 ---
 
@@ -26,6 +26,7 @@
 - `mission/GridMissionGenerator.java` — M02 Grid Engine
 - `mission/MissionExporter.java` — M03 Export
 - `mission/CsvMissionParser.java` — M03 Import
+- `mission/ProjectManager.java` — M03 Projekt mentés/betöltés (JSON)
 - `dji/MissionUploader.java` — M04 DJI Integráció
 - `dji/DJIHelper.java` — M04 DJI telemetria
 - OSMDroid `MapView`, `Marker`, `Polygon`, `Polyline`, `MyLocationNewOverlay`
@@ -50,6 +51,10 @@ List<ObstacleData> obstacleList    = new ArrayList<>();
 List<Marker>       obstacleMarkers = new ArrayList<>();
 List<Polygon>      obstacleOverlays = new ArrayList<>();
 boolean obstacleMode = false;
+
+// Projekt mentés / betöltés
+Button btnSaveProject, btnLoadProject;
+String lastLoadedProjectName = null;  // előtöltés a mentés dialóghoz
 
 // Állapot
 boolean startPointMode = false;
@@ -84,7 +89,8 @@ TextView tvTerrainInfo;
 TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvOffset, tvStats;
 SeekBar  sbGsd, sbSidelap, sbFrontlap, sbSpeed, sbAngle, sbOffset;
 Spinner  spinnerDrone;
-Button   btnUndoPoint, btnObstacle, btnClearObstacles, btnClear, btnGenerate,
+Button   btnSaveProject, btnLoadProject,
+         btnUndoPoint, btnObstacle, btnClearObstacles, btnClear, btnGenerate,
          btnUpload, btnStart, btnImportCsv, btnExport, btnSetStart,
          btnMyLocation, btnMapToggle, btnPauseMission, btnStopMission;
 ```
