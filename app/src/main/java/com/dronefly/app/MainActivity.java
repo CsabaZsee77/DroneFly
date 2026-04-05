@@ -7,21 +7,76 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.dronefly.app.dji.DJIHelper;
+
 public class MainActivity extends AppCompatActivity {
+
+    private TextView tvDroneInfo;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        TextView tvStatus   = findViewById(R.id.tvStatus);
-        TextView tvDroneInfo = findViewById(R.id.tvDroneInfo);
-        Button   btnPlan    = findViewById(R.id.btnPlanMission);
+        TextView tvStatus = findViewById(R.id.tvStatus);
+        tvDroneInfo = findViewById(R.id.tvDroneInfo);
+        Button btnPlan = findViewById(R.id.btnPlanMission);
 
-        tvStatus.setText("Tervező mód");
-        tvDroneInfo.setText("Drón: nem csatlakoztatva");
+        tvStatus.setText("DroneFly GCS");
+        updateDroneStatus();
 
         btnPlan.setOnClickListener(v ->
             startActivity(new Intent(this, MissionPlannerActivity.class)));
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        try {
+            DJIHelper.getInstance().setListener(new DJIHelper.ConnectionListener() {
+                @Override public void onRegistered(boolean success, String message) {
+                    runOnUiThread(() -> updateDroneStatus());
+                }
+                @Override public void onProductConnected(String productName) {
+                    runOnUiThread(() -> updateDroneStatus());
+                }
+                @Override public void onProductDisconnected() {
+                    runOnUiThread(() -> updateDroneStatus());
+                }
+            });
+        } catch (Throwable t) { /* DJI SDK nem elérhető */ }
+        updateDroneStatus();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        try {
+            DJIHelper.getInstance().setListener(null);
+        } catch (Throwable t) { /* ignore */ }
+    }
+
+    private void updateDroneStatus() {
+        if (tvDroneInfo == null) return;
+        try {
+            DJIHelper helper = DJIHelper.getInstance();
+            if (helper.isConnected()) {
+                String name = helper.getConnectedProductName();
+                String label = (name != null && !name.isEmpty())
+                        ? "Drón: " + name
+                        : "Drón: csatlakoztatva";
+                tvDroneInfo.setText(label);
+                tvDroneInfo.setTextColor(0xFF00FF88);
+            } else if (helper.isRegistered()) {
+                tvDroneInfo.setText("Drón: keresés...");
+                tvDroneInfo.setTextColor(0xFFFFAA00);
+            } else {
+                tvDroneInfo.setText("Drón: nincs csatlakoztatva");
+                tvDroneInfo.setTextColor(0xFFAAAAAA);
+            }
+        } catch (Throwable t) {
+            tvDroneInfo.setText("Drón: nincs csatlakoztatva");
+            tvDroneInfo.setTextColor(0xFFAAAAAA);
+        }
     }
 }

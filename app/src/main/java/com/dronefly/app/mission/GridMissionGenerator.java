@@ -34,6 +34,11 @@ public class GridMissionGenerator {
         public double stripSpacingM;
         public double photoDistM;
         public String errorMessage;
+        /** Ha domborzatkövetés aktív: min/max waypoint magasság */
+        public float terrainMinAlt = Float.NaN;
+        public float terrainMaxAlt = Float.NaN;
+        /** Domborzatkövetés alkalmazva? */
+        public boolean terrainCorrected = false;
     }
 
     public static GeneratorResult generate(List<GeoPoint> polygon, MissionConfig config) {

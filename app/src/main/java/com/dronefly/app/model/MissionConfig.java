@@ -8,7 +8,9 @@ public class MissionConfig {
     public float speedMs = 7.0f;         // repülési sebesség m/s
     public double flightAngleDeg = 0.0;  // 0 = K-Ny sávok (É-D irányban halad)
     public boolean returnHome = true;
+    public boolean terrainFollowing = false; // domborzatkövetés engedélyezése
     public DroneProfile droneProfile;    // kiválasztott drón kamera profil
+    public CameraSettings cameraSettings = CameraSettings.getAgricultureDefaults();
 
     public MissionConfig() {
         this.droneProfile = DroneProfiles.getDefault();

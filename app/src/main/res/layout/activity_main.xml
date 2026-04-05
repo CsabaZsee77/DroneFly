@@ -7,26 +7,37 @@
     android:padding="24dp"
     android:background="#1a1a2e">
 
+    <!-- Logó / cím blokk -->
     <TextView
-        android:text="DroneFly"
-        android:textSize="32sp"
+        android:text="DroneFly GCS"
+        android:textSize="36sp"
         android:textColor="#FFFFFF"
         android:textStyle="bold"
+        android:letterSpacing="0.05"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"/>
+        android:layout_marginBottom="4dp"/>
 
     <TextView
-        android:text="Mezőgazdasági felmérés tervező"
-        android:textSize="14sp"
-        android:textColor="#AAAAAA"
+        android:text="by DrónTerápia"
+        android:textSize="15sp"
+        android:textColor="#FF6600"
+        android:textStyle="italic"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"/>
+
+    <TextView
+        android:text="Mezogazdasagi felmeres tervezo"
+        android:textSize="13sp"
+        android:textColor="#666688"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="40dp"/>
 
     <TextView
         android:id="@+id/tvStatus"
-        android:text="Inicializálás..."
+        android:text="Inicializalas..."
         android:textSize="14sp"
         android:textColor="#FFAA00"
         android:layout_width="wrap_content"
@@ -45,7 +56,7 @@
 
     <Button
         android:id="@+id/btnPlanMission"
-        android:text="Misszió tervezése"
+        android:text="Misszio tervezese"
         android:layout_width="240dp"
         android:layout_height="56dp"
         android:textSize="16sp"

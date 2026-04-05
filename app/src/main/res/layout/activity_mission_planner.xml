@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="horizontal">
+    android:layout_height="match_parent">
 
-    <!-- TÉRKÉP (bal oldal, 65%) + GPS gomb rárakva -->
+    <!-- TÉRKÉP (teljes háttér) -->
     <FrameLayout
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="65">
+        android:id="@+id/mapContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
 
         <org.osmdroid.views.MapView
             android:id="@+id/mapView"
@@ -16,11 +16,11 @@
             android:layout_height="match_parent"
             android:clickable="true"/>
 
-        <!-- Jobb felső sarok: GPS + térképváltó gombok -->
+        <!-- Bal felső sarok: GPS + térképváltó gombok -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="top|end"
+            android:layout_gravity="top|start"
             android:orientation="vertical"
             android:layout_margin="8dp"
             android:elevation="4dp">
@@ -52,220 +52,425 @@
 
     </FrameLayout>
 
-    <!-- OLDALPANEL (jobb oldal, 35%) -->
-    <ScrollView
-        android:layout_width="0dp"
+    <!-- OLDALPANEL + TOGGLE GOMB együtt csúszik -->
+    <FrameLayout
+        android:id="@+id/sidePanelContainer"
+        android:layout_width="wrap_content"
         android:layout_height="match_parent"
-        android:layout_weight="35"
-        android:background="#1a1a2e">
+        android:layout_gravity="end"
+        android:elevation="8dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="12dp">
+        <!-- Toggle gomb – a panel bal szélén, középen -->
+        <Button
+            android:id="@+id/btnTogglePanel"
+            android:layout_width="36dp"
+            android:layout_height="72dp"
+            android:layout_gravity="start|center_vertical"
+            android:text="«"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:padding="0dp"
+            android:backgroundTint="#CC1a1a2e"
+            android:elevation="2dp"/>
 
-            <!-- Drón kiválasztás -->
-            <TextView
-                android:text="Drón"
-                android:textColor="#AAAAAA"
-                android:textSize="11sp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="2dp"/>
-            <Spinner
-                android:id="@+id/spinnerDrone"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginBottom="4dp"
-                android:backgroundTint="#AADDFF"
-                android:popupBackground="#1a1a2e"/>
+        <!-- Panel tartalma – a toggle gombtól jobbra -->
+        <ScrollView
+            android:id="@+id/sidePanel"
+            android:layout_width="320dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:background="#EE1a1a2e">
 
-            <!-- DJI kapcsolat státusz -->
-            <TextView
-                android:id="@+id/tvDroneStatus"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:text="● Drón: nem csatlakoztatva"
-                android:textColor="#FF4444"
-                android:textSize="11sp"/>
-
-            <!-- Cím -->
-            <TextView
-                android:text="Misszió beállítások"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"/>
-
-            <!-- GSD -->
-            <TextView android:id="@+id/tvGsd"
-                android:textColor="#FFAA00"
-                android:textSize="12sp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
-            <SeekBar android:id="@+id/sbGsd"
-                android:max="90"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"/>
-
-            <!-- Sidelap -->
-            <TextView android:id="@+id/tvSidelap"
-                android:textColor="#AADDFF"
-                android:textSize="12sp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
-            <SeekBar android:id="@+id/sbSidelap"
-                android:max="40"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"/>
-
-            <!-- Frontlap -->
-            <TextView android:id="@+id/tvFrontlap"
-                android:textColor="#AADDFF"
-                android:textSize="12sp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
-            <SeekBar android:id="@+id/sbFrontlap"
-                android:max="30"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"/>
-
-            <!-- Sebesség -->
-            <TextView android:id="@+id/tvSpeed"
-                android:textColor="#AADDFF"
-                android:textSize="12sp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
-            <SeekBar android:id="@+id/sbSpeed"
-                android:max="12"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"/>
-
-            <!-- Repülési irány -->
-            <TextView android:id="@+id/tvAngle"
-                android:textColor="#AADDFF"
-                android:textSize="12sp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
-            <SeekBar android:id="@+id/sbAngle"
-                android:max="179"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"/>
-
-            <!-- Vezérlő gombok -->
-            <Button android:id="@+id/btnDrawMode"
-                android:text="Terület rajzolása"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:textSize="13sp"
-                android:backgroundTint="#004499"
-                android:layout_marginBottom="6dp"/>
-
-            <Button android:id="@+id/btnClear"
-                android:text="Törlés"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:textSize="13sp"
-                android:backgroundTint="#660000"
-                android:layout_marginBottom="6dp"/>
-
-            <Button android:id="@+id/btnGenerate"
-                android:text="Misszió generálása"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:textSize="13sp"
-                android:backgroundTint="#006600"
-                android:layout_marginBottom="6dp"/>
-
-            <Button android:id="@+id/btnSetStart"
-                android:text="Start/Home pont"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:textSize="13sp"
-                android:backgroundTint="#005566"
-                android:layout_marginBottom="6dp"/>
-
-            <Button android:id="@+id/btnImportCsv"
-                android:text="CSV importálása"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:textSize="13sp"
-                android:backgroundTint="#555500"
-                android:layout_marginBottom="6dp"/>
-
-            <Button android:id="@+id/btnExport"
-                android:text="Exportálás (CSV / KMZ)"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:textSize="13sp"
-                android:backgroundTint="#334400"
-                android:layout_marginBottom="6dp"/>
-
-            <Button android:id="@+id/btnUpload"
-                android:text="Feltöltés"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:textSize="13sp"
-                android:backgroundTint="#884400"
-                android:layout_marginBottom="6dp"/>
-
-            <Button android:id="@+id/btnStart"
-                android:text="START"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:backgroundTint="#FF6600"
-                android:enabled="false"
-                android:layout_marginBottom="4dp"/>
-
-            <!-- Misszió közbeni vezérlés -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="12dp">
+                android:orientation="vertical"
+                android:padding="12dp">
 
-                <Button android:id="@+id/btnPauseMission"
-                    android:text="⏸ Szünet"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:textSize="12sp"
-                    android:backgroundTint="#885500"
-                    android:layout_marginEnd="3dp"
-                    android:enabled="false"/>
+                <!-- Drón kiválasztás -->
+                <TextView
+                    android:text="Drón"
+                    android:textColor="#AAAAAA"
+                    android:textSize="11sp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"/>
+                <Spinner
+                    android:id="@+id/spinnerDrone"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginBottom="4dp"
+                    android:backgroundTint="#AADDFF"
+                    android:popupBackground="#1a1a2e"/>
 
-                <Button android:id="@+id/btnStopMission"
-                    android:text="⏹ Stop"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
+                <!-- DJI kapcsolat státusz -->
+                <TextView
+                    android:id="@+id/tvDroneStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
+                    android:text="Drón: nincs csatlakoztatva"
+                    android:textColor="#FF4444"
+                    android:textSize="11sp"/>
+
+                <!-- Cím -->
+                <TextView
+                    android:text="Misszió beállitások"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"/>
+
+                <!-- GSD -->
+                <TextView android:id="@+id/tvGsd"
+                    android:textColor="#FFAA00"
                     android:textSize="12sp"
-                    android:backgroundTint="#880000"
-                    android:layout_marginStart="3dp"
-                    android:enabled="false"/>
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"/>
+                <SeekBar android:id="@+id/sbGsd"
+                    android:max="90"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Sidelap -->
+                <TextView android:id="@+id/tvSidelap"
+                    android:textColor="#AADDFF"
+                    android:textSize="12sp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"/>
+                <SeekBar android:id="@+id/sbSidelap"
+                    android:max="40"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Frontlap -->
+                <TextView android:id="@+id/tvFrontlap"
+                    android:textColor="#AADDFF"
+                    android:textSize="12sp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"/>
+                <SeekBar android:id="@+id/sbFrontlap"
+                    android:max="30"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Sebesség -->
+                <TextView android:id="@+id/tvSpeed"
+                    android:textColor="#AADDFF"
+                    android:textSize="12sp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"/>
+                <SeekBar android:id="@+id/sbSpeed"
+                    android:max="12"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Repülési irány -->
+                <TextView android:id="@+id/tvAngle"
+                    android:textColor="#AADDFF"
+                    android:textSize="12sp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"/>
+                <SeekBar android:id="@+id/sbAngle"
+                    android:max="179"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Domborzatkövetés -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#334466"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="4dp"/>
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp">
+                    <TextView
+                        android:text="Domborzatkovetes:"
+                        android:textColor="#AADDFF"
+                        android:textSize="12sp"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"/>
+                    <Switch
+                        android:id="@+id/switchTerrain"
+                        android:textColor="#AADDFF"
+                        android:textSize="12sp"
+                        android:checked="false"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvTerrainInfo"
+                    android:textColor="#888888"
+                    android:textSize="10sp"
+                    android:text="Magassag korrekció DEM (SRTM) domborzati modell alapjan"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Kamera beállítások (összecsukható) -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#334466"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="4dp"/>
+
+                <LinearLayout
+                    android:id="@+id/cameraHeader"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp">
+                    <TextView
+                        android:text="Kamera beallitasok"
+                        android:textColor="#AADDFF"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"/>
+                    <TextView
+                        android:id="@+id/tvCameraExpand"
+                        android:text="▼"
+                        android:textColor="#AADDFF"
+                        android:textSize="13sp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/cameraSettingsBody"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp">
+
+                    <LinearLayout
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="6dp">
+                        <TextView
+                            android:text="Mod:"
+                            android:textColor="#AAAAAA"
+                            android:textSize="12sp"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="8dp"/>
+                        <Switch
+                            android:id="@+id/switchCameraAuto"
+                            android:text="Auto"
+                            android:textColor="#AADDFF"
+                            android:textSize="12sp"
+                            android:checked="true"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"/>
+                    </LinearLayout>
+
+                    <TextView
+                        android:text="Fajlformatum:"
+                        android:textColor="#AAAAAA"
+                        android:textSize="11sp"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"/>
+                    <Spinner
+                        android:id="@+id/spinnerFileFormat"
+                        android:layout_width="match_parent"
+                        android:layout_height="36dp"
+                        android:layout_marginBottom="6dp"/>
+
+                    <LinearLayout
+                        android:id="@+id/cameraManualControls"
+                        android:orientation="vertical"
+                        android:visibility="gone"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content">
+
+                        <TextView
+                            android:text="Foto mod:"
+                            android:textColor="#AAAAAA"
+                            android:textSize="11sp"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"/>
+                        <Spinner
+                            android:id="@+id/spinnerPhotoMode"
+                            android:layout_width="match_parent"
+                            android:layout_height="36dp"
+                            android:layout_marginBottom="6dp"/>
+
+                        <TextView
+                            android:text="ISO:"
+                            android:textColor="#AAAAAA"
+                            android:textSize="11sp"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"/>
+                        <Spinner
+                            android:id="@+id/spinnerIso"
+                            android:layout_width="match_parent"
+                            android:layout_height="36dp"
+                            android:layout_marginBottom="6dp"/>
+
+                        <TextView
+                            android:text="Zarido:"
+                            android:textColor="#AAAAAA"
+                            android:textSize="11sp"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"/>
+                        <Spinner
+                            android:id="@+id/spinnerShutter"
+                            android:layout_width="match_parent"
+                            android:layout_height="36dp"
+                            android:layout_marginBottom="6dp"/>
+
+                        <TextView
+                            android:text="Feheregyensuly:"
+                            android:textColor="#AAAAAA"
+                            android:textSize="11sp"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"/>
+                        <Spinner
+                            android:id="@+id/spinnerWhiteBalance"
+                            android:layout_width="match_parent"
+                            android:layout_height="36dp"
+                            android:layout_marginBottom="6dp"/>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#334466"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Vezérlő gombok -->
+                <Button android:id="@+id/btnDrawMode"
+                    android:text="Terulet rajzolasa"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#004499"
+                    android:layout_marginBottom="6dp"/>
+
+                <Button android:id="@+id/btnClear"
+                    android:text="Torles"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#660000"
+                    android:layout_marginBottom="6dp"/>
+
+                <Button android:id="@+id/btnGenerate"
+                    android:text="Misszio generalasa"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#006600"
+                    android:layout_marginBottom="6dp"/>
+
+                <Button android:id="@+id/btnSetStart"
+                    android:text="Start/Home pont"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#005566"
+                    android:layout_marginBottom="6dp"/>
+
+                <Button android:id="@+id/btnImportCsv"
+                    android:text="CSV importalasa"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#555500"
+                    android:layout_marginBottom="6dp"/>
+
+                <Button android:id="@+id/btnExport"
+                    android:text="Exportalas (CSV / KMZ)"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#334400"
+                    android:layout_marginBottom="6dp"/>
+
+                <Button android:id="@+id/btnUpload"
+                    android:text="Feltoltes"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#884400"
+                    android:layout_marginBottom="6dp"/>
+
+                <Button android:id="@+id/btnStart"
+                    android:text="START"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:backgroundTint="#FF6600"
+                    android:enabled="false"
+                    android:layout_marginBottom="4dp"/>
+
+                <!-- Misszió közbeni vezérlés -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+
+                    <Button android:id="@+id/btnPauseMission"
+                        android:text="Szunet"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:textSize="12sp"
+                        android:backgroundTint="#885500"
+                        android:layout_marginEnd="3dp"
+                        android:enabled="false"/>
+
+                    <Button android:id="@+id/btnStopMission"
+                        android:text="Stop"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:textSize="12sp"
+                        android:backgroundTint="#880000"
+                        android:layout_marginStart="3dp"
+                        android:enabled="false"/>
+
+                </LinearLayout>
+
+                <!-- Statisztikák -->
+                <TextView android:id="@+id/tvStats"
+                    android:textColor="#AAAAAA"
+                    android:textSize="11sp"
+                    android:lineSpacingMultiplier="1.3"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"/>
 
             </LinearLayout>
+        </ScrollView>
 
-            <!-- Statisztikák -->
-            <TextView android:id="@+id/tvStats"
-                android:textColor="#AAAAAA"
-                android:textSize="11sp"
-                android:lineSpacingMultiplier="1.3"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
+    </FrameLayout>
 
-        </LinearLayout>
-    </ScrollView>
-
-</LinearLayout>
+</FrameLayout>

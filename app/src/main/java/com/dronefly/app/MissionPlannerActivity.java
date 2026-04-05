@@ -1,13 +1,20 @@
 package com.dronefly.app;
 
+import android.animation.ObjectAnimator;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.View;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -15,12 +22,15 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
 
+import com.dronefly.app.dji.CameraConfigurator;
 import com.dronefly.app.dji.DJIHelper;
 import com.dronefly.app.dji.MissionUploader;
+import com.dronefly.app.model.CameraSettings;
 
 // DJI kapcsolat listener – valós idejű státusz frissítés
 // (az Activity implements DJIHelper.ConnectionListener)
 import com.dronefly.app.mission.CsvMissionParser;
+import com.dronefly.app.mission.ElevationProvider;
 import com.dronefly.app.mission.GridMissionGenerator;
 import com.dronefly.app.mission.GsdCalculator;
 import com.dronefly.app.mission.MissionExporter;
@@ -54,7 +64,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
     // Térkép
     private MapView mapView;
     private MyLocationNewOverlay locationOverlay;
-    private final List<GeoPoint> polygonPoints = new ArrayList<>();
+    private final List<GeoPoint> polygonPoints  = new ArrayList<>();
+    private final List<Marker>   polygonMarkers = new ArrayList<>(); // külön nyilvántartás, removeIf kiváltása
     private Polygon  polygonOverlay;
     private Polyline missionOverlay;
     private Marker   startMarker;
@@ -72,6 +83,25 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private boolean  missionUploaded = false;
     private boolean  missionRunning = false;
     private boolean  missionPaused  = false;
+
+    // Kamera beállítások
+    private LinearLayout cameraSettingsBody, cameraManualControls;
+    private Switch switchCameraAuto;
+    private Spinner spinnerPhotoMode, spinnerIso, spinnerShutter, spinnerWhiteBalance, spinnerFileFormat;
+    private TextView tvCameraExpand;
+    private boolean cameraExpanded = false;
+
+    // Domborzatkövetés
+    private Switch switchTerrain;
+    private TextView tvTerrainInfo;
+
+    // Panel csúsztatás
+    private android.widget.FrameLayout sidePanelContainer;
+    private ScrollView sidePanel;
+    private Button btnTogglePanel;
+    private boolean panelVisible = true;
+
+    private static final float MAX_ALTITUDE_LEGAL = 120f; // EU Open kategória limit (m)
 
     // Térképváltó
     private boolean  isSatelliteMap = true; // Google Satellite az alapértelmezett
@@ -106,6 +136,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         setContentView(R.layout.activity_mission_planner);
         initMap();
         initControls();
+        showDisclaimerIfNeeded();
     }
 
     // ── Térkép ─────────────────────────────────────────────────────────────
@@ -114,7 +145,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         mapView = findViewById(R.id.mapView);
         // Próbáljuk HTTPS tile source-szal (néhány emulátor a HTTP-t blokkolja)
         // Google Satellite — megbízható, API kulcs nélkül
-        mapView.setTileSource(buildGoogleSatelliteTileSource());
+        mapView.setTileSource(buildSatelliteTileSource());
         mapView.setMultiTouchControls(true);
         mapView.setUseDataConnection(true);
         mapView.setBuiltInZoomControls(false);
@@ -231,6 +262,12 @@ public class MissionPlannerActivity extends AppCompatActivity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });
 
+        // Panel csúsztatás
+        sidePanelContainer = findViewById(R.id.sidePanelContainer);
+        sidePanel          = findViewById(R.id.sidePanel);
+        btnTogglePanel     = findViewById(R.id.btnTogglePanel);
+        btnTogglePanel.setOnClickListener(v -> toggleSidePanel());
+
         btnPauseMission = findViewById(R.id.btnPauseMission);
         btnStopMission  = findViewById(R.id.btnStopMission);
         btnPauseMission.setOnClickListener(v -> togglePauseMission());
@@ -248,7 +285,239 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnUpload.setEnabled(false);
         btnStart.setEnabled(false);
         btnExport.setEnabled(false);
+        initCameraControls();
+        initTerrainControls();
         updateLabels();
+    }
+
+    // ── Kamera beállítások panel ───────────────────────────────────────
+
+    private void initCameraControls() {
+        cameraSettingsBody   = findViewById(R.id.cameraSettingsBody);
+        cameraManualControls = findViewById(R.id.cameraManualControls);
+        switchCameraAuto     = findViewById(R.id.switchCameraAuto);
+        tvCameraExpand       = findViewById(R.id.tvCameraExpand);
+
+        spinnerPhotoMode     = findViewById(R.id.spinnerPhotoMode);
+        spinnerIso           = findViewById(R.id.spinnerIso);
+        spinnerShutter       = findViewById(R.id.spinnerShutter);
+        spinnerWhiteBalance  = findViewById(R.id.spinnerWhiteBalance);
+        spinnerFileFormat    = findViewById(R.id.spinnerFileFormat);
+
+        // Összecsukás/kinyitás
+        findViewById(R.id.cameraHeader).setOnClickListener(v -> toggleCameraPanel());
+
+        // Auto/Manuális kapcsoló
+        switchCameraAuto.setOnCheckedChangeListener((btn, isChecked) -> {
+            switchCameraAuto.setText(isChecked ? "Auto" : "Manuális");
+            cameraManualControls.setVisibility(isChecked ? View.GONE : View.VISIBLE);
+        });
+
+        // Spinnerek feltöltése
+        spinnerFileFormat.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, CameraSettings.FileFormat.values()));
+        spinnerFileFormat.setSelection(2); // JPEG+RAW
+
+        spinnerPhotoMode.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, CameraSettings.PhotoMode.values()));
+
+        spinnerIso.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, CameraSettings.IsoValue.values()));
+
+        spinnerShutter.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, CameraSettings.ShutterSpeed.values()));
+
+        spinnerWhiteBalance.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, CameraSettings.WhiteBalanceValue.values()));
+    }
+
+    private void toggleCameraPanel() {
+        cameraExpanded = !cameraExpanded;
+        cameraSettingsBody.setVisibility(cameraExpanded ? View.VISIBLE : View.GONE);
+        tvCameraExpand.setText(cameraExpanded ? "\u25B2" : "\u25BC");
+    }
+
+    // ── Panel csúsztatás ──────────────────────────────────────────────
+
+    private void toggleSidePanel() {
+        panelVisible = !panelVisible;
+        // Az egész konténert (gomb + panel) animáljuk együtt
+        // A konténer szélessége = panel (320dp) + gomb (36dp)
+        // Elrejtéskor csak a panel tolódik ki, a gomb látható marad
+        if (panelVisible) {
+            // Panel most látható → kinyitás (húzás bal felé)
+            sidePanel.setVisibility(View.VISIBLE);
+            ObjectAnimator anim = ObjectAnimator.ofFloat(sidePanel, "translationX",
+                    sidePanel.getWidth(), 0f);
+            anim.setDuration(250);
+            anim.setInterpolator(new DecelerateInterpolator());
+            anim.start();
+            btnTogglePanel.setText("»"); // » = zárás (jobbra tolás)
+        } else {
+            // Panel rejtett → zárás (tolás jobbra)
+            float panelW = sidePanel.getWidth();
+            ObjectAnimator anim = ObjectAnimator.ofFloat(sidePanel, "translationX", 0f, panelW);
+            anim.setDuration(250);
+            anim.setInterpolator(new DecelerateInterpolator());
+            anim.addListener(new android.animation.AnimatorListenerAdapter() {
+                @Override public void onAnimationEnd(android.animation.Animator a) {
+                    sidePanel.setVisibility(View.GONE);
+                }
+            });
+            anim.start();
+            btnTogglePanel.setText("«"); // « = nyitás (bal felé húzás)
+        }
+    }
+
+    // ── Jogi disclaimer ───────────────────────────────────────────────
+
+    private void showDisclaimerIfNeeded() {
+        SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+        boolean accepted = prefs.getBoolean("disclaimer_accepted", false);
+        if (accepted) return;
+
+        new AlertDialog.Builder(this)
+            .setTitle("Fontos figyelmeztetés")
+            .setMessage(
+                "A DroneFly GCS egy tervezo eszköz.\n\n" +
+                "A felhasznalo kizarolagos felelossege:\n" +
+                "  - az ervenyes drónrepülési szabalyok betartasa\n" +
+                "  - repülési tiltott zonak ellenorzese\n" +
+                "  - szükseges engedelyek bemutatasa\n" +
+                "  - a max. 120 m magassagi korlat betartasa\n" +
+                "    (EU Open kategoria, A2/A3)\n\n" +
+                "Magyarorszagon a dron uzemelteteshez\n" +
+                "pilota-tanusitvany es regisztracio szükseges.\n\n" +
+                "A fejleszto nem vallal felelossegt a nem\n" +
+                "szabalyszeru repülesbol eredo kovetkezményekert.")
+            .setPositiveButton("Megértettem, elfogadom", (d, w) -> {
+                prefs.edit().putBoolean("disclaimer_accepted", true).apply();
+            })
+            .setCancelable(false)
+            .show();
+    }
+
+    private CameraSettings buildCameraSettings() {
+        CameraSettings s = new CameraSettings();
+        s.autoMode = switchCameraAuto.isChecked();
+        s.fileFormat = (CameraSettings.FileFormat) spinnerFileFormat.getSelectedItem();
+        if (!s.autoMode) {
+            s.photoMode    = (CameraSettings.PhotoMode) spinnerPhotoMode.getSelectedItem();
+            s.iso          = (CameraSettings.IsoValue) spinnerIso.getSelectedItem();
+            s.shutterSpeed = (CameraSettings.ShutterSpeed) spinnerShutter.getSelectedItem();
+            s.whiteBalance = (CameraSettings.WhiteBalanceValue) spinnerWhiteBalance.getSelectedItem();
+        }
+        return s;
+    }
+
+    // ── Domborzatkövetés panel ────────────────────────────────────────
+
+    private void initTerrainControls() {
+        switchTerrain = findViewById(R.id.switchTerrain);
+        tvTerrainInfo = findViewById(R.id.tvTerrainInfo);
+
+        switchTerrain.setOnCheckedChangeListener((btn, isChecked) -> {
+            tvTerrainInfo.setText(isChecked
+                ? "Aktiv: waypointok magassaga DEM alapjan korrigalva"
+                : "Magassag korrekció DEM (SRTM) domborzati modell alapjan");
+            tvTerrainInfo.setTextColor(isChecked ? 0xFF44FF44 : 0xFF888888);
+        });
+    }
+
+    /**
+     * Domborzatkövetés alkalmazása a generált waypointokra.
+     * Open-Elevation API-ból lekéri a tengerszint feletti magasságokat,
+     * majd korrigálja az egyes waypoint magasságokat a felszállási pont
+     * (start pont vagy első waypoint) terepszintjéhez képest.
+     */
+    private void applyTerrainFollowing(GridMissionGenerator.GeneratorResult result,
+                                        double baseAGL) {
+        // Összegyűjtjük az összes waypointot
+        List<WaypointData> allWaypoints = new ArrayList<>();
+        for (List<WaypointData> seg : result.segments) allWaypoints.addAll(seg);
+
+        if (allWaypoints.isEmpty()) return;
+
+        tvTerrainInfo.setText("Domborzati adatok letoltese...");
+        tvTerrainInfo.setTextColor(0xFFFFAA00);
+        btnUpload.setEnabled(false);
+
+        // A felszállási pont: startPoint vagy az első waypoint
+        final double takeoffLat = startPoint != null ? startPoint.getLatitude()
+                : allWaypoints.get(0).latitude;
+        final double takeoffLon = startPoint != null ? startPoint.getLongitude()
+                : allWaypoints.get(0).longitude;
+
+        // Hozzáadjuk a felszállási pontot is a lekérdezéshez (utolsó elem)
+        WaypointData takeoffWp = new WaypointData(takeoffLat, takeoffLon, 0f);
+        List<WaypointData> queryList = new ArrayList<>(allWaypoints);
+        queryList.add(takeoffWp);
+
+        ElevationProvider.fetchElevations(queryList, new ElevationProvider.ElevationCallback() {
+            @Override
+            public void onSuccess(double[] elevations) {
+                double takeoffElev = elevations[elevations.length - 1]; // utolsó = felszállási pont
+
+                // Korrekció alkalmazása az eredeti waypointokra
+                int idx = 0;
+                float minAlt = Float.MAX_VALUE, maxAlt = Float.MIN_VALUE;
+                for (List<WaypointData> seg : result.segments) {
+                    for (WaypointData wp : seg) {
+                        double terrainDelta = elevations[idx] - takeoffElev;
+                        float correctedAlt = (float) (baseAGL + terrainDelta);
+                        correctedAlt = Math.max(10f, correctedAlt); // minimum 10m
+                        wp.altitudeM = correctedAlt;
+                        wp.terrainElevation = elevations[idx];
+                        wp.hasTerrainCorrection = true;
+                        if (correctedAlt < minAlt) minAlt = correctedAlt;
+                        if (correctedAlt > maxAlt) maxAlt = correctedAlt;
+                        idx++;
+                    }
+                }
+
+                result.terrainCorrected = true;
+                result.terrainMinAlt = minAlt;
+                result.terrainMaxAlt = maxAlt;
+
+                tvTerrainInfo.setText(String.format(
+                    "Domborzat korrigalva: %.0fm - %.0fm (takeoff: %.0fm tszf)",
+                    minAlt, maxAlt, takeoffElev));
+                tvTerrainInfo.setTextColor(0xFF44FF44);
+                btnUpload.setEnabled(true);
+                btnExport.setEnabled(true);
+
+                // Stats frissítés
+                updateStatsWithTerrain(result);
+            }
+
+            @Override
+            public void onError(String message) {
+                tvTerrainInfo.setText("Domborzat hiba: " + message);
+                tvTerrainInfo.setTextColor(0xFFFF4444);
+                btnUpload.setEnabled(true);
+                btnExport.setEnabled(true);
+                Toast.makeText(MissionPlannerActivity.this,
+                    "Domborzati adat nem elerheto: " + message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void updateStatsWithTerrain(GridMissionGenerator.GeneratorResult result) {
+        if (tvStats == null || result == null) return;
+        MissionConfig config = buildConfig();
+        double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm);
+        String stats = String.format(
+            "Terulet: %.2f ha | Waypoint: %d (%d szegmens)\n" +
+            "Bázis mag.: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
+            "Sebesseg: %.1f m/s (ajanl.: %.1f m/s) | Ido: ~%.0f perc\n" +
+            "Domborzat: %.0f m – %.0f m (korrigalt)",
+            result.areaM2 / 10000.0,
+            result.totalWaypoints, result.segments.size(),
+            result.altitudeM, result.stripSpacingM, result.photoDistM,
+            (double) config.speedMs, recSpd,
+            result.estimatedMinutes,
+            result.terrainMinAlt, result.terrainMaxAlt);
+        tvStats.setText(stats);
     }
 
     private DroneProfile getSelectedDrone() {
@@ -258,25 +527,20 @@ public class MissionPlannerActivity extends AppCompatActivity {
         return DroneProfiles.ALL.get(pos);
     }
 
-    private org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase buildGoogleSatelliteTileSource() {
-        final String[] servers = {
-            "https://mt0.google.com/vt/lyrs=s&",
-            "https://mt1.google.com/vt/lyrs=s&",
-            "https://mt2.google.com/vt/lyrs=s&",
-            "https://mt3.google.com/vt/lyrs=s&"
-        };
-        // OnlineTileSourceBase direkt – a XYTileSource subclassnál bizonyos
-        // verziókban nem hívódik meg az override, ez megbízhatóbb
-        return new org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase(
-                "GoogleSat", 1, 19, 256, ".jpg", servers) {
+    private org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase buildSatelliteTileSource() {
+        // ESRI World Imagery – ingyenes, API kulcs nélkül, Crystal Sky-on is működik
+        return new org.osmdroid.tileprovider.tilesource.XYTileSource(
+                "ESRIsat", 1, 19, 256, "",
+                new String[]{
+                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
+                }) {
             @Override
             public String getTileURLString(long pMapTileIndex) {
-                int zoom = (int)((pMapTileIndex >> 40) & 0xffff);
-                int x    = (int)((pMapTileIndex >> 20) & 0xfffff);
-                int y    = (int)(pMapTileIndex & 0xfffff);
-                // Tile szerver váltogatás terhelosztáshoz
-                String base = servers[(int)((x + y) % servers.length)];
-                return base + "x=" + x + "&y=" + y + "&z=" + zoom;
+                int zoom = org.osmdroid.util.MapTileIndex.getZoom(pMapTileIndex);
+                int x    = org.osmdroid.util.MapTileIndex.getX(pMapTileIndex);
+                int y    = org.osmdroid.util.MapTileIndex.getY(pMapTileIndex);
+                return "https://server.arcgisonline.com/ArcGIS/rest/services/" +
+                       "World_Imagery/MapServer/tile/" + zoom + "/" + y + "/" + x;
             }
         };
     }
@@ -285,7 +549,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         isSatelliteMap = !isSatelliteMap;
         if (isSatelliteMap) {
             // ESRI műhold
-            mapView.setTileSource(buildGoogleSatelliteTileSource());
+            mapView.setTileSource(buildSatelliteTileSource());
             mapView.getTileProvider().clearTileCache();
             btnMapToggle.setText("MAP");
             Toast.makeText(this, "Műholdas nézet", Toast.LENGTH_SHORT).show();
@@ -392,11 +656,63 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private void addPolygonPoint(GeoPoint p) {
         polygonPoints.add(p);
         refreshPolygonOverlay();
+
+        final int idx = polygonPoints.size() - 1;
         Marker m = new Marker(mapView);
         m.setPosition(p);
         m.setTitle("P" + polygonPoints.size());
         m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER);
+        m.setDraggable(true);
+
+        // Húzás közbeni valós idejű frissítés
+        m.setOnMarkerDragListener(new Marker.OnMarkerDragListener() {
+            @Override public void onMarkerDragStart(Marker marker) { }
+            @Override public void onMarkerDrag(Marker marker) {
+                int i = polygonMarkers.indexOf(marker);
+                if (i >= 0 && i < polygonPoints.size()) {
+                    polygonPoints.set(i, marker.getPosition());
+                    refreshPolygonOverlay();
+                }
+            }
+            @Override public void onMarkerDragEnd(Marker marker) {
+                int i = polygonMarkers.indexOf(marker);
+                if (i >= 0 && i < polygonPoints.size()) {
+                    polygonPoints.set(i, marker.getPosition());
+                    refreshPolygonOverlay();
+                }
+            }
+        });
+
+        // Kattintásra: törlés lehetőség
+        m.setOnMarkerClickListener((marker, mv) -> {
+            int i = polygonMarkers.indexOf(marker);
+            GeoPoint pos = marker.getPosition();
+            new AlertDialog.Builder(MissionPlannerActivity.this)
+                .setTitle("P" + (i + 1) + " jelölő")
+                .setMessage(String.format("%.6f, %.6f\n\nTöröljem ezt a pontot?",
+                        pos.getLatitude(), pos.getLongitude()))
+                .setPositiveButton("Törlés", (d, w) -> removePolygonPoint(i))
+                .setNegativeButton("Mégse", null)
+                .show();
+            return true; // elnyeli az eseményt, nem kerül a térkép event-hez
+        });
+
+        polygonMarkers.add(m);
         mapView.getOverlays().add(m);
+        mapView.invalidate();
+    }
+
+    /** Egy sarokpont törlése index alapján – újraszámozza a többi jelölőt */
+    private void removePolygonPoint(int index) {
+        if (index < 0 || index >= polygonPoints.size()) return;
+        polygonPoints.remove(index);
+        Marker removed = polygonMarkers.remove(index);
+        mapView.getOverlays().remove(removed);
+        // Újraszámozás
+        for (int i = 0; i < polygonMarkers.size(); i++) {
+            polygonMarkers.get(i).setTitle("P" + (i + 1));
+        }
+        refreshPolygonOverlay();
         mapView.invalidate();
     }
 
@@ -417,9 +733,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
         if (polygonOverlay != null) mapView.getOverlays().remove(polygonOverlay);
         if (missionOverlay != null) mapView.getOverlays().remove(missionOverlay);
         if (startMarker != null)    mapView.getOverlays().remove(startMarker);
-        startPoint = null;
-        // Sarokpontok törlése
-        mapView.getOverlays().removeIf(o -> o instanceof Marker);
+        startMarker = null;
+        startPoint  = null;
+        // Sarokpont jelölők törlése – removeIf nem elérhető API 22-n!
+        for (Marker m : polygonMarkers) {
+            mapView.getOverlays().remove(m);
+        }
+        polygonMarkers.clear();
         lastResult = null;
         missionUploaded = false;
         btnUpload.setEnabled(false);
@@ -434,10 +754,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     private void generateMission() {
         if (polygonPoints.size() < 3) {
-            Toast.makeText(this, "Rajzolj legalább 3 pontot a területhez!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Rajzolj legalabb 3 pontot a terulethez!", Toast.LENGTH_SHORT).show();
             return;
         }
         MissionConfig config = buildConfig();
+        config.terrainFollowing = switchTerrain != null && switchTerrain.isChecked();
         lastResult = GridMissionGenerator.generate(polygonPoints, config);
 
         if (lastResult.errorMessage != null) {
@@ -450,17 +771,30 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnUpload.setEnabled(true);
         btnExport.setEnabled(true);
 
+        // 120m figyelmeztetés
+        if (lastResult.altitudeM > MAX_ALTITUDE_LEGAL) {
+            Toast.makeText(this,
+                String.format("Figyelem: %.0fm > 120m (EU jo­gi határ)! Csökkentsd a GSD-t.",
+                    lastResult.altitudeM),
+                Toast.LENGTH_LONG).show();
+        }
+
         double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm);
         String stats = String.format(
-            "Terület: %.2f ha | Waypoint: %d (%d szegmens)\n" +
-            "Magasság: %.0f m | Sávköz: %.1f m | Fotótáv: %.1f m\n" +
-            "Sebesség: %.1f m/s (ajánlott: %.1f m/s) | Idő: ~%.0f perc",
+            "Terulet: %.2f ha | Waypoint: %d (%d szegmens)\n" +
+            "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
+            "Sebesseg: %.1f m/s (ajanlott: %.1f m/s) | Ido: ~%.0f perc",
             lastResult.areaM2 / 10000.0,
             lastResult.totalWaypoints, lastResult.segments.size(),
             lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
             (double) config.speedMs, recSpd,
             lastResult.estimatedMinutes);
         tvStats.setText(stats);
+
+        // Ha domborzatkövetés aktív, lekéri a terepmagassági adatokat
+        if (config.terrainFollowing) {
+            applyTerrainFollowing(lastResult, lastResult.altitudeM);
+        }
     }
 
     private void drawMissionPath(List<List<WaypointData>> segments) {
@@ -587,19 +921,31 @@ public class MissionPlannerActivity extends AppCompatActivity {
             .setTitle("Repülés indítása")
             .setMessage("A drón elindítja a missziót. Biztos vagy benne?")
             .setPositiveButton("START", (d, w) -> {
-                uploader.startMission(new MissionUploader.UploadCallback() {
-                    @Override public void onSuccess() {
-                        runOnUiThread(() -> {
-                            Toast.makeText(MissionPlannerActivity.this,
-                                "Repülés elindítva!", Toast.LENGTH_LONG).show();
-                            setMissionRunning(true);
+                // Kamera beállítások alkalmazása, utána misszió indítás
+                Toast.makeText(this, "Kamera beállítása...", Toast.LENGTH_SHORT).show();
+                CameraSettings camSettings = buildCameraSettings();
+                CameraConfigurator.applySettings(camSettings, (success, msg) ->
+                    runOnUiThread(() -> {
+                        if (!success) {
+                            Toast.makeText(this,
+                                "Kamera hiba: " + msg + " – indítás folytatódik",
+                                Toast.LENGTH_SHORT).show();
+                        }
+                        uploader.startMission(new MissionUploader.UploadCallback() {
+                            @Override public void onSuccess() {
+                                runOnUiThread(() -> {
+                                    Toast.makeText(MissionPlannerActivity.this,
+                                        "Repülés elindítva!", Toast.LENGTH_LONG).show();
+                                    setMissionRunning(true);
+                                });
+                            }
+                            @Override public void onError(String errMsg) {
+                                runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
+                                    "Indítás hiba: " + errMsg, Toast.LENGTH_LONG).show());
+                            }
                         });
-                    }
-                    @Override public void onError(String msg) {
-                        runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
-                            "Indítás hiba: " + msg, Toast.LENGTH_LONG).show());
-                    }
-                });
+                    })
+                );
             })
             .setNegativeButton("Mégse", null)
             .show();
@@ -611,7 +957,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         missionUploaded = false;
         btnPauseMission.setEnabled(running);
         btnStopMission.setEnabled(running);
-        btnPauseMission.setText("⏸ Szünet");
+        btnPauseMission.setText("Szünet");
         btnUpload.setEnabled(!running && lastResult != null);
         btnStart.setEnabled(false);
     }
@@ -622,7 +968,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 @Override public void onSuccess() {
                     runOnUiThread(() -> {
                         missionPaused = true;
-                        btnPauseMission.setText("▶ Folytatás");
+                        btnPauseMission.setText("Folytatás");
                         Toast.makeText(MissionPlannerActivity.this,
                             "Misszió szüneteltetve – drón lebeg", Toast.LENGTH_SHORT).show();
                     });
@@ -637,7 +983,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 @Override public void onSuccess() {
                     runOnUiThread(() -> {
                         missionPaused = false;
-                        btnPauseMission.setText("⏸ Szünet");
+                        btnPauseMission.setText("Szünet");
                         Toast.makeText(MissionPlannerActivity.this,
                             "Misszió folytatva", Toast.LENGTH_SHORT).show();
                     });
@@ -730,13 +1076,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     private MissionConfig buildConfig() {
         MissionConfig c = new MissionConfig();
-        c.droneProfile    = getSelectedDrone();
-        c.gsdCm           = getGsd();
-        c.altitudeM       = GsdCalculator.altitudeFromGsd(c.gsdCm, c.droneProfile);
-        c.sidelapPercent  = getSidelap();
-        c.frontlapPercent = getFrontlap();
-        c.speedMs         = getSpeed();
-        c.flightAngleDeg  = getAngle();
+        c.droneProfile      = getSelectedDrone();
+        c.gsdCm             = getGsd();
+        c.altitudeM         = GsdCalculator.altitudeFromGsd(c.gsdCm, c.droneProfile);
+        c.sidelapPercent    = getSidelap();
+        c.frontlapPercent   = getFrontlap();
+        c.speedMs           = getSpeed();
+        c.flightAngleDeg    = getAngle();
+        c.terrainFollowing  = switchTerrain != null && switchTerrain.isChecked();
+        c.cameraSettings    = buildCameraSettings();
         return c;
     }
 

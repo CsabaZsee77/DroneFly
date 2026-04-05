@@ -8,6 +8,12 @@ public class WaypointData {
     public boolean shootPhoto = true;
     public float heading = 0f;
 
+    // ── Domborzatkövetés mezők ─────────────────────────────────────────
+    /** Tengerszint feletti magasság a waypoint pozíciójában (m, SRTM) */
+    public double terrainElevation = Double.NaN;
+    /** Igaz, ha az altitudeM domborzati korrekcióval lett módosítva */
+    public boolean hasTerrainCorrection = false;
+
     public WaypointData(double lat, double lon, float altM) {
         this.latitude = lat;
         this.longitude = lon;
