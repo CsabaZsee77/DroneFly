@@ -24,8 +24,7 @@ public class DJIHelper {
     }
 
     private ConnectionListener listener;
-    private boolean registered   = false;
-    private boolean rcConnected  = false;  // RC komponens kapcsolat – onComponentChange tárolja
+    private boolean registered = false;
 
     public static DJIHelper getInstance() {
         if (instance == null) instance = new DJIHelper();
@@ -79,22 +78,9 @@ public class DJIHelper {
             public void onComponentChange(BaseProduct.ComponentKey key,
                                           BaseComponent oldComponent,
                                           BaseComponent newComponent) {
-                if (newComponent != null) {
-                    newComponent.setComponentListener(isConnected -> {
-                        Log.d(TAG, key + " kapcsolat: " + isConnected);
-                        // RC kapcsolat állapotát explicit tároljuk —
-                        // polling helyett event-alapú, Aircraft nélkül is működik
-                        if (key == BaseProduct.ComponentKey.REMOTE_CONTROLLER) {
-                            rcConnected = isConnected;
-                            Log.i(TAG, "RC " + (isConnected ? "csatlakozva" : "lecsatlakozva"));
-                        }
-                    });
-                } else {
-                    // komponens eltűnt (null newComponent = lecsatlakoztatva)
-                    if (key == BaseProduct.ComponentKey.REMOTE_CONTROLLER) {
-                        rcConnected = false;
-                    }
-                }
+                if (newComponent != null)
+                    newComponent.setComponentListener(isConnected ->
+                            Log.d(TAG, key + " kapcsolat: " + isConnected));
             }
 
             @Override
@@ -116,11 +102,15 @@ public class DJIHelper {
 
     // ── Telemetria segédek (reflexión keresztül – Aircraft API nincs a provided stubban) ──
 
-    /** RC csatlakoztatva van-e.
-     *  Event-alapú: onComponentChange(REMOTE_CONTROLLER) tárolja a rcConnected flag-et.
-     *  Nem igényel Aircraft kapcsolatot — RC önállóan is detektálható. */
+    /** RC csatlakoztatva van-e (reflexió az Aircraft-ból) */
     public boolean isRcConnected() {
-        return rcConnected;
+        try {
+            BaseProduct p = DJISDKManager.getInstance().getProduct();
+            if (p == null || !p.isConnected()) return false;
+            Object rc = p.getClass().getMethod("getRemoteController").invoke(p);
+            if (rc == null) return false;
+            return (boolean) rc.getClass().getMethod("isConnected").invoke(rc);
+        } catch (Throwable t) { return false; }
     }
 
     /** RC akkumulátor töltöttség callback */
