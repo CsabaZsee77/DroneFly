@@ -100,6 +100,113 @@ public class DJIHelper {
 
     public boolean isRegistered() { return registered; }
 
+    // ── Telemetria segédek (reflexión keresztül – Aircraft API nincs a provided stubban) ──
+
+    /** RC csatlakoztatva van-e (reflexió) */
+    public boolean isRcConnected() {
+        try {
+            BaseProduct p = DJISDKManager.getInstance().getProduct();
+            if (p == null || !p.isConnected()) return false;
+            Object rc = p.getClass().getMethod("getRemoteController").invoke(p);
+            if (rc == null) return false;
+            return (boolean) rc.getClass().getMethod("isConnected").invoke(rc);
+        } catch (Throwable t) { return false; }
+    }
+
+    /** RC akkumulátor töltöttség callback */
+    public void getRcBatteryPercent(BatteryCallback cb) {
+        try {
+            BaseProduct p = DJISDKManager.getInstance().getProduct();
+            if (p == null || !p.isConnected()) { cb.onResult(-1); return; }
+            Object rc = p.getClass().getMethod("getRemoteController").invoke(p);
+            if (rc == null) { cb.onResult(-1); return; }
+            // RC: setChargeRemainingCallback vagy getBatteryInfo
+            // MSDK v4: RemoteController.setChargeRemainingCallback
+            Class<?> callbackClass = Class.forName(
+                    "dji.sdk.remotecontroller.RemoteController$ChargeRemainingCallback");
+            rc.getClass().getMethod("setChargeRemainingCallback", callbackClass)
+                .invoke(rc, java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),
+                    new Class[]{callbackClass},
+                    (proxy, method, args) -> {
+                        if (args != null && args.length > 0) {
+                            try {
+                                int pct = (int) args[0].getClass()
+                                        .getMethod("getPercent").invoke(args[0]);
+                                cb.onResult(pct);
+                            } catch (Throwable t2) { cb.onResult(-1); }
+                        }
+                        return null;
+                    }));
+        } catch (Throwable t) {
+            Log.d(TAG, "RC battery callback nem elérhető: " + t.getMessage());
+            cb.onResult(-1);
+        }
+    }
+
+    /** Drón akkumulátor töltöttség, -1 ha nem elérhető */
+    public interface BatteryCallback { void onResult(int percent); }
+
+    public void getDroneBatteryPercent(BatteryCallback cb) {
+        try {
+            BaseProduct p = DJISDKManager.getInstance().getProduct();
+            if (p == null || !p.isConnected()) { cb.onResult(-1); return; }
+            Object battery = p.getClass().getMethod("getBattery").invoke(p);
+            if (battery == null) { cb.onResult(-1); return; }
+            // getChargeRemainingInPercent(CommonCallbacks.CompletionCallbackWith)
+            // Egyszerűbb: StateCallback regisztrálás
+            battery.getClass().getMethod("setStateCallback",
+                    Class.forName("dji.common.battery.BatteryState$Callback"))
+                .invoke(battery, java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),
+                    new Class[]{Class.forName("dji.common.battery.BatteryState$Callback")},
+                    (proxy, method, args) -> {
+                        if ("onUpdate".equals(method.getName()) && args != null && args.length > 0) {
+                            try {
+                                int pct = (int) args[0].getClass()
+                                    .getMethod("getChargeRemainingInPercent").invoke(args[0]);
+                                cb.onResult(pct);
+                            } catch (Throwable t2) { cb.onResult(-1); }
+                        }
+                        return null;
+                    }));
+        } catch (Throwable t) { cb.onResult(-1); }
+    }
+
+    /** GPS műholdak száma – Flight Controller state callback (reflexió) */
+    public interface GpsCallback { void onResult(int satellites, boolean homeSet); }
+
+    public void setFlightStateCallback(GpsCallback cb) {
+        try {
+            BaseProduct p = DJISDKManager.getInstance().getProduct();
+            if (p == null || !p.isConnected()) return;
+            // Aircraft.getFlightController()
+            Object fc = p.getClass().getMethod("getFlightController").invoke(p);
+            if (fc == null) return;
+            Class<?> cbClass = Class.forName("dji.sdk.flightcontroller.FlightController$FlightControllerCurrentState");
+            // setStateCallback(FlightControllerCurrentState.Callback)
+            Class<?> callbackClass = Class.forName("dji.common.flightcontroller.FlightControllerState$Callback");
+            fc.getClass().getMethod("setStateCallback", callbackClass)
+                .invoke(fc, java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),
+                    new Class[]{callbackClass},
+                    (proxy, method, args) -> {
+                        if ("onUpdate".equals(method.getName()) && args != null && args.length > 0) {
+                            try {
+                                int sats = (int) args[0].getClass()
+                                    .getMethod("getSatelliteCount").invoke(args[0]);
+                                boolean homeSet = (boolean) args[0].getClass()
+                                    .getMethod("isHomePointSet").invoke(args[0]);
+                                cb.onResult(sats, homeSet);
+                            } catch (Throwable t2) { /* ignore */ }
+                        }
+                        return null;
+                    }));
+        } catch (Throwable t) {
+            Log.d(TAG, "FlightState callback nem érhető el: " + t.getMessage());
+        }
+    }
+
     public boolean isConnected() {
         try {
             BaseProduct product = DJISDKManager.getInstance().getProduct();

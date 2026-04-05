@@ -2,9 +2,10 @@
 
 **Modul:** M01
 **Szint:** L2 – Döntési Logika
-**Verzió:** v1.0.0
+**Verzió:** v1.2.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.2.0)
 
 ---
 
@@ -13,15 +14,16 @@
 ### GSD SeekBar
 
 ```
-SeekBar max = 90, progress → gsdCm érték:
+SeekBar max = 95, progress → gsdCm érték:
   gsdCm = 0.5 + progress * 0.1
 
   progress  0 → 0.5 cm/px
   progress 25 → 3.0 cm/px  (default)
-  progress 90 → 9.5 cm/px
+  progress 95 → 10.0 cm/px
 
-Label formátum: "GSD: 3.0 cm/px  →  magasság: 118 m"
-  → magasság: GsdCalculator.altitudeFromGsd(gsdCm) kerekítve egészre
+Label formátum: "GSD: 3.0 cm/px  →  magasság: 118 m  (ajanl. v: 12.0 m/s)"
+  → magasság: GsdCalculator.altitudeFromGsd(gsdCm, droneProfile) kerekítve egészre
+  → ajánlott sebesség: GsdCalculator.recommendedSpeedMs(gsdCm, droneProfile)
 ```
 
 ### Sidelap SeekBar
@@ -31,17 +33,17 @@ SeekBar max = 40, progress → sidelap érték:
   sidelap = 50 + progress  (50–90%)
   default progress = 25 → 75%
 
-Label formátum: "Oldallefedés: 75%"
+Label formátum: "Oldalsó átfedés: 75%"
 ```
 
 ### Frontlap SeekBar
 
 ```
 SeekBar max = 30, progress → frontlap érték:
-  frontlap = 50 + progress  (50–80%)
-  default progress = 30 → 80%
+  frontlap = 60 + progress  (60–90%)
+  default progress = 20 → 80%
 
-Label formátum: "Előrelefedés: 80%"
+Label formátum: "Menetirány átfedés: 80%"
 ```
 
 ### Sebesség SeekBar
@@ -49,12 +51,13 @@ Label formátum: "Előrelefedés: 80%"
 ```
 SeekBar max = 12, progress → sebesség:
   speedMs = 3 + progress  (3–15 m/s)
+  default progress = 4 → 7 m/s
 
-  GSD változásakor auto-frissítés:
-    javasolt = GsdCalculator.recommendedSpeedMs(gsdCm)
-    progress = (int)(javasolt - 3)  (0–12 értékre mappelve)
+  GSD vagy drón profil változásakor auto-frissítés:
+    javasolt = GsdCalculator.recommendedSpeedMs(gsdCm, droneProfile)
+    progress = round(javasolt) - 3  (0–12 értékre clampelve)
 
-Label formátum: "Sebesség: 7 m/s  (javasolt GSD alapján)"
+Label formátum: "Sebesség: 7 m/s"
 ```
 
 ### Repülési irány SeekBar
@@ -62,47 +65,100 @@ Label formátum: "Sebesség: 7 m/s  (javasolt GSD alapján)"
 ```
 SeekBar max = 179, progress → szög:
   angleDeg = progress  (0–179°)
-  default = 0° (É–D irányú sávok)
+  default = 0° (K–Ny sávok, É–D irányban haladás)
 
-Label formátum: "Repülési irány: 0°  (É–D)"
-  Tájolás szöveg:
-    0°   → "É–D"
-    90°  → "K–Ny"
-    45°  → "ÉK–DNy"
-    135° → "ÉNy–DK"
-    Egyéb → szám+°
+Label formátum: "Repülési irány: 0°"
+```
+
+### Offset SeekBar
+
+```
+SeekBar max = 30, progress → offset méter:
+  offsetM = progress  (0–30 m)
+  default progress = 0 → kikapcsolva
+
+Label formátum (progress = 0):
+  "Túlrepülés (offset): kikapcsolva"
+
+Label formátum (progress > 0):
+  "Túlrepülés: 10 m  (ajánl: 22 m)"
+  → ajánlott: (stripSpacingM + photoDistM) / 2.0
+  → ez az a távolság, ami biztosítja hogy a terület szélei is lefedésre kerüljenek
 ```
 
 ---
 
-## 2. Misszió generálás validáció
+## 2. Misszió generálás döntési logika
+
+### Auto-generálás (autoGenerateIfReady)
 
 ```
-"Misszió generálása" gomb megnyomva
+Minden pont lerakás / húzás / törlés után automatikusan hívódik
   │
   ▼
-Polygon csúcspontok száma < 3?
-  │ IGEN → Toast: "Rajzolj legalább 3 pontot a területhez!"
+polygonPoints.size() < 3?
+  │ IGEN → régi útvonal törlése, "N pont – még X kell" megjelenítve
   │        → leáll
   │ NEM
   ▼
-buildConfig() → MissionConfig létrehozása a SeekBar-ok alapján
+buildConfig() → MissionConfig (terrainFollowing = false)
   │
   ▼
 GridMissionGenerator.generate(polygonPoints, config)
+  → offset alkalmazva (ha offsetM > 0)
+  → akadályok szűrve (ha obstacles nem üres)
   │
   ▼
 result.errorMessage != null?
-  │ IGEN → Toast(result.errorMessage) → leáll
+  │ IGEN → tvStats.setText("Hiba: " + message) → leáll
   │ NEM
   ▼
-result.segments üres?
-  │ IGEN → Toast: "Nem sikerült útvonalat generálni" → leáll
+Térkép: narancs polyline, statisztika szöveg frissítés
+result.altitudeM > 120m? → Toast figyelmeztetés
+```
+
+### Manuális újragenerálás ("Újragenerálás" gomb)
+
+```
+"Újragenerálás (beallitasokkal)" gomb megnyomva
+  │
+  ▼
+polygonPoints.size() < 3?
+  │ IGEN → Toast: "Legalabb 3 pont szukseges!" → leáll
   │ NEM
   ▼
-Térkép frissítés + statisztikák megjelenítése
-  Összes waypoint = result.totalWaypoints
-  Szegmensek = result.segments.size()
+buildConfig() → MissionConfig (terrainFollowing = switchTerrain.isChecked())
+  │
+  ▼
+GridMissionGenerator.generate() → eredmény
+  │
+  ▼
+result.altitudeM > 120m? → Toast EU határ figyelmeztetés
+config.terrainFollowing = true?
+  │ IGEN → applyTerrainFollowing(result, altitudeM)
+  │         Open-Elevation API → DEM korrekció
+  │ NEM → kész
+```
+
+### Akadály dialog döntés
+
+```
+Akadály mód aktív + térkép kattintás
+  │
+  ▼
+showAddObstacleDialog(GeoPoint p):
+  Dialog: sugár (m) + magasság (m) bevitel
+  │
+  ▼
+radius <= 0 || height <= 0?
+  │ IGEN → Toast: "Értékeknek pozitívnak kell lenniük!" → leáll
+  │ NEM
+  ▼
+addObstacle(p, radius, height)
+  → ObstacleData létrehozás
+  → piros kör overlay rajzolás (36 szegmens)
+  → Marker elhelyezés (kattintásra: info + törlés)
+  → autoGenerateIfReady()
 ```
 
 ---

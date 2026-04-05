@@ -2,9 +2,10 @@
 
 **Modul:** M01
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.0.0
+**Verzió:** v1.2.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.2.0)
 
 ---
 
@@ -15,14 +16,19 @@
 | `MissionPlannerActivity.java` | Fő activity — térkép, UI kezelés, misszió vezérlés | ✅ Implementálva |
 | `model/MissionConfig.java` | Repülési paraméterek adatmodellje | ✅ Implementálva |
 | `model/WaypointData.java` | Egyedi waypoint adatmodellje | ✅ Implementálva |
-| `res/layout/activity_mission_planner.xml` | UI layout — térkép 65% + panel 35% | ✅ Implementálva |
+| `model/ObstacleData.java` | Akadály adatmodellje | ✅ Implementálva |
+| `model/DroneProfile.java` | Drón kamera profil adatmodellje | ✅ Implementálva |
+| `model/DroneProfiles.java` | Ismert drón profilok listája | ✅ Implementálva |
+| `res/layout/activity_mission_planner.xml` | UI layout — teljes képernyős térkép + lebegő panel | ✅ Implementálva |
+| `res/drawable/status_bar_bg.xml` | Státuszsáv lekerekített háttér drawable | ✅ Implementálva |
 
 **Függőségek:**
 - `mission/GridMissionGenerator.java` — M02 Grid Engine
 - `mission/MissionExporter.java` — M03 Export
 - `mission/CsvMissionParser.java` — M03 Import
 - `dji/MissionUploader.java` — M04 DJI Integráció
-- OSMDroid `MapView`, `MapController`, `MyLocationNewOverlay`
+- `dji/DJIHelper.java` — M04 DJI telemetria
+- OSMDroid `MapView`, `Marker`, `Polygon`, `Polyline`, `MyLocationNewOverlay`
 
 ---
 
@@ -31,34 +37,56 @@
 ```java
 // Térkép és overlay-ek
 MapView mapView;
-MapController mapController;
 MyLocationNewOverlay locationOverlay;
-Polyline missionPolyline;           // narancs útvonal
-List<Marker> polygonMarkers;        // kék csúcspontok
-Marker startMarker;                 // zöld Home pont
+List<GeoPoint> polygonPoints  = new ArrayList<>();
+List<Marker>   polygonMarkers = new ArrayList<>();  // API 22: removeIf kiváltva
+Polygon  polygonOverlay;
+Polyline missionOverlay;
+Marker   startMarker;
+GeoPoint startPoint = null;
+
+// Akadályok
+List<ObstacleData> obstacleList    = new ArrayList<>();
+List<Marker>       obstacleMarkers = new ArrayList<>();
+List<Polygon>      obstacleOverlays = new ArrayList<>();
+boolean obstacleMode = false;
 
 // Állapot
-List<GeoPoint> polygonPoints;       // rajzolt polygon csúcsok
-GeoPoint startPoint;                // Home pont (null = nincs beállítva)
-boolean isDrawMode = false;
-boolean isMissionRunning = false;
-boolean isPaused = false;
+boolean startPointMode = false;
+boolean missionUploaded = false;
+boolean missionRunning = false;
+boolean missionPaused  = false;
 int currentSegmentIndex = 0;
+GridMissionGenerator.GeneratorResult lastResult;
 
-// Misszió adatok
-List<List<WaypointData>> currentSegments;   // szegmensek listája
-List<WaypointData> currentWaypoints;        // összes waypoint (flat)
+// Státuszsáv
+TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt;
+Handler statusHandler = new Handler(Looper.getMainLooper());
+static final int STATUS_INTERVAL_MS = 2000;
 
-// DJI
-MissionUploader uploader;
+// Panel
+FrameLayout sidePanelContainer;
+ScrollView sidePanel;
+Button btnTogglePanel;
+boolean panelVisible = true;
 
-// UI elemek (SeekBar-ok és Label-ek)
-SeekBar sbGsd, sbSidelap, sbFrontlap, sbSpeed, sbAngle;
-TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvStats;
-Button btnDrawMode, btnClear, btnGenerate, btnSetStart;
-Button btnImportCsv, btnExport, btnUpload;
-Button btnPauseMission, btnStopMission;
-Button btnMyLocation;
+// Kamera beállítások
+LinearLayout cameraSettingsBody, cameraManualControls;
+Switch switchCameraAuto;
+Spinner spinnerPhotoMode, spinnerIso, spinnerShutter, spinnerWhiteBalance, spinnerFileFormat;
+boolean cameraExpanded = false;
+
+// Domborzatkövetés
+Switch switchTerrain;
+TextView tvTerrainInfo;
+
+// UI elemek
+TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvOffset, tvStats;
+SeekBar  sbGsd, sbSidelap, sbFrontlap, sbSpeed, sbAngle, sbOffset;
+Spinner  spinnerDrone;
+Button   btnUndoPoint, btnObstacle, btnClearObstacles, btnClear, btnGenerate,
+         btnUpload, btnStart, btnImportCsv, btnExport, btnSetStart,
+         btnMyLocation, btnMapToggle, btnPauseMission, btnStopMission;
 ```
 
 ---
@@ -69,48 +97,45 @@ Button btnMyLocation;
 onCreate()
   │
   ├─ OSMDroid konfiguráció:
-  │    Configuration.getInstance().setUserAgentValue("DroneFlyApp/1.0 ...")
-  │    Configuration.getInstance().setOsmdroidTileCache(getCacheDir()/osmdroid)
+  │    setOsmdroidBasePath() → external storage / cache
+  │    setTileFileSystemCacheMaxBytes(100 MB)
+  │    setUserAgentValue("DroneFlyApp/1.0 ...")
   │
   ├─ setContentView(R.layout.activity_mission_planner)
   │
-  ├─ mapView setup:
-  │    setUseDataConnection(true)
-  │    setTileSource(XYTileSource HTTPS)
-  │    setBuiltInZoomControls(true)
+  ├─ initMap()
+  │    mapView: ESRI World Imagery műhold tiles (HTTPS)
   │    setMultiTouchControls(true)
-  │    mapController.setCenter(47.1, 19.5)
-  │    mapController.setZoom(7)
+  │    center: (47.1, 19.5), zoom: 7
+  │    RotationGestureOverlay → forgatás gesztus
+  │    MyLocationNewOverlay → GPS pozíció
+  │    MapEventsOverlay → érintésfigyelő
+  │      singleTapConfirmedHelper:
+  │        startPointMode? → setStartPoint()
+  │        obstacleMode?   → showAddObstacleDialog()
+  │        else (nem fut misszió) → addPolygonPoint()
+  │      longPressHelper: return false (marker drag nem ütközik)
   │
-  ├─ locationOverlay setup:
-  │    new MyLocationNewOverlay(GpsMyLocationProvider, mapView)
-  │    enableMyLocation()
-  │    mapView.getOverlays().add(locationOverlay)
+  ├─ initControls()
+  │    SeekBar-ok bekötése, gomb listener-ek
+  │    spinnerDrone (DroneProfiles.ALL)
+  │    initCameraControls(), initTerrainControls(), initStatusBar()
+  │    updateLabels()
   │
-  ├─ Touch listener (térkép érintés):
-  │    onSingleTapConfirmed → isDrawMode? → addPolygonPoint()
-  │    onLongPress → setStartPoint()
-  │
-  ├─ SeekBar listeners (onProgressChanged):
-  │    sbGsd → updateGsdLabel() + updateSpeedFromGsd()
-  │    sbSidelap → updateSidelapLabel()
-  │    sbFrontlap → updateFrontlapLabel()
-  │    sbSpeed → updateSpeedLabel()
-  │    sbAngle → updateAngleLabel()
-  │
-  ├─ Default értékek betöltése:
-  │    sbGsd.setProgress(25)      → 3.0 cm/px
-  │    sbSidelap.setProgress(25)  → 75%
-  │    sbFrontlap.setProgress(30) → 80%
-  │    sbSpeed = auto (GSD-ből)
-  │    sbAngle.setProgress(0)     → 0°
-  │
-  ├─ Gomb listenersek bekötése
-  │
-  └─ uploader = new MissionUploader()
+  └─ showDisclaimerIfNeeded()
 
-onResume() → mapView.onResume()
-onPause()  → mapView.onPause()
+onResume()
+  → DJIHelper.setListener() → updateDroneStatus()
+  → statusHandler.post(statusRunnable)  // 2s státusz polling indul
+  → mapView.onResume()
+
+onPause()
+  → statusHandler.removeCallbacks(statusRunnable)
+  → mapView.onPause()
+
+onDestroy()
+  → statusHandler.removeCallbacks(statusRunnable)
+  → mapView.onDetach()
 ```
 
 ---
@@ -120,51 +145,89 @@ onPause()  → mapView.onPause()
 ```
                     ┌─────────────────────────────────┐
                     │            IDLE                  │
-                    │  - polygon: üres                 │
+                    │  - polygonPoints: üres           │
                     │  - mission: nincs                │
                     └──────────┬──────────────────────┘
-                               │ polygon rajzolva (≥3 pont)
+                               │ ≥1 pont lerakva
                                ▼
                     ┌─────────────────────────────────┐
-                    │        POLYGON_DRAWN             │
-                    │  - polygonPoints: feltöltve      │
-                    │  - mission: nincs                │
+                    │        DRAWING                   │
+                    │  - 1–2 pont: csak vonal          │
+                    │  - stats: "N pont – még X kell"  │
                     └──────────┬──────────────────────┘
-                               │ "Misszió generálása"
-                               ▼
+                               │ 3. pont lerakva
+                               ▼ (autoGenerateIfReady)
                     ┌─────────────────────────────────┐
                     │        MISSION_READY             │
-                    │  - currentSegments: feltöltve    │
-                    │  - polyline: megjelenítve        │
-                    │  - stats: megjelenítve           │
+                    │  - narancs polyline megjelenik   │
+                    │  - stats megjelenítve            │
+                    │  - Feltöltés/Export engedélyezve │
                     └──────┬───────────┬──────────────┘
-               feltöltés+  │           │ export
-               start        │           ▼
+               [Feltöltés] │           │ [Exportálás]
+                            │           ▼
                             │   ┌──────────────┐
                             │   │  EXPORTED    │
                             │   │  CSV / KMZ   │
                             │   └──────────────┘
                             ▼
                     ┌─────────────────────────────────┐
+                    │     UPLOADED (feltöltve)         │
+                    │  - START gomb engedélyezve       │
+                    └──────────┬──────────────────────┘
+                               │ [START]
+                               ▼
+                    ┌─────────────────────────────────┐
                     │       MISSION_RUNNING            │
-                    │  - isMissionRunning = true       │
-                    │  - Pause/Stop gombok aktívak     │
+                    │  - missionRunning = true         │
+                    │  - Szünet/Stop gombok aktívak    │
                     └──────┬──────────────────────────┘
-                           │ "⏸ Szünet"
+                           │ "Szünet"
                            ▼
                     ┌─────────────────────────────────┐
                     │       MISSION_PAUSED             │
-                    │  - isPaused = true               │
+                    │  - missionPaused = true          │
                     │  - drón lebeg                    │
                     └──────┬──────────────────────────┘
-                           │ "▶ Folytatás"
+                           │ "Folytatás"
                            ▼
                     (vissza MISSION_RUNNING-ba)
 
                     MISSION_RUNNING / PAUSED
-                           │ "⏹ Stop" + megerősítés
+                           │ "Stop" + megerősítés
                            ▼
                     (vissza MISSION_READY-be)
+
+Bármely állapotban:
+  - Csúcspont drag/törlés/hozzáadás → autoGenerateIfReady()
+  - Akadály hozzáadás/törlés → autoGenerateIfReady()
+  - MISSION_RUNNING állapotban polygon szerkesztés nem lehetséges
+```
+
+---
+
+## autoGenerateIfReady() — azonnali misszió generálás
+
+```java
+void autoGenerateIfReady() {
+    if (polygonPoints.size() < 3) {
+        // 3 pontnál kevesebb: útvonal törlése, stats frissítés
+        // "N pont – még X kell a területhez"
+        return;
+    }
+    MissionConfig config = buildConfig();
+    config.terrainFollowing = false; // auto-generálásnál nincs DEM lekérés
+    lastResult = GridMissionGenerator.generate(polygonPoints, config);
+
+    if (lastResult.errorMessage != null) {
+        tvStats.setText("Hiba: " + lastResult.errorMessage);
+        return;
+    }
+    drawMissionPath(lastResult.segments);
+    btnUpload.setEnabled(DJIHelper.isConnected() && !missionRunning);
+    btnExport.setEnabled(true);
+    // Stats megjelenítés (skippedByObstacle is ha >0)
+    // 120m EU határt figyelmeztet Toast-tal
+}
 ```
 
 ---
@@ -173,89 +236,122 @@ onPause()  → mapView.onPause()
 
 ```java
 MissionConfig buildConfig() {
-    double gsdCm   = 0.5 + sbGsd.getProgress() * 0.1;
-    int sidelap    = 50 + sbSidelap.getProgress();   // 50–90%
-    int frontlap   = 50 + sbFrontlap.getProgress();  // 50–80%
-    float speed    = 3f + sbSpeed.getProgress();     // 3–15 m/s
-    int angle      = sbAngle.getProgress();          // 0–179°
-
-    return new MissionConfig(gsdCm, sidelap, frontlap, speed, angle, true);
-    // true = returnHome = misszió végén RTH
+    MissionConfig c = new MissionConfig();
+    c.droneProfile     = getSelectedDrone();              // Spinner kiválasztott profil
+    c.gsdCm            = 0.5 + sbGsd.getProgress() * 0.1;
+    c.altitudeM        = GsdCalculator.altitudeFromGsd(c.gsdCm, c.droneProfile);
+    c.sidelapPercent   = 50.0 + sbSidelap.getProgress(); // 50–90%
+    c.frontlapPercent  = 60.0 + sbFrontlap.getProgress();// 60–90%
+    c.speedMs          = 3.0f + sbSpeed.getProgress();   // 3–15 m/s
+    c.flightAngleDeg   = sbAngle.getProgress();          // 0–179°
+    c.terrainFollowing = switchTerrain.isChecked();
+    c.offsetM          = sbOffset.getProgress();         // 0–30 m
+    c.obstacles        = new ArrayList<>(obstacleList);  // akadályok másolata
+    c.cameraSettings   = buildCameraSettings();
+    return c;
 }
 ```
 
 ---
 
-## drawMissionPath() — térkép frissítés
+## Obstacle rendszer
 
 ```java
-void drawMissionPath(List<WaypointData> waypoints) {
-    // Régi polyline eltávolítása
-    if (missionPolyline != null)
-        mapView.getOverlays().remove(missionPolyline);
+// Akadály hozzáadása
+void addObstacle(GeoPoint p, float radiusM, float heightM) {
+    ObstacleData obs = new ObstacleData(lat, lon, radiusM, heightM);
+    obstacleList.add(obs);
 
-    List<GeoPoint> points = new ArrayList<>();
+    // Kör overlay (36 szegmens közelítés)
+    Polygon circle = buildCircleOverlay(lat, lon, radiusM);
+    // fill: 0x44FF3300 (áttetsző piros), outline: 0xCCFF4400 (narancs)
+    obstacleOverlays.add(circle);
+    mapView.getOverlays().add(0, circle);  // legalsó overlay réteg
 
-    // Start pont hozzáadása az elejére (ha van)
-    if (startPoint != null)
-        points.add(startPoint);
-
-    // Waypontok
-    for (WaypointData wp : waypoints)
-        points.add(new GeoPoint(wp.lat, wp.lon));
-
-    // Start pont hozzáadása a végére (RTH)
-    if (startPoint != null)
-        points.add(startPoint);
-
-    // Narancs polyline
-    missionPolyline = new Polyline();
-    missionPolyline.setPoints(points);
-    missionPolyline.getOutlinePaint().setColor(0xFFFF8C00);
-    missionPolyline.getOutlinePaint().setStrokeWidth(3f);
-    mapView.getOverlays().add(missionPolyline);
-    mapView.invalidate();
+    // Marker (ANCHOR_CENTER, CENTER) + kattintás → info + törlés dialog
+    obstacleMarkers.add(marker);
+    autoGenerateIfReady();
 }
-```
 
----
-
-## showStats() — statisztika kijelzés
-
-```java
-void showStats(GridMissionGenerator.GeneratorResult result) {
-    double areHa = result.areaM2 / 10_000.0;
-    int segments = result.segments.size();
-    String segInfo = segments > 1
-        ? result.totalWaypoints + " waypoint (" + segments + " szegmens)"
-        : result.totalWaypoints + " waypoint";
-
-    tvStats.setText(
-        "Terület: " + String.format("%.2f", areHa) + " ha\n" +
-        "Magasság: " + (int)result.altitudeM + " m\n" +
-        "Waypontok: " + segInfo + "\n" +
-        "Becsült idő: ~" + (int)result.estimatedMinutes + " perc\n" +
-        "Sávköz: " + String.format("%.1f", result.stripSpacingM) + " m  |  " +
-        "Fotóköz: " + String.format("%.1f", result.photoDistM) + " m"
-    );
-}
-```
-
----
-
-## setMissionRunning() — UI állapotváltás
-
-```java
-void setMissionRunning(boolean running) {
-    isMissionRunning = running;
-    btnPauseMission.setEnabled(running);
-    btnStopMission.setEnabled(running);
-    btnUpload.setEnabled(!running);
-    btnGenerate.setEnabled(!running);
-    if (!running) {
-        isPaused = false;
-        btnPauseMission.setText("⏸ Szünet");
+// Kör polygon összeállítás
+Polygon buildCircleOverlay(double lat, double lon, float radiusM) {
+    List<GeoPoint> pts = new ArrayList<>();
+    for (int i = 0; i <= 36; i++) {
+        double angle = 2π * i / 36;
+        double dLat = radiusM * cos(angle) / 111000.0;
+        double dLon = radiusM * sin(angle) / (111000.0 * cos(toRadians(lat)));
+        pts.add(new GeoPoint(lat + dLat, lon + dLon));
     }
+    // ...
+}
+```
+
+**Obstacle mód váltás:**
+```java
+void toggleObstacleMode() {
+    obstacleMode = !obstacleMode;
+    // Gomb szöveg + szín változik (actív: narancsvörös, inaktív: sötétpiros)
+}
+```
+
+**Törlés:**
+```java
+void removeObstacle(int index)      // egyedi törlés index szerint
+void clearAllObstacles()            // megerősítő dialog → összes törlés
+// clearAll() is törli az összes akadályt
+```
+
+---
+
+## Státuszsáv — updateStatusBar()
+
+```java
+// 2 mp-enként fut: statusHandler.postDelayed(statusRunnable, 2000)
+
+void updateStatusBar() {
+    // Tablet akku (szinkron)
+    Intent bi = registerReceiver(null, ACTION_BATTERY_CHANGED);
+    int pct = bi.level * 100 / bi.scale;
+    sbTabletBatt.setText("TAB: " + pct + "%" + (charging ? "+" : ""));
+    // szín: <20%=piros, <40%=narancs, ≥40%=zöld
+
+    // DJI telemetria (DJIHelper reflection-alapú)
+    if (!DJIHelper.isConnected()) {
+        // minden mező "--" → szürkére
+        return;
+    }
+    sbDrone.setText(DJIHelper.getConnectedProductName());   // zöld
+    sbRc.setText("RC: " + (DJIHelper.isRcConnected() ? "OK" : "nincs"));
+
+    DJIHelper.getRcBatteryPercent(pct -> runOnUiThread(
+        () -> sbRcBatt.setText(pct + "%")));
+
+    DJIHelper.getDroneBatteryPercent(pct -> runOnUiThread(
+        () -> sbDroneBatt.setText("AKKU: " + pct + "%")));
+
+    DJIHelper.setFlightStateCallback((sats, homeSet) -> runOnUiThread(
+        () -> sbGps.setText("SAT: " + sats + (homeSet ? " H" : ""))));
+}
+```
+
+---
+
+## Panel csúsztatás — toggleSidePanel()
+
+```java
+void toggleSidePanel() {
+    panelVisible = !panelVisible;
+    if (panelVisible) {
+        sidePanel.setVisibility(VISIBLE);
+        ObjectAnimator.ofFloat(sidePanel, "translationX", panelWidth, 0f)
+            .setDuration(250).setInterpolator(new DecelerateInterpolator()).start();
+        btnTogglePanel.setText("»");  // » = zárásra kész
+    } else {
+        ObjectAnimator.ofFloat(sidePanel, "translationX", 0f, panelWidth)
+            .setDuration(250).addListener(onEnd → sidePanel.setVisibility(GONE)).start();
+        btnTogglePanel.setText("«");  // « = nyitásra kész
+    }
+    // Csak a ScrollView animálódik; a toggle gomb helyben marad
 }
 ```
 
@@ -265,56 +361,129 @@ void setMissionRunning(boolean running) {
 
 ```java
 public class MissionConfig {
-    public double gsdCm;           // pl. 3.0
-    public double altitudeM;       // GsdCalculator-ból számítva
-    public int sidelapPercent;     // 50–90, default 75
-    public int frontlapPercent;    // 50–80, default 80
-    public float speedMs;          // 3–15, default auto
-    public int flightAngleDeg;     // 0–179, default 0
-    public boolean returnHome;     // true = RTH misszió végén
+    public double gsdCm = 3.0;
+    public double altitudeM = 80.0;
+    public double sidelapPercent = 75.0;
+    public double frontlapPercent = 80.0;
+    public float speedMs = 7.0f;
+    public double flightAngleDeg = 0.0;
+    public boolean returnHome = true;
+    public boolean terrainFollowing = false;
+    public double offsetM = 0.0;                    // túlrepülési határ (m)
+    public DroneProfile droneProfile;               // kamera profil
+    public CameraSettings cameraSettings;           // kamera módok
+    public List<ObstacleData> obstacles = new ArrayList<>();  // akadályok
 }
 ```
 
-## WaypointData adatmodell
+## ObstacleData adatmodell
 
 ```java
-public class WaypointData {
-    public double lat;             // WGS84 szélességi fok
-    public double lon;             // WGS84 hosszúsági fok
-    public double altitudeM;       // repülési magasság (AGL méter)
-    public float gimbalPitch;      // -90 (nadir)
-    public boolean shootPhoto;     // true = foto készítés
-    public float heading;          // drón iránya (-1 = automatikus)
+public class ObstacleData {
+    public double latitude, longitude;
+    public float radiusM;    // biztonsági zóna sugara (m)
+    public float heightM;    // akadály magassága talajhoz képest (m)
+
+    // Veszélyes-e ezen a magasságon?
+    public boolean isDangerousAt(float flightAltM) {
+        return flightAltM <= heightM;
+    }
+
+    // 2D körzetben van-e a waypoint?
+    public boolean containsPoint(double lat, double lon) {
+        double dLat = (lat - latitude) * 111000.0;
+        double dLon = (lon - longitude) * 111000.0 * cos(toRadians(latitude));
+        return sqrt(dLat*dLat + dLon*dLon) <= radiusM;
+    }
 }
 ```
 
 ---
 
-## Layout struktúra
+## Layout struktúra (v1.2.0)
 
 ```
-LinearLayout (horizontal)
-├─ FrameLayout (65% weight)
+FrameLayout (rootLayout, full screen)
+├─ FrameLayout (mapContainer, match_parent)
 │   ├─ org.osmdroid.views.MapView (id: mapView)
-│   └─ Button (id: btnMyLocation, jobb felső, 48×48dp, "📍")
+│   └─ LinearLayout (vertical, top|start, margin 8dp)
+│       ├─ Button (id: btnMyLocation, 48×48dp, "GPS", #CC1a1a2e)
+│       └─ Button (id: btnMapToggle, 48×48dp, "SAT"/"MAP", #CC1a1a2e)
 │
-└─ ScrollView (35% weight, #1a1a2e háttér)
-    └─ LinearLayout (vertical, 12dp padding)
-        ├─ TextView "Misszió beállítások" (bold, 16sp)
-        ├─ TextView (id: tvGsd) + SeekBar (id: sbGsd, max=90)
-        ├─ TextView (id: tvSidelap) + SeekBar (id: sbSidelap, max=40)
-        ├─ TextView (id: tvFrontlap) + SeekBar (id: sbFrontlap, max=30)
-        ├─ TextView (id: tvSpeed) + SeekBar (id: sbSpeed, max=12)
-        ├─ TextView (id: tvAngle) + SeekBar (id: sbAngle, max=179)
-        ├─ Button (id: btnDrawMode, "Terület rajzolása", #004499)
-        ├─ Button (id: btnClear, "Törlés", #660000)
-        ├─ Button (id: btnGenerate, "Misszió generálása", #006600)
-        ├─ Button (id: btnSetStart, "Start/Home pont", #005566)
-        ├─ Button (id: btnImportCsv, "CSV importálása", #555500)
-        ├─ Button (id: btnExport, "Exportálás (CSV / KMZ)", #334400)
-        ├─ Button (id: btnUpload, "Feltöltés + Start", #FF6600, bold, 52dp)
-        ├─ LinearLayout (horizontal)
-        │   ├─ Button (id: btnPauseMission, "⏸ Szünet", #885500, disabled)
-        │   └─ Button (id: btnStopMission, "⏹ Stop", #880000, disabled)
-        └─ TextView (id: tvStats, #AAAAAA, 11sp)
+├─ LinearLayout (id: statusBar, top, 38dp magasság, lebegő sziget)
+│   │   marginStart=64dp, marginEnd=364dp (GPS gombok és panel között)
+│   │   background: status_bar_bg (lekerekített, #DD1a1a2e), elevation=6dp
+│   ├─ TextView (id: sbDrone)     "DRON: --" / drón neve
+│   ├─ separator
+│   ├─ TextView (id: sbRc)        "RC: --" / "RC: OK"
+│   ├─ TextView (id: sbRcBatt)    "" / "85%"
+│   ├─ separator
+│   ├─ TextView (id: sbGps)       "SAT: --" / "SAT: 14 H"
+│   ├─ separator
+│   ├─ TextView (id: sbDroneBatt) "DRON AKKU: --" / "AKKU: 92%"
+│   ├─ separator
+│   └─ TextView (id: sbTabletBatt)"TAB: --" / "TAB: 78%"
+│
+└─ FrameLayout (id: sidePanelContainer, end, elevation=8dp)
+    │   (együtt csúszik: toggle gomb + panel ScrollView)
+    ├─ Button (id: btnTogglePanel, 36×72dp, start|center_vertical)
+    │          "»" = panel látható (zárásra kész)
+    │          "«" = panel rejtett (nyitásra kész)
+    └─ ScrollView (id: sidePanel, 320dp széles, end)
+        └─ LinearLayout (vertical, 12dp padding)
+            ├─ TextView "Drón" + Spinner (id: spinnerDrone)
+            ├─ TextView (id: tvDroneStatus)   DJI kapcsolat státusz
+            ├─ TextView "Misszió beállítások" (bold, 16sp)
+            ├─ TextView (id: tvGsd) + SeekBar (id: sbGsd, max=95)
+            ├─ TextView (id: tvSidelap) + SeekBar (id: sbSidelap, max=40)
+            ├─ TextView (id: tvFrontlap) + SeekBar (id: sbFrontlap, max=30)
+            ├─ TextView (id: tvSpeed) + SeekBar (id: sbSpeed, max=12)
+            ├─ TextView (id: tvAngle) + SeekBar (id: sbAngle, max=179)
+            ├─ TextView (id: tvOffset) + SeekBar (id: sbOffset, max=30)
+            ├─ separator
+            ├─ LinearLayout "Domborzatkövetés:" + Switch (id: switchTerrain)
+            ├─ TextView (id: tvTerrainInfo)
+            ├─ separator
+            ├─ LinearLayout (id: cameraHeader) "Kamera beállítások" + ▼/▲
+            ├─ LinearLayout (id: cameraSettingsBody, visibility=gone)
+            │   ├─ Switch (id: switchCameraAuto)
+            │   ├─ Spinner (id: spinnerFileFormat)
+            │   └─ LinearLayout (id: cameraManualControls, visibility=gone)
+            │       ├─ Spinner (id: spinnerPhotoMode)
+            │       ├─ Spinner (id: spinnerIso)
+            │       ├─ Spinner (id: spinnerShutter)
+            │       └─ Spinner (id: spinnerWhiteBalance)
+            ├─ separator
+            ├─ Button (id: btnUndoPoint, "Utolso pont torles", #334466)
+            ├─ Button (id: btnObstacle, "+ Akadaly jelolese", #662200)
+            │          aktív állapotban: "Akadaly mod: BE...", #CC4400
+            ├─ Button (id: btnClearObstacles, "Akadalyok torlese", #441100)
+            ├─ Button (id: btnClear, "Osszes torles", #660000)
+            ├─ Button (id: btnGenerate, "Ujragenerales (beallitasokkal)", #006600)
+            ├─ Button (id: btnSetStart, "Start/Home pont", #005566)
+            ├─ Button (id: btnImportCsv, "CSV importalasa", #555500)
+            ├─ Button (id: btnExport, "Exportalas (CSV / KMZ)", #334400)
+            ├─ Button (id: btnUpload, "Feltoltes", #884400)
+            ├─ Button (id: btnStart, "START", #FF6600, bold, 52dp, disabled)
+            ├─ LinearLayout (horizontal)
+            │   ├─ Button (id: btnPauseMission, "Szunet", disabled)
+            │   └─ Button (id: btnStopMission, "Stop", disabled)
+            └─ TextView (id: tvStats, #AAAAAA, 11sp)
+```
+
+---
+
+## API 22 kompatibilitás
+
+```java
+// HELYTELEN (API 24+ szükséges, Crystal Sky API 22):
+mapView.getOverlays().removeIf(o -> o instanceof Marker);
+
+// HELYES (API 22-n is működik):
+for (Marker m : polygonMarkers) {
+    mapView.getOverlays().remove(m);
+}
+polygonMarkers.clear();
+// → polygonMarkers, obstacleMarkers, obstacleOverlays listák
+//   mind explicit for loop-pal kerülnek törlésre
 ```

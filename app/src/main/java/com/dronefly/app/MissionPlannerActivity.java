@@ -2,14 +2,21 @@ package com.dronefly.app;
 
 import android.animation.ObjectAnimator;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.location.Location;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
+import android.text.InputType;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -37,6 +44,7 @@ import com.dronefly.app.mission.MissionExporter;
 import com.dronefly.app.model.DroneProfile;
 import com.dronefly.app.model.DroneProfiles;
 import com.dronefly.app.model.MissionConfig;
+import com.dronefly.app.model.ObstacleData;
 import com.dronefly.app.model.WaypointData;
 
 import org.osmdroid.config.Configuration;
@@ -70,14 +78,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private Polyline missionOverlay;
     private Marker   startMarker;
     private GeoPoint startPoint = null;
-    private boolean  drawMode = false;
     private boolean  startPointMode = false;
 
     // Beállítások widgetek
-    private TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvStats;
-    private SeekBar  sbGsd, sbSidelap, sbFrontlap, sbSpeed, sbAngle;
+    private TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvOffset, tvStats;
+    private SeekBar  sbGsd, sbSidelap, sbFrontlap, sbSpeed, sbAngle, sbOffset;
     private Spinner  spinnerDrone;
-    private Button   btnDrawMode, btnClear, btnGenerate, btnUpload, btnStart,
+    private Button   btnUndoPoint, btnClear, btnGenerate, btnUpload, btnStart,
                      btnImportCsv, btnExport, btnSetStart, btnMyLocation,
                      btnMapToggle, btnPauseMission, btnStopMission;
     private boolean  missionUploaded = false;
@@ -100,6 +107,18 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private ScrollView sidePanel;
     private Button btnTogglePanel;
     private boolean panelVisible = true;
+
+    // Akadályok
+    private final List<ObstacleData> obstacleList    = new ArrayList<>();
+    private final List<Marker>       obstacleMarkers = new ArrayList<>();
+    private final List<Polygon>      obstacleOverlays = new ArrayList<>();
+    private boolean obstacleMode = false;
+    private Button  btnObstacle, btnClearObstacles;
+
+    // Státuszsáv
+    private TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt;
+    private final Handler statusHandler = new Handler(Looper.getMainLooper());
+    private static final int STATUS_INTERVAL_MS = 2000;
 
     private static final float MAX_ALTITUDE_LEGAL = 120f; // EU Open kategória limit (m)
 
@@ -171,16 +190,21 @@ public class MissionPlannerActivity extends AppCompatActivity {
             public boolean singleTapConfirmedHelper(GeoPoint p) {
                 if (startPointMode) {
                     setStartPoint(p);
-                } else if (drawMode) {
+                } else if (obstacleMode) {
+                    showAddObstacleDialog(p);
+                } else if (!missionRunning) {
+                    // Mindig aktív pontlerakás (kivéve ha misszió fut)
                     addPolygonPoint(p);
                 }
                 return true;
             }
             @Override
             public boolean longPressHelper(GeoPoint p) {
-                // Hosszú érintés = start/home pont beállítása
-                setStartPoint(p);
-                return true;
+                // Hosszú érintés a térképen: nem csinál semmit.
+                // A marker drag az OSMDroid saját long-press mechanizmusa,
+                // azt NEM szabad itt elkapni – különben ütközik a szerkesztéssel.
+                // Start pontot csak a dedikált gombbal lehet beállítani.
+                return false;
             }
         }));
     }
@@ -193,6 +217,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         tvFrontlap = findViewById(R.id.tvFrontlap);
         tvSpeed    = findViewById(R.id.tvSpeed);
         tvAngle    = findViewById(R.id.tvAngle);
+        tvOffset   = findViewById(R.id.tvOffset);
         tvStats    = findViewById(R.id.tvStats);
 
         sbGsd      = findViewById(R.id.sbGsd);      // 0–95 → 0.5–10.0 cm/px
@@ -200,6 +225,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbFrontlap = findViewById(R.id.sbFrontlap); // 0–30 → 60–90%
         sbSpeed    = findViewById(R.id.sbSpeed);    // 0–12 → 3–15 m/s
         sbAngle    = findViewById(R.id.sbAngle);    // 0–179°
+        sbOffset   = findViewById(R.id.sbOffset);  // 0–30 m
 
         // Default: GSD 3.0 cm → progress = (3.0-0.5)/0.1 = 25
         sbGsd.setMax(95);
@@ -227,12 +253,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbFrontlap.setOnSeekBarChangeListener(listener);
         sbSpeed.setOnSeekBarChangeListener(listener);
         sbAngle.setOnSeekBarChangeListener(listener);
+        sbOffset.setOnSeekBarChangeListener(listener);
 
-        btnDrawMode  = findViewById(R.id.btnDrawMode);
-        btnClear     = findViewById(R.id.btnClear);
-        btnGenerate  = findViewById(R.id.btnGenerate);
-        btnUpload    = findViewById(R.id.btnUpload);
-        btnStart     = findViewById(R.id.btnStart);
+        btnUndoPoint      = findViewById(R.id.btnUndoPoint);
+        btnObstacle       = findViewById(R.id.btnObstacle);
+        btnClearObstacles = findViewById(R.id.btnClearObstacles);
+        btnClear          = findViewById(R.id.btnClear);
+        btnGenerate       = findViewById(R.id.btnGenerate);
+        btnUpload         = findViewById(R.id.btnUpload);
+        btnStart          = findViewById(R.id.btnStart);
         btnImportCsv = findViewById(R.id.btnImportCsv);
         btnExport    = findViewById(R.id.btnExport);
         btnSetStart  = findViewById(R.id.btnSetStart);
@@ -273,7 +302,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnPauseMission.setOnClickListener(v -> togglePauseMission());
         btnStopMission.setOnClickListener(v -> confirmStopMission());
 
-        btnDrawMode.setOnClickListener(v -> toggleDrawMode());
+        btnUndoPoint.setOnClickListener(v -> removeLastPolygonPoint());
+        btnObstacle.setOnClickListener(v -> toggleObstacleMode());
+        btnClearObstacles.setOnClickListener(v -> clearAllObstacles());
         btnClear.setOnClickListener(v -> clearAll());
         btnGenerate.setOnClickListener(v -> generateMission());
         btnUpload.setOnClickListener(v -> uploadCurrentSegment());
@@ -287,6 +318,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnExport.setEnabled(false);
         initCameraControls();
         initTerrainControls();
+        initStatusBar();
         updateLabels();
     }
 
@@ -335,6 +367,100 @@ public class MissionPlannerActivity extends AppCompatActivity {
         cameraExpanded = !cameraExpanded;
         cameraSettingsBody.setVisibility(cameraExpanded ? View.VISIBLE : View.GONE);
         tvCameraExpand.setText(cameraExpanded ? "\u25B2" : "\u25BC");
+    }
+
+    // ── Státuszsáv ────────────────────────────────────────────────────
+
+    private void initStatusBar() {
+        sbDrone     = findViewById(R.id.sbDrone);
+        sbRc        = findViewById(R.id.sbRc);
+        sbRcBatt    = findViewById(R.id.sbRcBatt);
+        sbGps       = findViewById(R.id.sbGps);
+        sbDroneBatt = findViewById(R.id.sbDroneBatt);
+        sbTabletBatt= findViewById(R.id.sbTabletBatt);
+        updateStatusBar();
+    }
+
+    private final Runnable statusRunnable = new Runnable() {
+        @Override public void run() {
+            updateStatusBar();
+            statusHandler.postDelayed(this, STATUS_INTERVAL_MS);
+        }
+    };
+
+    private void updateStatusBar() {
+        if (sbDrone == null) return;
+
+        // ── Tablet akkumulátor (Android BatteryManager) ──
+        try {
+            Intent bi = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (bi != null) {
+                int lvl   = bi.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int scale = bi.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                int pct   = (scale > 0) ? (lvl * 100 / scale) : -1;
+                boolean charging = bi.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                        == BatteryManager.BATTERY_STATUS_CHARGING;
+                if (pct >= 0) {
+                    sbTabletBatt.setText("TAB: " + pct + "%" + (charging ? "+" : ""));
+                    sbTabletBatt.setTextColor(pct < 20 ? 0xFFFF4444 : pct < 40 ? 0xFFFFAA00 : 0xFF88FF88);
+                }
+            }
+        } catch (Throwable t) { /* ignore */ }
+
+        // ── DJI telemetria ──
+        try {
+            DJIHelper dji = DJIHelper.getInstance();
+            if (!dji.isConnected()) {
+                sbDrone.setText("DRON: nincs");
+                sbDrone.setTextColor(0xFFFF4444);
+                sbRc.setText("RC: --");    sbRc.setTextColor(0xFF888888);
+                sbRcBatt.setText("");
+                sbGps.setText("SAT: --"); sbGps.setTextColor(0xFF888888);
+                sbDroneBatt.setText("AKKU: --"); sbDroneBatt.setTextColor(0xFF888888);
+                return;
+            }
+
+            // Drón neve
+            String name = dji.getConnectedProductName();
+            sbDrone.setText(name != null ? name : "Dron");
+            sbDrone.setTextColor(0xFF44FF88);
+
+            // RC kapcsolat
+            boolean rcOk = dji.isRcConnected();
+            sbRc.setText("RC: " + (rcOk ? "OK" : "nincs"));
+            sbRc.setTextColor(rcOk ? 0xFF44FF88 : 0xFFFF4444);
+
+            // RC akku (async)
+            dji.getRcBatteryPercent(pct -> runOnUiThread(() -> {
+                if (sbRcBatt == null) return;
+                if (pct >= 0) {
+                    sbRcBatt.setText(pct + "%");
+                    sbRcBatt.setTextColor(pct < 20 ? 0xFFFF4444 : pct < 40 ? 0xFFFFAA00 : 0xFF44FF88);
+                } else {
+                    sbRcBatt.setText("");
+                }
+            }));
+
+            // Drón akku (async)
+            dji.getDroneBatteryPercent(pct -> runOnUiThread(() -> {
+                if (sbDroneBatt == null) return;
+                if (pct >= 0) {
+                    sbDroneBatt.setText("AKKU: " + pct + "%");
+                    sbDroneBatt.setTextColor(pct < 20 ? 0xFFFF4444 : pct < 40 ? 0xFFFFAA00 : 0xFF44FF88);
+                } else {
+                    sbDroneBatt.setText("AKKU: --");
+                    sbDroneBatt.setTextColor(0xFF888888);
+                }
+            }));
+
+            // GPS műholdak (Flight Controller callback – csak egyszer regisztráljuk)
+            dji.setFlightStateCallback((sats, homeSet) -> runOnUiThread(() -> {
+                if (sbGps == null) return;
+                sbGps.setText("SAT: " + sats + (homeSet ? " H" : ""));
+                sbGps.setTextColor(sats >= 10 ? 0xFF44FF88 : sats >= 6 ? 0xFFFFAA00 : 0xFFFF4444);
+            }));
+
+        } catch (Throwable t) { /* DJI SDK nem elérhető */ }
     }
 
     // ── Panel csúsztatás ──────────────────────────────────────────────
@@ -581,31 +707,28 @@ public class MissionPlannerActivity extends AppCompatActivity {
         int    angle  = getAngle();
         float  recSpd = GsdCalculator.recommendedSpeedMs(gsd, drone);
 
-        tvGsd.setText(String.format("GSD: %.1f cm/px  →  magasság: %.0f m  (ajánlott v: %.1f m/s)",
+        tvGsd.setText(String.format("GSD: %.1f cm/px  →  magassag: %.0f m  (ajanl. v: %.1f m/s)",
                 gsd, alt, recSpd));
-        tvSidelap.setText(String.format("Oldalsó átfedés: %.0f%%", side));
-        tvFrontlap.setText(String.format("Menetirány átfedés: %.0f%%", front));
-        tvSpeed.setText(String.format("Sebesség: %.0f m/s", speed));
-        tvAngle.setText(String.format("Repülési irány: %d°", angle));
+        tvSidelap.setText(String.format("Oldalsó átfedes: %.0f%%", side));
+        tvFrontlap.setText(String.format("Menetirany átfedes: %.0f%%", front));
+        tvSpeed.setText(String.format("Sebesseg: %.0f m/s", speed));
+        tvAngle.setText(String.format("Repülési irany: %d°", angle));
+        int offsetM = getOffset();
+        if (offsetM == 0) {
+            tvOffset.setText("Tulrepüles (offset): kikapcsolva");
+        } else {
+            // Auto ajánlott érték: fél sávköz + fél fotótáv
+            double autoOff = (GsdCalculator.stripSpacingM(alt, side, drone)
+                           + GsdCalculator.photoDistanceM(alt, front, drone)) / 2.0;
+            tvOffset.setText(String.format("Tulrepüles: %d m  (ajanl: %.0f m)", offsetM, autoOff));
+        }
     }
 
     // ── Polygon rajzolás ───────────────────────────────────────────────────
 
-    private void toggleDrawMode() {
-        startPointMode = false;
-        drawMode = !drawMode;
-        btnDrawMode.setText(drawMode ? "Rajzolás KÉSZ" : "Terület rajzolása");
-        btnSetStart.setAlpha(1.0f);
-        if (!drawMode && polygonPoints.size() >= 3) {
-            Toast.makeText(this, polygonPoints.size() + " pont – terület kész", Toast.LENGTH_SHORT).show();
-        }
-    }
-
     private void toggleStartPointMode() {
-        drawMode = false;
         startPointMode = !startPointMode;
         btnSetStart.setText(startPointMode ? "Kattints a start pontra..." : "Start/Home pont");
-        btnDrawMode.setText("Terület rajzolása");
         if (startPointMode)
             Toast.makeText(this, "Kattints a térképre a start/felszállási ponthoz", Toast.LENGTH_SHORT).show();
     }
@@ -657,14 +780,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
         polygonPoints.add(p);
         refreshPolygonOverlay();
 
-        final int idx = polygonPoints.size() - 1;
         Marker m = new Marker(mapView);
         m.setPosition(p);
         m.setTitle("P" + polygonPoints.size());
-        m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER);
+        m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM); // hegy csúcsa = a tényleges koordináta
         m.setDraggable(true);
 
-        // Húzás közbeni valós idejű frissítés
+        // Húzás: valós idejű sokszög-frissítés, végén auto-generálás
         m.setOnMarkerDragListener(new Marker.OnMarkerDragListener() {
             @Override public void onMarkerDragStart(Marker marker) { }
             @Override public void onMarkerDrag(Marker marker) {
@@ -679,6 +801,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 if (i >= 0 && i < polygonPoints.size()) {
                     polygonPoints.set(i, marker.getPosition());
                     refreshPolygonOverlay();
+                    autoGenerateIfReady(); // újragenerálás húzás után
                 }
             }
         });
@@ -694,12 +817,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 .setPositiveButton("Törlés", (d, w) -> removePolygonPoint(i))
                 .setNegativeButton("Mégse", null)
                 .show();
-            return true; // elnyeli az eseményt, nem kerül a térkép event-hez
+            return true;
         });
 
         polygonMarkers.add(m);
         mapView.getOverlays().add(m);
         mapView.invalidate();
+
+        // Ha már legalább 3 pont van, auto-generálás
+        autoGenerateIfReady();
     }
 
     /** Egy sarokpont törlése index alapján – újraszámozza a többi jelölőt */
@@ -708,12 +834,275 @@ public class MissionPlannerActivity extends AppCompatActivity {
         polygonPoints.remove(index);
         Marker removed = polygonMarkers.remove(index);
         mapView.getOverlays().remove(removed);
-        // Újraszámozás
         for (int i = 0; i < polygonMarkers.size(); i++) {
             polygonMarkers.get(i).setTitle("P" + (i + 1));
         }
         refreshPolygonOverlay();
         mapView.invalidate();
+        autoGenerateIfReady();
+    }
+
+    /** Utolsó lerakott pont visszavonása */
+    private void removeLastPolygonPoint() {
+        if (polygonPoints.isEmpty()) {
+            Toast.makeText(this, "Nincs visszavonható pont", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        removePolygonPoint(polygonPoints.size() - 1);
+    }
+
+    // ── Akadály kezelés ───────────────────────────────────────────────────
+
+    /** Akadály-elhelyezés mód be/ki */
+    private void toggleObstacleMode() {
+        obstacleMode = !obstacleMode;
+        if (obstacleMode) {
+            btnObstacle.setText("Akadaly mod: BE  (Kattints a terkepen!)");
+            btnObstacle.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xFFCC4400));
+            Toast.makeText(this,
+                "Akadály mód: kattints a térképen az akadály helyére",
+                Toast.LENGTH_SHORT).show();
+        } else {
+            btnObstacle.setText("+ Akadaly jelolese");
+            btnObstacle.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xFF662200));
+        }
+    }
+
+    /** Dialog az akadály sugarának és magasságának megadásához */
+    private void showAddObstacleDialog(final GeoPoint p) {
+        // Két EditText egy LinearLayout-ban
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int)(16 * getResources().getDisplayMetrics().density);
+        layout.setPadding(pad, pad / 2, pad, 0);
+
+        TextView tvInfo = new TextView(this);
+        tvInfo.setText(String.format("Pozicio: %.5f, %.5f\n\nAdd meg az akadaly meret adatait:",
+                p.getLatitude(), p.getLongitude()));
+        tvInfo.setTextColor(0xFFCCCCCC);
+        tvInfo.setTextSize(12f);
+        layout.addView(tvInfo);
+
+        TextView tvR = new TextView(this);
+        tvR.setText("Biztonsagi zona sugara (m):");
+        tvR.setTextColor(0xFFAAAAAA);
+        tvR.setTextSize(12f);
+        tvR.setPadding(0, pad / 2, 0, 0);
+        layout.addView(tvR);
+
+        EditText etRadius = new EditText(this);
+        etRadius.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        etRadius.setHint("pl. 15");
+        etRadius.setText("15");
+        etRadius.setTextColor(0xFFFFFFFF);
+        etRadius.setHintTextColor(0xFF666666);
+        layout.addView(etRadius);
+
+        TextView tvH = new TextView(this);
+        tvH.setText("Akadaly magassaga (m, talajtol):");
+        tvH.setTextColor(0xFFAAAAAA);
+        tvH.setTextSize(12f);
+        tvH.setPadding(0, pad / 2, 0, 0);
+        layout.addView(tvH);
+
+        EditText etHeight = new EditText(this);
+        etHeight.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        etHeight.setHint("pl. 25");
+        etHeight.setText("25");
+        etHeight.setTextColor(0xFFFFFFFF);
+        etHeight.setHintTextColor(0xFF666666);
+        layout.addView(etHeight);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Akadaly hozzaadasa")
+            .setView(layout)
+            .setPositiveButton("Hozzaad", (d, w) -> {
+                try {
+                    float radius = Float.parseFloat(etRadius.getText().toString().trim());
+                    float height = Float.parseFloat(etHeight.getText().toString().trim());
+                    if (radius <= 0 || height <= 0) {
+                        Toast.makeText(this, "Ertekeknek pozitivnak kell lenniuk!", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    addObstacle(p, radius, height);
+                    // Marad az akadály módban – egymás után több akadály is letehető
+                } catch (NumberFormatException e) {
+                    Toast.makeText(this, "Ervenytelen szam!", Toast.LENGTH_SHORT).show();
+                }
+            })
+            .setNegativeButton("Megse", null)
+            .show();
+    }
+
+    /** Akadály hozzáadása a listához, marker és kör overlay rajzolásával */
+    private void addObstacle(GeoPoint p, float radiusM, float heightM) {
+        ObstacleData obs = new ObstacleData(p.getLatitude(), p.getLongitude(), radiusM, heightM);
+        obstacleList.add(obs);
+
+        // Kör overlay rajzolása (30 szegmenssel közelített kör)
+        Polygon circle = buildCircleOverlay(p.getLatitude(), p.getLongitude(), radiusM);
+        obstacleOverlays.add(circle);
+        mapView.getOverlays().add(0, circle);
+
+        // Marker az akadály közepére
+        Marker m = new Marker(mapView);
+        m.setPosition(p);
+        m.setTitle("Akadaly #" + obstacleList.size());
+        m.setSnippet(String.format("Sugar: %.0fm | Mag: %.0fm", radiusM, heightM));
+        m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER);
+        // Kattintásra: info + törlés lehetőség
+        final int obsIndex = obstacleList.size() - 1;
+        m.setOnMarkerClickListener((marker, mv) -> {
+            int idx = obstacleMarkers.indexOf(marker);
+            ObstacleData o = (idx >= 0 && idx < obstacleList.size()) ? obstacleList.get(idx) : obs;
+            new AlertDialog.Builder(MissionPlannerActivity.this)
+                .setTitle("Akadaly #" + (idx + 1))
+                .setMessage(String.format(
+                    "Pozicio: %.5f, %.5f\nBiztonsagi zona: %.0f m\nMagassag: %.0f m\n\n" +
+                    "Ha a repülési magassag <= %.0f m, az akadaly aktiv es\n" +
+                    "a kozeteben levo waypointokat kihagyjuk.",
+                    o.latitude, o.longitude, o.radiusM, o.heightM, o.heightM))
+                .setPositiveButton("Torles", (d2, w2) -> removeObstacle(idx))
+                .setNegativeButton("Bezaras", null)
+                .show();
+            return true;
+        });
+        obstacleMarkers.add(m);
+        mapView.getOverlays().add(m);
+        mapView.invalidate();
+
+        // Ha van aktív misszió, újragenerálás az akadályokkal
+        autoGenerateIfReady();
+
+        Toast.makeText(this, String.format(
+                "Akadaly hozzaadva: %.0fm zona, %.0fm magas", radiusM, heightM),
+                Toast.LENGTH_SHORT).show();
+    }
+
+    /** Egy akadály törlése index alapján */
+    private void removeObstacle(int index) {
+        if (index < 0 || index >= obstacleList.size()) return;
+        obstacleList.remove(index);
+
+        // Overlay eltávolítása
+        if (index < obstacleOverlays.size()) {
+            mapView.getOverlays().remove(obstacleOverlays.remove(index));
+        }
+        // Marker eltávolítása
+        if (index < obstacleMarkers.size()) {
+            mapView.getOverlays().remove(obstacleMarkers.remove(index));
+        }
+        // Újracímkézés
+        for (int i = 0; i < obstacleMarkers.size(); i++) {
+            obstacleMarkers.get(i).setTitle("Akadaly #" + (i + 1));
+        }
+        mapView.invalidate();
+        autoGenerateIfReady();
+    }
+
+    /** Összes akadály törlése */
+    private void clearAllObstacles() {
+        if (obstacleList.isEmpty()) {
+            Toast.makeText(this, "Nincs akadaly a terkepen", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Akadalyok torlese")
+            .setMessage(obstacleList.size() + " akadaly torlesehez biztosan?")
+            .setPositiveButton("Torles", (d, w) -> {
+                obstacleList.clear();
+                for (Polygon ov : obstacleOverlays) mapView.getOverlays().remove(ov);
+                obstacleOverlays.clear();
+                for (Marker mk : obstacleMarkers) mapView.getOverlays().remove(mk);
+                obstacleMarkers.clear();
+                mapView.invalidate();
+                autoGenerateIfReady();
+            })
+            .setNegativeButton("Megse", null)
+            .show();
+    }
+
+    /**
+     * Közelített kör OSMDroid Polygon-ként (30 szegmens).
+     * Az akadály területét jelöli a térképen.
+     */
+    private Polygon buildCircleOverlay(double lat, double lon, float radiusM) {
+        List<GeoPoint> pts = new ArrayList<>();
+        final int STEPS = 36;
+        final double mPerDegLat = 111000.0;
+        final double mPerDegLon = 111000.0 * Math.cos(Math.toRadians(lat));
+        for (int i = 0; i <= STEPS; i++) {
+            double angle = 2.0 * Math.PI * i / STEPS;
+            double dLat = radiusM * Math.cos(angle) / mPerDegLat;
+            double dLon = radiusM * Math.sin(angle) / mPerDegLon;
+            pts.add(new GeoPoint(lat + dLat, lon + dLon));
+        }
+        Polygon p = new Polygon();
+        p.setPoints(pts);
+        p.getFillPaint().setColor(0x44FF3300);     // áttetsző piros kitöltés
+        p.getOutlinePaint().setColor(0xCCFF4400);  // narancsvörös körvonal
+        p.getOutlinePaint().setStrokeWidth(3f);
+        return p;
+    }
+
+    /**
+     * Ha van legalább 3 pont, automatikusan generálja a missziót a jelenlegi
+     * beállításokkal. Domborzatkövetés NEM fut automatikusan (API hívás lenne),
+     * azt a "Misszió generálása" gomb indítja manuálisan.
+     */
+    private void autoGenerateIfReady() {
+        if (polygonPoints.size() < 3) {
+            // 3 pontnál kevesebb: töröljük az esetleges régi útvonalat
+            if (missionOverlay != null) {
+                mapView.getOverlays().remove(missionOverlay);
+                missionOverlay = null;
+                mapView.invalidate();
+            }
+            lastResult = null;
+            btnUpload.setEnabled(false);
+            btnExport.setEnabled(false);
+            tvStats.setText(polygonPoints.size() + " pont – még " + (3 - polygonPoints.size()) + " kell a területhez");
+            return;
+        }
+
+        MissionConfig config = buildConfig();
+        config.terrainFollowing = false; // auto-generálásban nincs terrain (túl lassú lenne)
+        lastResult = GridMissionGenerator.generate(polygonPoints, config);
+
+        if (lastResult.errorMessage != null) {
+            tvStats.setText("Hiba: " + lastResult.errorMessage);
+            return;
+        }
+
+        drawMissionPath(lastResult.segments);
+        currentSegmentIndex = 0;
+        btnUpload.setEnabled(DJIHelper.getInstance().isConnected() && !missionRunning);
+        btnExport.setEnabled(true);
+
+        double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format(
+            "Terulet: %.2f ha | %d pont (%d szegmens)\n" +
+            "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
+            "Sebesseg: %.0f m/s | Ido: ~%.0f perc",
+            lastResult.areaM2 / 10000.0,
+            lastResult.totalWaypoints, lastResult.segments.size(),
+            lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
+            (double) config.speedMs, lastResult.estimatedMinutes));
+        if (lastResult.skippedByObstacle > 0) {
+            sb.append(String.format("\n⚠ Akadaly miatt kihagyva: %d wp", lastResult.skippedByObstacle));
+        }
+        tvStats.setText(sb.toString());
+
+        // 120m figyelmeztetés
+        if (lastResult.altitudeM > MAX_ALTITUDE_LEGAL) {
+            Toast.makeText(this,
+                String.format("Figyelem: %.0fm > 120m (EU határ)! Csokkentsd a GSD-t.",
+                    lastResult.altitudeM),
+                Toast.LENGTH_LONG).show();
+        }
     }
 
     private void refreshPolygonOverlay() {
@@ -740,6 +1129,12 @@ public class MissionPlannerActivity extends AppCompatActivity {
             mapView.getOverlays().remove(m);
         }
         polygonMarkers.clear();
+        // Akadályok is törlődnek
+        obstacleList.clear();
+        for (Polygon ov : obstacleOverlays) mapView.getOverlays().remove(ov);
+        obstacleOverlays.clear();
+        for (Marker mk : obstacleMarkers) mapView.getOverlays().remove(mk);
+        obstacleMarkers.clear();
         lastResult = null;
         missionUploaded = false;
         btnUpload.setEnabled(false);
@@ -752,9 +1147,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     // ── Misszió generálás ──────────────────────────────────────────────────
 
+    /**
+     * Manuális újragenerálás – akkor kell, ha:
+     * 1. Megváltozott a GSD / átfedés / szög / sebesség beállítás
+     * 2. Domborzatkövetést szeretnénk alkalmazni (API hívással)
+     * A pontlerakás és húzás automatikusan frissíti a missziót (autoGenerateIfReady).
+     */
     private void generateMission() {
         if (polygonPoints.size() < 3) {
-            Toast.makeText(this, "Rajzolj legalabb 3 pontot a terulethez!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Legalabb 3 pont szukseges!", Toast.LENGTH_SHORT).show();
             return;
         }
         MissionConfig config = buildConfig();
@@ -768,30 +1169,33 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         drawMissionPath(lastResult.segments);
         currentSegmentIndex = 0;
-        btnUpload.setEnabled(true);
+        boolean connected = false;
+        try { connected = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
+        btnUpload.setEnabled(connected && !missionRunning);
         btnExport.setEnabled(true);
 
-        // 120m figyelmeztetés
+        double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
+        StringBuilder sbStats = new StringBuilder();
+        sbStats.append(String.format(
+            "Terulet: %.2f ha | %d pont (%d szegmens)\n" +
+            "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
+            "Sebesseg: %.0f m/s (ajanl: %.0f m/s) | Ido: ~%.0f perc",
+            lastResult.areaM2 / 10000.0,
+            lastResult.totalWaypoints, lastResult.segments.size(),
+            lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
+            (double) config.speedMs, (double) recSpd, lastResult.estimatedMinutes));
+        if (lastResult.skippedByObstacle > 0) {
+            sbStats.append(String.format("\n⚠ Akadaly miatt kihagyva: %d wp", lastResult.skippedByObstacle));
+        }
+        tvStats.setText(sbStats.toString());
+
         if (lastResult.altitudeM > MAX_ALTITUDE_LEGAL) {
             Toast.makeText(this,
-                String.format("Figyelem: %.0fm > 120m (EU jo­gi határ)! Csökkentsd a GSD-t.",
+                String.format("Figyelem: %.0fm > 120m (EU határ)! Csokkentsd a GSD-t.",
                     lastResult.altitudeM),
                 Toast.LENGTH_LONG).show();
         }
 
-        double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm);
-        String stats = String.format(
-            "Terulet: %.2f ha | Waypoint: %d (%d szegmens)\n" +
-            "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
-            "Sebesseg: %.1f m/s (ajanlott: %.1f m/s) | Ido: ~%.0f perc",
-            lastResult.areaM2 / 10000.0,
-            lastResult.totalWaypoints, lastResult.segments.size(),
-            lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
-            (double) config.speedMs, recSpd,
-            lastResult.estimatedMinutes);
-        tvStats.setText(stats);
-
-        // Ha domborzatkövetés aktív, lekéri a terepmagassági adatokat
         if (config.terrainFollowing) {
             applyTerrainFollowing(lastResult, lastResult.altitudeM);
         }
@@ -1084,6 +1488,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         c.speedMs           = getSpeed();
         c.flightAngleDeg    = getAngle();
         c.terrainFollowing  = switchTerrain != null && switchTerrain.isChecked();
+        c.offsetM           = getOffset();
+        c.obstacles         = new ArrayList<>(obstacleList); // akadályok másolata
         c.cameraSettings    = buildCameraSettings();
         return c;
     }
@@ -1093,6 +1499,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private double getFrontlap() { return 60.0 + sbFrontlap.getProgress(); }
     private float  getSpeed()    { return 3.0f + sbSpeed.getProgress(); }
     private int    getAngle()    { return sbAngle.getProgress(); }
+    private int    getOffset()   { return sbOffset != null ? sbOffset.getProgress() : 0; }
 
     @Override
     protected void onResume() {
@@ -1113,10 +1520,20 @@ public class MissionPlannerActivity extends AppCompatActivity {
             });
         } catch (Throwable t) { /* DJI SDK nem elérhető */ }
         updateDroneStatus();
+        statusHandler.removeCallbacks(statusRunnable);
+        statusHandler.post(statusRunnable);
     }
 
-    @Override protected void onPause()   { super.onPause();   mapView.onPause(); }
-    @Override protected void onDestroy() { super.onDestroy(); mapView.onDetach(); }
+    @Override protected void onPause() {
+        super.onPause();
+        mapView.onPause();
+        statusHandler.removeCallbacks(statusRunnable);
+    }
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        mapView.onDetach();
+        statusHandler.removeCallbacks(statusRunnable);
+    }
 
     private void updateDroneStatus() {
         if (tvDroneStatus == null) return;

@@ -1,5 +1,8 @@
 package com.dronefly.app.model;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class MissionConfig {
     public double gsdCm = 3.0;           // cm/pixel
     public double altitudeM = 80.0;      // méter (GSD-ből számítva)
@@ -9,8 +12,10 @@ public class MissionConfig {
     public double flightAngleDeg = 0.0;  // 0 = K-Ny sávok (É-D irányban halad)
     public boolean returnHome = true;
     public boolean terrainFollowing = false; // domborzatkövetés engedélyezése
+    public double offsetM = 0.0;            // túlrepülési határ méterben (0 = nincs)
     public DroneProfile droneProfile;    // kiválasztott drón kamera profil
     public CameraSettings cameraSettings = CameraSettings.getAgricultureDefaults();
+    public List<ObstacleData> obstacles = new ArrayList<>(); // akadályok listája
 
     public MissionConfig() {
         this.droneProfile = DroneProfiles.getDefault();

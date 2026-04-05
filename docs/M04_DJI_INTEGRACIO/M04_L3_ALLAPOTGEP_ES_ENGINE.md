@@ -2,9 +2,10 @@
 
 **Modul:** M04
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.0.0
+**Verzió:** v1.2.0
 **Létrehozva:** 2026-04-02
-**Státusz:** 🔧 Stub (emulátor) — valódi implementáció a Crystal Sky buildhöz
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** 🔧 Stub + Reflection (Crystal Sky build) — MSDK v4 hívások Java reflection-alapú
 
 ---
 
@@ -164,25 +165,78 @@ public class MissionUploader {
 
 ---
 
-## DJIHelper — stub implementáció (jelenlegi)
+## DJIHelper — telemetria API (Crystal Sky build, reflection-alapú)
 
 ```java
 public class DJIHelper {
 
-    public interface InitListener {
+    // Callback interfészek (telemetria visszahívásokhoz)
+    public interface BatteryCallback { void onResult(int percent); }
+    public interface GpsCallback { void onResult(int satelliteCount, boolean homeSet); }
+    public interface ConnectionListener {
         void onRegistered(boolean success, String message);
+        void onProductConnected(String productName);
+        void onProductDisconnected();
     }
 
-    /** Mindig true az emulátor build esetén */
-    public static boolean isEmulator() { return true; }
+    // Singleton
+    public static DJIHelper getInstance() { ... }
 
-    public void init(Context context, InitListener listener) {
-        if (listener != null)
-            listener.onRegistered(false, "Stub build – DJI SDK nincs betöltve");
-    }
+    // Kapcsolat állapot
+    public boolean isConnected() { ... }
+    public boolean isRegistered() { ... }
+    public String getConnectedProductName() { ... }
 
-    public boolean isConnected() { return false; }
+    // RC kapcsolat (reflection: Aircraft → getRemoteController().isConnected())
+    public boolean isRcConnected() { ... }
+
+    // Drón akkumulátor (async, reflection + dynamic proxy)
+    // → dji.sdk.battery.Battery → getBatteryState(BatteryState$Callback)
+    // → callback.getChargeRemainingInPercent()
+    public void getDroneBatteryPercent(BatteryCallback callback) { ... }
+
+    // RC akkumulátor (async, reflection + dynamic proxy)
+    // → RemoteController → setChargeRemainingCallback(ChargeRemainingCallback)
+    // → callback.getPercent()
+    public void getRcBatteryPercent(BatteryCallback callback) { ... }
+
+    // GPS műholdak + Home pont (Flight Controller state callback)
+    // → FlightController → setStateCallback(FlightControllerState$Callback)
+    // → state.getSatelliteCount(), state.isHomePointSet()
+    public void setFlightStateCallback(GpsCallback callback) { ... }
+
+    // DJI kapcsolat listener (M01 státusz frissítéshez)
+    public void setListener(ConnectionListener listener) { ... }
 }
+```
+
+**Reflection megközelítés magyarázata:**
+
+A `dji-sdk-provided` stub nem tartalmazza az összes szükséges osztályt
+(pl. `dji.sdk.aircraft.Aircraft`), ezért a Crystal Sky build esetén
+Java reflection + dynamic proxy mechanizmussal hívjuk az MSDK v4 API-t:
+
+```java
+// Példa: akkumulátor callback beállítása reflection-nal
+Class<?> batteryClass = Class.forName("dji.sdk.battery.Battery");
+Class<?> callbackClass = Class.forName(
+    "dji.sdk.battery.Battery$BatteryStateCallback");
+Object proxy = Proxy.newProxyInstance(
+    callbackClass.getClassLoader(),
+    new Class[]{callbackClass},
+    (p, method, args) -> {
+        if ("onUpdate".equals(method.getName()) && args != null) {
+            // state objektumból getChargeRemainingInPercent()
+            Method pctMethod = args[0].getClass()
+                .getMethod("getChargeRemainingInPercent");
+            int pct = (int) pctMethod.invoke(args[0]);
+            callback.onResult(pct);
+        }
+        return null;
+    });
+// Battery.setBatteryStateCallback(proxy)
+batteryClass.getMethod("setBatteryStateCallback", callbackClass)
+    .invoke(batteryInstance, proxy);
 ```
 
 ---

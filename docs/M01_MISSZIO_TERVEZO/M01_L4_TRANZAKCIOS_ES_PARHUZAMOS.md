@@ -2,9 +2,10 @@
 
 **Modul:** M01
 **Szint:** L4 – Tranzakciós és Párhuzamos Kezelés
-**Verzió:** v1.0.0
+**Verzió:** v1.2.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.2.0)
 
 ---
 
@@ -143,15 +144,70 @@ useDataConnection(true): szükséges az online tile letöltéshez
 // polygonPoints: ArrayList<GeoPoint>
 // Memóriaigény: ~100 byte/pont, max ~1000 pont → ~100 KB → elhanyagolható
 
-// currentWaypoints: ArrayList<WaypointData>
+// polygonMarkers: ArrayList<Marker>
+// obstacleMarkers: ArrayList<Marker>
+// obstacleOverlays: ArrayList<Polygon>
+// Overlay listák API 22 kompatibilis kezelése (explicit for loop, removeIf nem elérhető)
+
+// lastResult.segments: ArrayList<ArrayList<WaypointData>>
 // Memóriaigény: ~200 byte/waypoint, max ~3000 wp → ~600 KB → elhanyagolható
 
-// currentSegments: ArrayList<ArrayList<WaypointData>>
-// Azonos adatok szegmensekre osztva → nem duplikálódnak (referencia)
+// obstacleList: ArrayList<ObstacleData>
+// Memóriaigény: ~100 byte/akadály, max ~50 akadály → elhanyagolható
 ```
 
-A Crystal Sky 4 GB RAM-mal rendelkezik, a waypoint adatok
+A Crystal Sky 4 GB RAM-mal rendelkezik, a waypoint és akadály adatok
 memóriakezelési szempontból nem jelentenek kockázatot.
+
+---
+
+## 9. Státuszsáv polling szálkezelés
+
+```java
+// Handler + Runnable pattern (UI szál, 2 mp-enként)
+Handler statusHandler = new Handler(Looper.getMainLooper());
+
+Runnable statusRunnable = new Runnable() {
+    @Override public void run() {
+        updateStatusBar();  // szinkron tablet akku + async DJI telemetria
+        statusHandler.postDelayed(this, STATUS_INTERVAL_MS);
+    }
+};
+
+// onResume(): statusHandler.post(statusRunnable)
+// onPause():  statusHandler.removeCallbacks(statusRunnable)
+// onDestroy(): statusHandler.removeCallbacks(statusRunnable)
+```
+
+**DJI async callback-ek a státuszsávban:**
+```java
+// RC és drón akkumulátor lekérések async hívások (DJI SDK threading)
+// Minden UI frissítés runOnUiThread()-del védve:
+dji.getRcBatteryPercent(pct -> runOnUiThread(() -> {
+    sbRcBatt.setText(pct + "%");
+}));
+// Ha a statusRunnable újra lefut mielőtt a callback megérkezne:
+// → a régi érték marad a képernyőn → elfogadható (nem blocking)
+```
+
+---
+
+## 10. Auto-generálás és UI konzisztencia
+
+```
+Polygon módosítás (addPolygonPoint / removePolygonPoint / drag)
+  → autoGenerateIfReady() szinkron hívás a UI szálról
+  → GridMissionGenerator.generate() szinkron (UI szálat blokkolja)
+  → Tipikus futási idő: < 100ms (1–10 ha területen)
+  → 50 ha felett > 500ms → érzékelhető lassulás
+     → Jövőbeli fejlesztés: AsyncTask (de Crystal Sky-on ritkán szükséges)
+
+Állapot konzisztencia:
+  - polygonPoints ↔ polygonMarkers: mindig szinkronban (removePolygonPoint újraszámoz)
+  - obstacleList ↔ obstacleMarkers ↔ obstacleOverlays: párhuzamosan kezelve
+  - buildConfig() mindig obstacleList másolatot ad (new ArrayList<>(obstacleList))
+    → generátor nem módosíthatja az eredeti listát
+```
 
 ---
 

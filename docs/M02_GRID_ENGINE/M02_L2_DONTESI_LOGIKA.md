@@ -2,9 +2,10 @@
 
 **Modul:** M02
 **Szint:** L2 – Döntési Logika
-**Verzió:** v1.0.0
+**Verzió:** v1.2.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.2.0)
 
 ---
 
@@ -152,7 +153,71 @@ Szegmens váltás logika (M01 oldali kezelés):
 
 ---
 
-## 7. Repülési idő becslés
+## 7. Offset döntés
+
+```
+config.offsetM > 0?
+  │ NEM → polygon változatlan (rxOff = rx, ryOff = ry)
+  │ IGEN
+  ▼
+Centroid a forgatott koordinátarendszerben:
+  cxR = avg(rx), cyR = avg(ry)
+
+Minden csúcspontra:
+  dx = rx[i] - cxR
+  dy = ry[i] - cyR
+  dist = sqrt(dx² + dy²)
+  dist > 0?
+    │ IGEN → rxOff[i] = rx[i] + dx/dist * offsetM
+    │        ryOff[i] = ry[i] + dy/dist * offsetM
+    │ NEM  → rxOff[i] = rx[i]  (centroid pont: nem tolható)
+
+Bővített bounding box újraszámítása rxOff, ryOff alapján.
+Scanline metszéspontok a bővített polygonon számítódnak.
+
+Megjegyzés:
+  Konvex polygon esetén minden csúcspont pontosan offsetM méterrel
+  tolódik ki → pontos offset.
+  Konkáv polygon esetén a bővítés közelítő — egyes beugró sarkoknál
+  a csúcspont esetleg befelé is tolódhat.
+  Mezőgazdasági területeknél (jellemzően konvex sokszögek) ez elfogadható.
+```
+
+---
+
+## 8. Akadály szűrés döntés
+
+```
+config.obstacles üres?
+  │ IGEN → filtered = allWaypoints (szűrés kihagyva)
+  │ NEM
+  ▼
+Minden waypointra:
+  blocked = false
+  Minden obs-ra a config.obstacles listában:
+    obs.isDangerousAt(altM)?
+      → altM <= obs.heightM?
+          │ NEM  → nem veszélyes (magasabban repülünk) → következő obs
+          │ IGEN
+          ▼
+        obs.containsPoint(wp.lat, wp.lon)?
+          → dist = sqrt(dLat² + dLon²)  [2D, méterben]
+          → dist <= obs.radiusM?
+              │ IGEN → blocked = true, skippedByObstacle++, break
+              │ NEM  → folytatás
+
+  blocked = false? → filtered.add(wp)
+
+filtered üres?
+  │ IGEN → errorMessage = "Minden waypointot akadaly blokkol!..."
+  │ NEM  → folytatás normálisan
+
+Statisztikában jelzés: skippedByObstacle > 0 → "⚠ Akadaly miatt kihagyva: N wp"
+```
+
+---
+
+## 9. Repülési idő becslés
 
 ```java
 // GsdCalculator.estimatedFlightMinutes()

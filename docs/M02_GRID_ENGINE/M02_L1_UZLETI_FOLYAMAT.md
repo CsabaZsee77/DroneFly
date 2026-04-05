@@ -2,9 +2,10 @@
 
 **Modul:** M02
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.0.0
+**Verzió:** v1.2.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.2.0)
 
 ---
 
@@ -83,63 +84,90 @@ Maximum: 12 m/s (MSDK v4 waypoint limit)
 ```
 [Bemenet]
   polygonPoints: List<GeoPoint>   (≥ 3 pont)
-  config: MissionConfig            (GSD, sidelap, frontlap, sebesség, irány)
+  config: MissionConfig
+    → GSD, sidelap, frontlap, sebesség, irány
+    → droneProfile (kamera paraméterek)
+    → offsetM  (0 = nincs, >0 = túlrepülési határ méterben)
+    → obstacles (akadályok listája)
 
       │
       ▼
-1. Centroid számítás (GPS → referenciapont)
+1. Magasság számítás GSD-ből (drón profil alapján)
+   altM = GsdCalculator.altitudeFromGsd(gsdCm, droneProfile)
+   Korlát: 10–300 m
       │
       ▼
-2. Koordináta transzformáció:
+2. Centroid számítás (GPS → referenciapont)
+      │
+      ▼
+3. Koordináta transzformáció:
    GPS (lat/lon) → helyi XY méter (centroid körüli)
       │
       ▼
-3. Koordináta rotáció:
+4. Koordináta rotáció:
    -flightAngleDeg fokkal elforgatva
    (a sávok vízszintesek lesznek a forgatott rendszerben)
       │
       ▼
-4. Befoglaló téglalap meghatározása (min/max X, Y)
+5. Befoglaló téglalap meghatározása (min/max X, Y)
+   Terület számítás (Gauss-képlet, m²)
       │
       ▼
-5. Párhuzamos scanline-ok generálása:
+6. Offset alkalmazása (ha config.offsetM > 0):
+   Minden csúcspontot eltolunk a centroidtól kifelé offsetM méterrel
+   → bővített polygon és bővített bounding box
+   → konvex területeken pontos; konkáv polygon esetén közelítés
+      │
+      ▼
+7. Párhuzamos scanline-ok generálása:
    Y irányban, lépésköz = stripSpacingM
-   (stripSpacing = footprintWidth × (1 - sidelap/100))
+   Első sáv: yMin + stripSpacing / 2
       │
       ▼
-6. Polygon-scanline metszéspontok meghatározása
-   (minden scanline-ra: belépési és kilépési X koordináta)
+8. Polygon-scanline metszéspontok meghatározása
+   (minden scanline-ra: belépési és kilépési X koordináta a bővített polygonon)
       │
       ▼
-7. Kígyózó (serpentine) sorrend:
+9. Kígyózó (serpentine) sorrend:
    Páros sávok: balról jobbra
    Páratlan sávok: jobbra balra
       │
       ▼
-8. Fotó waypontok elhelyezése sávokon belül:
-   X irányban, lépésköz = photoDistanceM
-   (photoDist = footprintHeight × (1 - frontlap/100))
+10. Fotó waypontok elhelyezése sávokon belül:
+    X irányban, lépésköz = photoDistanceM
+    (minden waypoint shootPhoto = true)
       │
       ▼
-9. Visszaforgatás + visszatranszformáció:
-   helyi XY → GPS (lat/lon)
+11. Visszaforgatás + visszatranszformáció:
+    helyi XY → GPS (lat/lon)
       │
       ▼
-10. Szegmentálás:
-    Ha totalWaypoints > 99 → automatikus felosztás
-    Minden szegmens: max 98 waypoint + 1 landing/RTH
+12. Akadály szűrés (ha config.obstacles nem üres):
+    Minden waypointra:
+      obs.isDangerousAt(altM)?  (flightAlt ≤ obs.heightM)
+        ÉS obs.containsPoint(lat, lon)?  (2D körzetben van?)
+      → IGEN: waypoint kihagyva, skippedByObstacle++
+      → NEM: waypoint megtartva
+      │
+      ▼
+13. Szegmentálás:
+    Ha totalWaypoints > 99 → automatikus felosztás (99 wp/szegmens)
       │
       ▼
 [Kimenet]
   GeneratorResult:
-    segments:         List<List<WaypointData>>
-    totalWaypoints:   int
-    areaM2:           double
-    estimatedMinutes: double
-    altitudeM:        double
-    stripSpacingM:    double
-    photoDistM:       double
-    errorMessage:     String (null ha sikeres)
+    segments:          List<List<WaypointData>>
+    totalWaypoints:    int
+    areaM2:            double
+    estimatedMinutes:  double
+    altitudeM:         double
+    stripSpacingM:     double
+    photoDistM:        double
+    skippedByObstacle: int     (akadály miatt kihagyott wp-ok száma)
+    terrainCorrected:  boolean (domborzatkövetés alkalmazva?)
+    terrainMinAlt:     float   (legkisebb korrigált magasság)
+    terrainMaxAlt:     float   (legnagyobb korrigált magasság)
+    errorMessage:      String  (null ha sikeres)
 ```
 
 ---

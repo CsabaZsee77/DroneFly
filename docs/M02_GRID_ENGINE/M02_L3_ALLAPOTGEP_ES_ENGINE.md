@@ -2,9 +2,10 @@
 
 **Modul:** M02
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.0.0
+**Verzió:** v1.2.0
 **Létrehozva:** 2026-04-02
-**Státusz:** ✅ Implementálva (v1.0.0)
+**Utolsó módosítás:** 2026-04-05
+**Státusz:** ✅ Implementálva (v1.2.0)
 
 ---
 
@@ -91,17 +92,21 @@ public class GsdCalculator {
 ```java
 public class GridMissionGenerator {
 
-    private final GsdCalculator gsdCalc = new GsdCalculator();
+    private static final int MAX_WAYPOINTS_PER_MISSION = 99;
 
     public static class GeneratorResult {
-        public List<List<WaypointData>> segments;
+        public List<List<WaypointData>> segments = new ArrayList<>();
         public int    totalWaypoints;
         public double areaM2;
         public double estimatedMinutes;
         public double altitudeM;
         public double stripSpacingM;
         public double photoDistM;
-        public String errorMessage;   // null = sikeres
+        public String errorMessage;          // null = sikeres
+        public float  terrainMinAlt = Float.NaN;  // domborzatkövetés min. magasság
+        public float  terrainMaxAlt = Float.NaN;  // domborzatkövetés max. magasság
+        public boolean terrainCorrected = false;  // DEM korrekció alkalmazva?
+        public int    skippedByObstacle = 0;      // akadály miatt kihagyott wp-ok
     }
 
     /**
@@ -162,13 +167,18 @@ public class WaypointData {
 
 ```java
 public class MissionConfig {
-    public double gsdCm;           // kívánt GSD, pl. 3.0
-    public double altitudeM;       // számított magasság (GsdCalculator-ból)
-    public int    sidelapPercent;  // oldallefedés %, default 75
-    public int    frontlapPercent; // előrelefedés %, default 80
-    public float  speedMs;         // repülési sebesség m/s, default 7.0
-    public int    flightAngleDeg;  // sávok iránya °, default 0
-    public boolean returnHome;     // RTH misszió végén, default true
+    public double gsdCm = 3.0;
+    public double altitudeM = 80.0;
+    public double sidelapPercent = 75.0;
+    public double frontlapPercent = 80.0;
+    public float  speedMs = 7.0f;
+    public double flightAngleDeg = 0.0;
+    public boolean returnHome = true;
+    public boolean terrainFollowing = false;
+    public double offsetM = 0.0;                     // túlrepülési határ méterben
+    public DroneProfile droneProfile;                // kamera profil
+    public CameraSettings cameraSettings;            // kamera beállítások
+    public List<ObstacleData> obstacles = new ArrayList<>();  // akadályok listája
 }
 ```
 
