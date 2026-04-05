@@ -170,8 +170,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         mapView.setBuiltInZoomControls(false);
 
         // Magyarország közép + jó zoom szint
-        mapView.getController().setZoom(7.0);
-        mapView.getController().setCenter(new GeoPoint(47.1, 19.5));
+        mapView.getController().setZoom(11.0);  // Pest megye / Budapest térség
+        mapView.getController().setCenter(new GeoPoint(47.55, 19.15)); // Pest megye közepe
         mapView.postInvalidate();
 
         RotationGestureOverlay rotation = new RotationGestureOverlay(mapView);
