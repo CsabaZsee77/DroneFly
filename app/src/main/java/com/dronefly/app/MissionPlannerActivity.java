@@ -955,7 +955,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         m.setPosition(p);
         m.setTitle("Akadaly #" + obstacleList.size());
         m.setSnippet(String.format("Sugar: %.0fm | Mag: %.0fm", radiusM, heightM));
-        m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER);
+        m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM); // hegy csúcsa = a tényleges koordináta
         // Kattintásra: info + törlés lehetőség
         final int obsIndex = obstacleList.size() - 1;
         m.setOnMarkerClickListener((marker, mv) -> {
