@@ -895,9 +895,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
         EditText etRadius = new EditText(this);
         etRadius.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         etRadius.setHint("pl. 15");
-        etRadius.setText("15");
-        etRadius.setTextColor(0xFFFFFFFF);
-        etRadius.setHintTextColor(0xFF666666);
+        etRadius.setTextColor(0xFF111111);      // sötét szöveg, fehér dialog háttéren látható
+        etRadius.setHintTextColor(0xFF999999);
+        etRadius.setBackgroundColor(0xFFEEEEEE);
+        etRadius.setPadding(pad / 2, pad / 4, pad / 2, pad / 4);
+        etRadius.setSelectAllOnFocus(true);     // kattintáskor az egész szám kijelölve → egyből felülírható
         layout.addView(etRadius);
 
         TextView tvH = new TextView(this);
@@ -910,9 +912,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
         EditText etHeight = new EditText(this);
         etHeight.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         etHeight.setHint("pl. 25");
-        etHeight.setText("25");
-        etHeight.setTextColor(0xFFFFFFFF);
-        etHeight.setHintTextColor(0xFF666666);
+        etHeight.setTextColor(0xFF111111);
+        etHeight.setHintTextColor(0xFF999999);
+        etHeight.setBackgroundColor(0xFFEEEEEE);
+        etHeight.setPadding(pad / 2, pad / 4, pad / 2, pad / 4);
+        etHeight.setSelectAllOnFocus(true);
         layout.addView(etHeight);
 
         new AlertDialog.Builder(this)

@@ -145,9 +145,30 @@ public class GridMissionGenerator {
             }
         }
 
+        // ── Akadályok előfeldolgozása: GPS → forgatott lokális koordináta ──
+        // Csak azok az akadályok számítanak, amelyek veszélyesek ezen a repülési magasságon.
+        // A körök középpontját és sugarát a scan-vonalak koordináta-rendszerébe transzformáljuk,
+        // hogy a sávok vágása (clipping) egyszerű 2D körmetszéssel megoldható legyen.
+        List<double[]> rotatedObstacles = new ArrayList<>(); // [cx, cy, r]
+        if (config.obstacles != null) {
+            for (ObstacleData obs : config.obstacles) {
+                if (!obs.isDangerousAt((float) altM)) continue;
+                // GPS → lokális XY
+                double ox = (obs.longitude - centLon) * mPerDegLon;
+                double oy = (obs.latitude  - centLat) * mPerDegLat;
+                // Elforgatás (ugyanaz a transzformáció, mint a polygon csúcsoknál)
+                double orx = ox * cosA - oy * sinA;
+                double ory = ox * sinA + oy * cosA;
+                rotatedObstacles.add(new double[]{orx, ory, obs.radiusM});
+            }
+        }
+
         // Scan vonalak generálása (Y irány = sávköz)
         double yStart = yMin + stripSpacing / 2.0;
         List<WaypointData> allWaypoints = new ArrayList<>();
+
+        final double cosB = Math.cos(angle);
+        final double sinB = Math.sin(angle);
 
         int stripIndex = 0;
         for (double scanY = yStart; scanY <= yMax + stripSpacing / 2.0; scanY += stripSpacing) {
@@ -158,36 +179,45 @@ public class GridMissionGenerator {
 
             // Sávonként párban vesszük a metszéspontokat
             for (int k = 0; k + 1 < intersections.size(); k += 2) {
-                double xEnter = intersections.get(k);
-                double xExit  = intersections.get(k + 1);
+                double rawEnter = intersections.get(k);
+                double rawExit  = intersections.get(k + 1);
 
-                // Kaszáló: páros sávban balról jobbra, páratlanban jobbra balra
-                if (stripIndex % 2 != 0) {
-                    double tmp = xEnter; xEnter = xExit; xExit = tmp;
-                }
+                // ── Akadály alapú sávvágás (strip clipping) ──
+                // Az akadályok a sávot több részsávra osztják.
+                // Minden részsávba külön generálunk waypontokat → a drón megáll
+                // az akadály határánál, és a másik oldalon folytatja.
+                List<double[]> substrips = clipStripAgainstObstacles(
+                        rawEnter, rawExit, scanY, rotatedObstacles, result);
 
-                // Fotópontok generálása a sáv mentén
-                double dx = xExit - xEnter;
-                double len = Math.abs(dx);
-                int photoCount = Math.max(1, (int) Math.ceil(len / photoDist));
-                double step = dx / photoCount;
+                // Kaszáló irány: páros sávban balról jobbra, páratlanban jobbra balra
+                boolean reverse = (stripIndex % 2 != 0);
+                if (reverse) Collections.reverse(substrips);
 
-                for (int n = 0; n <= photoCount; n++) {
-                    double wx = xEnter + n * step;
-                    double wy = scanY;
+                for (double[] sub : substrips) {
+                    double xEnter = reverse ? sub[1] : sub[0];
+                    double xExit  = reverse ? sub[0] : sub[1];
 
-                    // Visszaforgatás
-                    double cosB = Math.cos(angle);
-                    double sinB = Math.sin(angle);
-                    double localX = wx * cosB - wy * sinB;
-                    double localY = wx * sinB + wy * cosB;
+                    // Fotópontok generálása a részsáv mentén
+                    double dx = xExit - xEnter;
+                    double len = Math.abs(dx);
+                    if (len < 0.5) continue; // 0.5 m-nél rövidebb részsáv kihagyva
+                    int photoCount = Math.max(1, (int) Math.ceil(len / photoDist));
+                    double step = dx / photoCount;
 
-                    // Lokális XY → GPS
-                    double lat = centLat + localY / mPerDegLat;
-                    double lon = centLon + localX / mPerDegLon;
+                    for (int n = 0; n <= photoCount; n++) {
+                        double wx = xEnter + n * step;
+                        double wy = scanY;
 
-                    boolean shoot = true; // minden pont fotóz
-                    allWaypoints.add(new WaypointData(lat, lon, (float) altM, shoot));
+                        // Visszaforgatás
+                        double localX = wx * cosB - wy * sinB;
+                        double localY = wx * sinB + wy * cosB;
+
+                        // Lokális XY → GPS
+                        double lat = centLat + localY / mPerDegLat;
+                        double lon = centLon + localX / mPerDegLon;
+
+                        allWaypoints.add(new WaypointData(lat, lon, (float) altM, true));
+                    }
                 }
             }
             stripIndex++;
@@ -198,41 +228,71 @@ public class GridMissionGenerator {
             return result;
         }
 
-        // ── Akadályok szűrése ──────────────────────────────────────────
-        // Ha a repülési magasság <= akadály magassága, az akadály körzetébe
-        // eső waypointokat kihagyjuk. Ha magasabban repülünk, figyelmen kívül hagyjuk.
-        List<WaypointData> filtered = allWaypoints;
-        if (config.obstacles != null && !config.obstacles.isEmpty()) {
-            filtered = new ArrayList<>();
-            for (WaypointData wp : allWaypoints) {
-                boolean blocked = false;
-                for (ObstacleData obs : config.obstacles) {
-                    if (obs.isDangerousAt((float) altM) && obs.containsPoint(wp.latitude, wp.longitude)) {
-                        blocked = true;
-                        result.skippedByObstacle++;
-                        break;
-                    }
-                }
-                if (!blocked) filtered.add(wp);
-            }
-        }
-
-        if (filtered.isEmpty()) {
-            result.errorMessage = "Minden waypointot akadaly blokkol! Csokkentsd az akadaly sugart vagy noveld a repülési magassagot.";
-            return result;
-        }
-
-        result.totalWaypoints = filtered.size();
+        result.totalWaypoints = allWaypoints.size();
         result.estimatedMinutes = GsdCalculator.estimatedFlightMinutes(
                 result.areaM2, altM, config.sidelapPercent, config.speedMs, config.droneProfile);
 
         // Szegmensekre bontás ha >99 waypoint
-        for (int start = 0; start < filtered.size(); start += MAX_WAYPOINTS_PER_MISSION) {
-            int end = Math.min(start + MAX_WAYPOINTS_PER_MISSION, filtered.size());
-            result.segments.add(new ArrayList<>(filtered.subList(start, end)));
+        for (int start = 0; start < allWaypoints.size(); start += MAX_WAYPOINTS_PER_MISSION) {
+            int end = Math.min(start + MAX_WAYPOINTS_PER_MISSION, allWaypoints.size());
+            result.segments.add(new ArrayList<>(allWaypoints.subList(start, end)));
         }
 
         return result;
+    }
+
+    /**
+     * Egy vízszintes sáv [xLeft, xRight] levágása az akadály körök ellen.
+     * A körök metszéseit megkeresi, és visszaadja az akadályokon KÍVÜL eső
+     * részsávokat bal → jobb sorrendben.
+     * Az akadályok által "elnyelt" sávhosszat a skippedByObstacle számlálóba gyűjti.
+     *
+     * @param xLeft  sáv bal határa (forgatott koordinátarendszerben)
+     * @param xRight sáv jobb határa
+     * @param scanY  sáv Y koordinátája
+     * @param obs    akadályok: [cx, cy, r] (forgatott lokális koordinátákban)
+     */
+    private static List<double[]> clipStripAgainstObstacles(
+            double xLeft, double xRight, double scanY,
+            List<double[]> obs, GeneratorResult result) {
+
+        // Induló részsávlista: az egész sáv
+        List<double[]> segments = new ArrayList<>();
+        segments.add(new double[]{xLeft, xRight});
+
+        for (double[] o : obs) {
+            double cx = o[0], cy = o[1], r = o[2];
+            double dy = scanY - cy;
+            double disc = r * r - dy * dy;
+            if (disc <= 0) continue; // az akadály nem érinti ezt a sávot
+
+            double half = Math.sqrt(disc);
+            double obsL = cx - half; // akadály belépési X
+            double obsR = cx + half; // akadály kilépési X
+
+            List<double[]> clipped = new ArrayList<>();
+            for (double[] seg : segments) {
+                double sL = seg[0], sR = seg[1];
+                if (obsR <= sL || obsL >= sR) {
+                    clipped.add(seg); // nincs átfedés, marad
+                    continue;
+                }
+                // Bal oldali részsáv (akadálytól balra)
+                if (sL < obsL - 0.5) {
+                    clipped.add(new double[]{sL, obsL});
+                }
+                // A kihagyott rész arányos wp-számát becsüljük
+                double skippedLen = Math.min(sR, obsR) - Math.max(sL, obsL);
+                if (skippedLen > 0) result.skippedByObstacle++;
+
+                // Jobb oldali részsáv (akadálytól jobbra)
+                if (sR > obsR + 0.5) {
+                    clipped.add(new double[]{obsR, sR});
+                }
+            }
+            segments = clipped;
+        }
+        return segments;
     }
 
     /**
