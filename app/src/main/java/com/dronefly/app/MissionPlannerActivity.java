@@ -393,6 +393,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private final Runnable statusRunnable = new Runnable() {
         @Override public void run() {
             updateStatusBar();
+            updateDroneStatus();   // tvDroneStatus + Upload gomb is frissüljön a timeren
             statusHandler.postDelayed(this, STATUS_INTERVAL_MS);
         }
     };
