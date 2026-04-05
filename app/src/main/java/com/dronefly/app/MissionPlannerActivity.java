@@ -419,11 +419,17 @@ public class MissionPlannerActivity extends AppCompatActivity {
         // ── DJI telemetria ──
         try {
             DJIHelper dji = DJIHelper.getInstance();
+
+            // RC állapotát a dróntól FÜGGETLENÜL mutatjuk —
+            // az RC önállóan is érzékelhető, még mielőtt a drón csatlakozna
+            boolean rcOk = dji.isRcConnected();
+            sbRc.setText("RC: " + (rcOk ? "OK" : "nincs"));
+            sbRc.setTextColor(rcOk ? 0xFF44FF88 : 0xFFFF4444);
+            if (!rcOk) sbRcBatt.setText("");
+
             if (!dji.isConnected()) {
                 sbDrone.setText("DRON: nincs");
                 sbDrone.setTextColor(0xFFFF4444);
-                sbRc.setText("RC: --");    sbRc.setTextColor(0xFF888888);
-                sbRcBatt.setText("");
                 sbGps.setText("SAT: --"); sbGps.setTextColor(0xFF888888);
                 sbDroneBatt.setText("AKKU: --"); sbDroneBatt.setTextColor(0xFF888888);
                 return;
@@ -433,11 +439,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
             String name = dji.getConnectedProductName();
             sbDrone.setText(name != null ? name : "Dron");
             sbDrone.setTextColor(0xFF44FF88);
-
-            // RC kapcsolat
-            boolean rcOk = dji.isRcConnected();
-            sbRc.setText("RC: " + (rcOk ? "OK" : "nincs"));
-            sbRc.setTextColor(rcOk ? 0xFF44FF88 : 0xFFFF4444);
 
             // RC akku (async)
             dji.getRcBatteryPercent(pct -> runOnUiThread(() -> {
