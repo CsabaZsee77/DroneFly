@@ -16,7 +16,7 @@
             android:layout_height="match_parent"
             android:clickable="true"/>
 
-        <!-- Bal felső sarok: GPS + térképváltó gombok -->
+        <!-- Bal felső sarok: GPS + térképváltó + CAM gombok -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -46,9 +46,72 @@
                 android:textColor="#FFFFFF"
                 android:textStyle="bold"
                 android:padding="0dp"
+                android:backgroundTint="#CC1a1a2e"
+                android:layout_marginBottom="4dp"/>
+
+            <Button
+                android:id="@+id/btnCamToggle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="CAM"
+                android:textSize="10sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:padding="0dp"
                 android:backgroundTint="#CC1a1a2e"/>
 
         </LinearLayout>
+
+        <!-- Bal alsó sarok: kamera feed ablak (bekapcsolható PiP) -->
+        <FrameLayout
+            android:id="@+id/cameraWindow"
+            android:layout_width="256dp"
+            android:layout_height="144dp"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="8dp"
+            android:background="#CC000000"
+            android:elevation="6dp"
+            android:visibility="gone">
+
+            <!-- Élő kamerakép -->
+            <TextureView
+                android:id="@+id/cameraTextureView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"/>
+
+            <!-- Fejléc sáv: "LIVE" felirat + bezáró gomb -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:layout_gravity="top"
+                android:background="#AA000000"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="6dp"
+                android:paddingEnd="4dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="● LIVE"
+                    android:textColor="#FF4444"
+                    android:textSize="10sp"
+                    android:textStyle="bold"/>
+
+                <Button
+                    android:id="@+id/btnCamClose"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:text="✕"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:padding="0dp"
+                    android:backgroundTint="#00000000"/>
+
+            </LinearLayout>
+
+        </FrameLayout>
 
     </FrameLayout>
 

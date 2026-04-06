@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.3.0
+**Verzió:** v1.4.0
 **Létrehozva:** 2026-04-02
 **Utolsó módosítás:** 2026-04-06
-**Státusz:** ✅ Részben implementálva — telemetria (RC akku, drón akku, GPS, drón név) működik Crystal Sky-on; misszió feltöltés stub
+**Státusz:** ✅ Részben implementálva — telemetria + kamera feed PiP működik Crystal Sky-on; misszió feltöltés stub
 
 ---
 
@@ -33,6 +33,7 @@ a DroneFly app:
 | GPS műholdak száma | ✅ Működik (FlightController StateCallback) |
 | Misszió feltöltés / indítás | 🔧 Stub — valódi MSDK implementáció szükséges |
 | Misszió pause / stop | 🔧 Stub |
+| Kamera feed PiP (élő kép) | ✅ Implementálva (DroneVideoWidget) |
 
 ---
 
@@ -178,9 +179,45 @@ Biztonsági kikapcsولás:
 
 ---
 
-## 9. Kapcsolódó modulok
+## 9. Kamera feed PiP (DroneVideoWidget)
+
+```
+CAM gomb megnyomva (btnCamToggle)
+      │
+      ▼
+DroneVideoWidget.start()
+  │
+  ├─ TextureView Surface elérhető?
+  │     Igen → attachCodecAndFeed()
+  │     Nem  → vár onSurfaceTextureAvailable callbackre
+  │
+  ├─ VideoFeeder.getPrimaryVideoFeed().addVideoDataListener(proxy)
+  │     → onReceive(byte[], int) → DJICodecManager.sendDataToDecoder()
+  │
+  └─ DJICodecManager dekódolja → TextureView rendereli (élő kép)
+
+CAM gomb újra / ✕ bezárás:
+  DroneVideoWidget.stop()
+  → VideoFeed listener leiratkozás
+  → DJICodecManager.cleanSurface()
+  → cameraWindow GONE
+
+onPause → widget.stop()  (feed szünetel, ha az app háttérbe kerül)
+onDestroy → widget.destroy()  (teljes takarítás)
+```
+
+**Emulátoros build viselkedés:** `dji.sdk.codec.DJICodecManager` és
+`dji.sdk.camera.VideoFeeder` osztályok hiányoznak a stub-ból →
+`ClassNotFoundException` elnyelve, a kamera ablak fekete marad, crash nincs.
+
+**Crystal Sky valódi eszközön:** A feed automatikusan elindul, amint a drón
+csatlakoztatva van és a CAM gomb be van kapcsolva.
+
+---
+
+## 10. Kapcsolódó modulok
 
 | Modul | Kapcsolat típusa |
 |-------|-----------------|
-| M01 Misszió Tervező | **Közvetlen hívó** — uploadMission(), pause, stop |
+| M01 Misszió Tervező | **Közvetlen hívó** — uploadMission(), pause, stop, videoWidget |
 | M02 Grid Engine | **Adat forrás** — WaypointData lista input |

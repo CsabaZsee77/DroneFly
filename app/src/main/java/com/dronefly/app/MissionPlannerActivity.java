@@ -23,6 +23,7 @@ import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.view.TextureView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
@@ -31,6 +32,7 @@ import androidx.core.content.FileProvider;
 
 import com.dronefly.app.dji.CameraConfigurator;
 import com.dronefly.app.dji.DJIHelper;
+import com.dronefly.app.dji.DroneVideoWidget;
 import com.dronefly.app.dji.MissionUploader;
 import com.dronefly.app.model.CameraSettings;
 
@@ -129,6 +131,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     // Térképváltó
     private boolean  isSatelliteMap = true; // Google Satellite az alapértelmezett
+
+    // Kamera feed widget (PiP)
+    private DroneVideoWidget videoWidget;
+    private FrameLayout cameraWindow;
 
     // DJI kapcsolat státusz
     private TextView tvDroneStatus;
@@ -281,6 +287,21 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnMapToggle = findViewById(R.id.btnMapToggle);
         btnMapToggle.setOnClickListener(v -> toggleMapSource());
 
+        // Kamera feed PiP
+        cameraWindow = findViewById(R.id.cameraWindow);
+        TextureView cameraTextureView = findViewById(R.id.cameraTextureView);
+        videoWidget = new DroneVideoWidget(this, cameraTextureView);
+
+        Button btnCamToggle = findViewById(R.id.btnCamToggle);
+        Button btnCamClose  = findViewById(R.id.btnCamClose);
+        btnCamToggle.setOnClickListener(v -> toggleCameraFeed(btnCamToggle));
+        btnCamClose.setOnClickListener(v -> {
+            videoWidget.stop();
+            cameraWindow.setVisibility(View.GONE);
+            btnCamToggle.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xCC1a1a2e));
+        });
+
         // Drón spinner
         spinnerDrone = findViewById(R.id.spinnerDrone);
         ArrayAdapter<DroneProfile> droneAdapter = new ArrayAdapter<>(
@@ -376,6 +397,22 @@ public class MissionPlannerActivity extends AppCompatActivity {
         cameraExpanded = !cameraExpanded;
         cameraSettingsBody.setVisibility(cameraExpanded ? View.VISIBLE : View.GONE);
         tvCameraExpand.setText(cameraExpanded ? "\u25B2" : "\u25BC");
+    }
+
+    // ── Kamera feed PiP ───────────────────────────────────────────────
+
+    private void toggleCameraFeed(Button btnCamToggle) {
+        if (videoWidget.isRunning()) {
+            videoWidget.stop();
+            cameraWindow.setVisibility(View.GONE);
+            btnCamToggle.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xCC1a1a2e));
+        } else {
+            cameraWindow.setVisibility(View.VISIBLE);
+            videoWidget.start();
+            btnCamToggle.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xCC226622));
+        }
     }
 
     // ── Státuszsáv ────────────────────────────────────────────────────
@@ -1755,11 +1792,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
         super.onPause();
         mapView.onPause();
         statusHandler.removeCallbacks(statusRunnable);
+        if (videoWidget != null) videoWidget.stop();
     }
     @Override protected void onDestroy() {
         super.onDestroy();
         mapView.onDetach();
         statusHandler.removeCallbacks(statusRunnable);
+        if (videoWidget != null) videoWidget.destroy();
     }
 
     private void updateDroneStatus() {
