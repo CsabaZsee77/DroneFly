@@ -1,7 +1,7 @@
 # ✈️ DroneFly GCS – Felhasználói Útmutató
 
-**Verzió:** v1.3.0
-**Utolsó frissítés:** 2026-04-05
+**Verzió:** v1.3.1
+**Utolsó frissítés:** 2026-04-06
 **Céleszköz:** DJI Crystal Sky tablet (Android 5.1)
 **Drón:** DJI Phantom 4 Pro v1 (és más DJI drónok)
 
@@ -607,24 +607,25 @@ Kapcsold ki az **Auto** kapcsolót a következő beállításokhoz:
 A képernyő tetején lebegő sáv valós idejű adatokat mutat, 2 másodpercenként frissül.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ P4P v1 │ RC: OK 85% │ SAT: 14 H │ AKKU: 92% │ TAB: 78% │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Phantom 4 Pro │ RC: OK 87% │ SAT: 14 H │ AKKU: 92% │ TAB: 78% │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-| Mező | Zöld | Narancs | Piros |
-|------|------|---------|-------|
-| **DRON** | Csatlakozva | – | Nincs csatlakozva |
-| **RC** | OK | – | Nincs |
-| **RC akku %** | ≥40% | 20–40% | <20% |
-| **SAT** | ≥10 műhold | 6–9 | <6 |
-| **AKKU (drón)** | ≥40% | 20–40% | <20% |
-| **TAB (tablet)** | ≥40% | 20–40% | <20% |
+| Mező | Leírás | Zöld | Narancs | Piros |
+|------|--------|------|---------|-------|
+| **DRON** | Drón neve (pl. "Phantom 4 Pro") | Csatlakozva | – | Nincs |
+| **RC** | RC vezérlő kapcsolat | OK | – | Nincs |
+| **RC %** | RC vezérlő akkumulátor töltöttség | ≥40% | 20–40% | <20% |
+| **SAT** | GPS műholdak száma | ≥10 | 6–9 | <6 |
+| **AKKU** | Drón akkumulátor töltöttség | ≥40% | 20–40% | <20% |
+| **TAB** | Crystal Sky tablet akkumulátor | ≥40% | 20–40% | <20% |
 
 **"H"** a SAT szám után = Home pont a drón GPS-be programozva (biztonságos RTH)
 
-> **Fontos:** A drón akkumulátor értékek DJI MSDK-n keresztül kérnek le;
-> csak valódi drón csatlakozáskor aktívak.
+> **Megjegyzés:** Az RC és drón akkumulátor értékek DJI MSDK-n keresztül kérnek le
+> (csak valódi csatlakozáskor aktívak). Az RC % az RC-ből csatlakoztatott tablet
+> esetén jelenik meg; az RC saját kijelzőjén is látható a töltöttség.
 
 ---
 

@@ -426,7 +426,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
             boolean rcOk = dji.isRcConnected();
             sbRc.setText("RC: " + (rcOk ? "OK" : "nincs"));
             sbRc.setTextColor(rcOk ? 0xFF44FF88 : 0xFFFF4444);
-            if (!rcOk) sbRcBatt.setText("");
+            if (!rcOk) { sbRcBatt.setText("--"); sbRcBatt.setTextColor(0xFF888888); }
 
             if (!dji.isConnected()) {
                 sbDrone.setText("DRON: nincs");
@@ -448,7 +448,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     sbRcBatt.setText(pct + "%");
                     sbRcBatt.setTextColor(pct < 20 ? 0xFFFF4444 : pct < 40 ? 0xFFFFAA00 : 0xFF44FF88);
                 } else {
-                    sbRcBatt.setText("");
+                    sbRcBatt.setText("--");
+                    sbRcBatt.setTextColor(0xFF888888);
                 }
             }));
 

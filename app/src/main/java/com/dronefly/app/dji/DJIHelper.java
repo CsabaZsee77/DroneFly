@@ -113,33 +113,46 @@ public class DJIHelper {
         } catch (Throwable t) { return false; }
     }
 
-    /** RC akkumulátor töltöttség callback */
+    /** RC akkumulátor töltöttség — dinamikus paramétertípus-lekérés reflexióval.
+     *  Valódi osztályok Crystal Sky-on (MSDK v4.18, P4P v1):
+     *  RC class: dji.sdk.remotecontroller.uio (obfuszkált)
+     *  Callback class: dji.common.remotecontroller.BatteryState$Callback
+     *  Charge method: getRemainingChargeInPercent()
+     */
     public void getRcBatteryPercent(BatteryCallback cb) {
         try {
             BaseProduct p = DJISDKManager.getInstance().getProduct();
             if (p == null || !p.isConnected()) { cb.onResult(-1); return; }
             Object rc = p.getClass().getMethod("getRemoteController").invoke(p);
             if (rc == null) { cb.onResult(-1); return; }
-            // RC: setChargeRemainingCallback vagy getBatteryInfo
-            // MSDK v4: RemoteController.setChargeRemainingCallback
-            Class<?> callbackClass = Class.forName(
-                    "dji.sdk.remotecontroller.RemoteController$ChargeRemainingCallback");
-            rc.getClass().getMethod("setChargeRemainingCallback", callbackClass)
-                .invoke(rc, java.lang.reflect.Proxy.newProxyInstance(
-                    getClass().getClassLoader(),
-                    new Class[]{callbackClass},
-                    (proxy, method, args) -> {
-                        if (args != null && args.length > 0) {
-                            try {
-                                int pct = (int) args[0].getClass()
-                                        .getMethod("getPercent").invoke(args[0]);
-                                cb.onResult(pct);
-                            } catch (Throwable t2) { cb.onResult(-1); }
-                        }
-                        return null;
-                    }));
+
+            // Keresünk setChargeRemainingCallback metódust, és lekérjük a tényleges
+            // paramétertípust — így nem kell az osztálynevet hardcode-olni
+            for (java.lang.reflect.Method setter : rc.getClass().getMethods()) {
+                if ("setChargeRemainingCallback".equals(setter.getName())
+                        && setter.getParameterTypes().length == 1) {
+                    Class<?> callbackClass = setter.getParameterTypes()[0];
+                    Object proxy = java.lang.reflect.Proxy.newProxyInstance(
+                        getClass().getClassLoader(),
+                        new Class[]{callbackClass},
+                        (proxyObj, method, args) -> {
+                            if (args != null && args.length > 0) {
+                                try {
+                                    int pct = (int) args[0].getClass()
+                                            .getMethod("getRemainingChargeInPercent").invoke(args[0]);
+                                    cb.onResult(pct);
+                                } catch (Throwable t2) { cb.onResult(-1); }
+                            }
+                            return null;
+                        });
+                    setter.invoke(rc, proxy);
+                    return;
+                }
+            }
+            cb.onResult(-1);
+
         } catch (Throwable t) {
-            Log.d(TAG, "RC battery callback nem elérhető: " + t.getMessage());
+            Log.d(TAG, "RC battery hiba: " + t.getMessage());
             cb.onResult(-1);
         }
     }
@@ -180,30 +193,35 @@ public class DJIHelper {
         try {
             BaseProduct p = DJISDKManager.getInstance().getProduct();
             if (p == null || !p.isConnected()) return;
-            // Aircraft.getFlightController()
             Object fc = p.getClass().getMethod("getFlightController").invoke(p);
             if (fc == null) return;
-            Class<?> cbClass = Class.forName("dji.sdk.flightcontroller.FlightController$FlightControllerCurrentState");
-            // setStateCallback(FlightControllerCurrentState.Callback)
-            Class<?> callbackClass = Class.forName("dji.common.flightcontroller.FlightControllerState$Callback");
-            fc.getClass().getMethod("setStateCallback", callbackClass)
-                .invoke(fc, java.lang.reflect.Proxy.newProxyInstance(
-                    getClass().getClassLoader(),
-                    new Class[]{callbackClass},
-                    (proxy, method, args) -> {
-                        if ("onUpdate".equals(method.getName()) && args != null && args.length > 0) {
-                            try {
-                                int sats = (int) args[0].getClass()
-                                    .getMethod("getSatelliteCount").invoke(args[0]);
-                                boolean homeSet = (boolean) args[0].getClass()
-                                    .getMethod("isHomePointSet").invoke(args[0]);
-                                cb.onResult(sats, homeSet);
-                            } catch (Throwable t2) { /* ignore */ }
-                        }
-                        return null;
-                    }));
+            // Dinamikusan keresünk setStateCallback metódust — nem hardcode-oljuk az osztályt
+            for (java.lang.reflect.Method setter : fc.getClass().getMethods()) {
+                if ("setStateCallback".equals(setter.getName())
+                        && setter.getParameterTypes().length == 1) {
+                    Class<?> callbackClass = setter.getParameterTypes()[0];
+                    Object proxy = java.lang.reflect.Proxy.newProxyInstance(
+                        getClass().getClassLoader(),
+                        new Class[]{callbackClass},
+                        (proxyObj, method, args) -> {
+                            if ("onUpdate".equals(method.getName()) && args != null && args.length > 0) {
+                                try {
+                                    int sats = (int) args[0].getClass()
+                                        .getMethod("getSatelliteCount").invoke(args[0]);
+                                    boolean homeSet = (boolean) args[0].getClass()
+                                        .getMethod("isHomePointSet").invoke(args[0]);
+                                    cb.onResult(sats, homeSet);
+                                } catch (Throwable t2) { /* ignore */ }
+                            }
+                            return null;
+                        });
+                    setter.invoke(fc, proxy);
+                    return; // callback regisztrálva
+                }
+            }
+            Log.d(TAG, "FlightState: setStateCallback metódus nem található az FC-n");
         } catch (Throwable t) {
-            Log.d(TAG, "FlightState callback nem érhető el: " + t.getMessage());
+            Log.d(TAG, "FlightState callback hiba: " + t.getMessage());
         }
     }
 

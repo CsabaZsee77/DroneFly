@@ -2,9 +2,10 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.0.0
+**Verzió:** v1.3.0
 **Létrehozva:** 2026-04-02
-**Státusz:** 🔧 Stub (emulátor) — valódi eszközre MSDK v4 implementáció szükséges
+**Utolsó módosítás:** 2026-04-06
+**Státusz:** ✅ Részben implementálva — telemetria (RC akku, drón akku, GPS, drón név) működik Crystal Sky-on; misszió feltöltés stub
 
 ---
 
@@ -17,11 +18,21 @@ a DroneFly app:
 - **Szünetelteti** (drón lebeg az aktuális pozícióban)
 - **Folytatja** a szüneteltetett missziót
 - **Leállítja** (kézi vezérlés átvehető)
+- **Telemetriát jelenít meg** — RC és drón akkumulátor, GPS műholdak, drón neve
 
-**Jelenlegi build állapot:**
-A DJI SDK emulátorban crash-t okoz (anti-tamper / API key validáció).
-Az emulátor build stub implementációt használ, amely minden hívásra
-`"Stub build – drón nem csatlakoztatva"` hibaüzenetet ad vissza.
+**Jelenlegi build állapot (v1.3.0):**
+
+| Funkció | Státusz |
+|---------|---------|
+| DJI SDK regisztráció | ✅ Működik Crystal Sky-on |
+| Drón csatlakozás érzékelés | ✅ Működik (onProductConnect + 2mp timer) |
+| Drón neve (pl. "Phantom 4 Pro") | ✅ Működik |
+| Drón akkumulátor % | ✅ Működik (BatteryState callback) |
+| RC csatlakozás érzékelés | ✅ Működik (reflection) |
+| RC akkumulátor % | ✅ Működik (BatteryState$Callback, getRemainingChargeInPercent) |
+| GPS műholdak száma | ✅ Működik (FlightController StateCallback) |
+| Misszió feltöltés / indítás | 🔧 Stub — valódi MSDK implementáció szükséges |
+| Misszió pause / stop | 🔧 Stub |
 
 ---
 

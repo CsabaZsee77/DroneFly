@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.2.0
+**Verzió:** v1.3.0
 **Létrehozva:** 2026-04-02
 **Utolsó módosítás:** 2026-04-05
-**Státusz:** 🔧 Stub + Reflection (Crystal Sky build) — MSDK v4 hívások Java reflection-alapú
+**Státusz:** ✅ Részben implementálva — RC akku, drón akku, drón név, GPS (reflection); misszió feltöltés stub
 
 ---
 
@@ -196,12 +196,16 @@ public class DJIHelper {
     public void getDroneBatteryPercent(BatteryCallback callback) { ... }
 
     // RC akkumulátor (async, reflection + dynamic proxy)
-    // → RemoteController → setChargeRemainingCallback(ChargeRemainingCallback)
-    // → callback.getPercent()
+    // Crystal Sky-on (MSDK v4.18, P4P v1):
+    //   RC class: dji.sdk.remotecontroller.uio (obfuszkált)
+    //   Callback class: dji.common.remotecontroller.BatteryState$Callback
+    //   Charge method: getRemainingChargeInPercent()
+    // A callback osztályneve NEM hardcode-olt — a setter paramétertípusából
+    // kérdezi le reflexióval, így SDK verzióváltásra robusztus.
     public void getRcBatteryPercent(BatteryCallback callback) { ... }
 
     // GPS műholdak + Home pont (Flight Controller state callback)
-    // → FlightController → setStateCallback(FlightControllerState$Callback)
+    // Dinamikus osztálylekérés: setStateCallback() paramétertípusából reflexióval.
     // → state.getSatelliteCount(), state.isHomePointSet()
     public void setFlightStateCallback(GpsCallback callback) { ... }
 
@@ -214,30 +218,48 @@ public class DJIHelper {
 
 A `dji-sdk-provided` stub nem tartalmazza az összes szükséges osztályt
 (pl. `dji.sdk.aircraft.Aircraft`), ezért a Crystal Sky build esetén
-Java reflection + dynamic proxy mechanizmussal hívjuk az MSDK v4 API-t:
+Java reflection + dynamic proxy mechanizmussal hívjuk az MSDK v4 API-t.
+
+**Kulcstanulság (Crystal Sky, MSDK v4.18 debugolásból):**
+Az MSDK belső osztályai obfuszkáltak (pl. `dji.sdk.remotecontroller.uio`),
+és az osztályok neve SDK verzióváltáskor változhat. Ezért a callback
+osztálynevét **nem hardcode-oljuk**, hanem a setter metódus paramétertípusából
+kérdezzük le dinamikusan:
 
 ```java
-// Példa: akkumulátor callback beállítása reflection-nal
-Class<?> batteryClass = Class.forName("dji.sdk.battery.Battery");
-Class<?> callbackClass = Class.forName(
-    "dji.sdk.battery.Battery$BatteryStateCallback");
-Object proxy = Proxy.newProxyInstance(
-    callbackClass.getClassLoader(),
-    new Class[]{callbackClass},
-    (p, method, args) -> {
-        if ("onUpdate".equals(method.getName()) && args != null) {
-            // state objektumból getChargeRemainingInPercent()
-            Method pctMethod = args[0].getClass()
-                .getMethod("getChargeRemainingInPercent");
-            int pct = (int) pctMethod.invoke(args[0]);
-            callback.onResult(pct);
-        }
-        return null;
-    });
-// Battery.setBatteryStateCallback(proxy)
-batteryClass.getMethod("setBatteryStateCallback", callbackClass)
-    .invoke(batteryInstance, proxy);
+// Dinamikus callback osztálylekérés — SDK verzióra robusztus
+for (Method setter : rcObject.getClass().getMethods()) {
+    if ("setChargeRemainingCallback".equals(setter.getName())
+            && setter.getParameterTypes().length == 1) {
+        Class<?> callbackClass = setter.getParameterTypes()[0];
+        // callbackClass = dji.common.remotecontroller.BatteryState$Callback
+        // (Crystal Sky-on, MSDK v4.18, P4P v1)
+        Object proxy = Proxy.newProxyInstance(
+            getClass().getClassLoader(),
+            new Class[]{callbackClass},
+            (p, method, args) -> {
+                if (args != null && args.length > 0) {
+                    // BatteryState.getRemainingChargeInPercent() — NEM getPercent()!
+                    int pct = (int) args[0].getClass()
+                        .getMethod("getRemainingChargeInPercent").invoke(args[0]);
+                    callback.onResult(pct);
+                }
+                return null;
+            });
+        setter.invoke(rcObject, proxy);
+    }
+}
 ```
+
+**Ismert osztályok Crystal Sky MSDK v4.18, P4P v1 eszközön:**
+
+| Komponens | Osztály | Megjegyzés |
+|-----------|---------|------------|
+| RemoteController | `dji.sdk.remotecontroller.uio` | Obfuszkált |
+| RC Callback | `dji.common.remotecontroller.BatteryState$Callback` | Publikus |
+| RC töltöttség | `getRemainingChargeInPercent()` | NEM `getPercent()` |
+| Drón Battery Callback | `dji.common.battery.BatteryState$Callback` | |
+| Drón töltöttség | `getChargeRemainingInPercent()` | |
 
 ---
 
