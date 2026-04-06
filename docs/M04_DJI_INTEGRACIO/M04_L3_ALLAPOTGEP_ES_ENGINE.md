@@ -2,20 +2,22 @@
 
 **Modul:** M04
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.3.0
+**Verzió:** v1.5.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-05
-**Státusz:** ✅ Részben implementálva — RC akku, drón akku, drón név, GPS (reflection); misszió feltöltés stub
+**Utolsó módosítás:** 2026-04-06
+**Státusz:** ✅ Részben implementálva — RC akku, drón akku, drón név, GPS, kamera feed PiP, tap-to-expose (reflection); misszió feltöltés stub
 
 ---
 
 ## Forrásfájlok
 
-| Fájl | Szerepkör | Jelenlegi státusz | Valódi eszközön |
-|------|-----------|-------------------|-----------------|
-| `dji/DJIHelper.java` | SDK regisztráció, csatlakozás figyelés | Stub (mindig false) | MSDK v4 implementáció |
-| `dji/MissionUploader.java` | Waypoint misszió feltöltés, vezérlés | Stub (mindig hiba) | MSDK v4 implementáció |
-| `App.java` | Application osztály, MultiDex | MultiDex only | DJIHelper.init() hívás |
+| Fájl | Szerepkör | Jelenlegi státusz |
+|------|-----------|-------------------|
+| `dji/DJIHelper.java` | SDK regisztráció, telemetria (reflection) | ✅ Crystal Sky-on működik |
+| `dji/DroneVideoWidget.java` | Kamera feed PiP, tap-to-expose | ✅ Crystal Sky-on működik |
+| `dji/MissionUploader.java` | Waypoint misszió feltöltés, vezérlés | 🔧 Stub (mindig hiba) |
+| `dji/CameraConfigurator.java` | Kamera beállítások alkalmazása | ✅ Implementálva |
+| `App.java` | Application osztály, MultiDex | MultiDex only |
 
 ---
 
@@ -301,6 +303,66 @@ public class App extends MultiDexApplication {
     }
 }
 ```
+
+---
+
+---
+
+## DroneVideoWidget — kamera feed + tap-to-expose (Crystal Sky build)
+
+```java
+public class DroneVideoWidget implements TextureView.SurfaceTextureListener {
+
+    // Reflexióval kezelt MSDK objektumok (emulátoros build kompatibilitás)
+    private Object codecManager;       // dji.sdk.codec.DJICodecManager
+    private Object videoDataListener;  // dji.sdk.camera.VideoFeeder.VideoDataListener
+    private Object videoFeed;          // dji.sdk.camera.VideoFeeder.VideoFeed
+    private boolean running = false;
+
+    // Publikus API
+    public void start()   { running = true;  /* attachCodecAndFeed ha surface kész */ }
+    public void stop()    { running = false; detachFeed(); releaseCodec(); }
+    public void destroy() { stop(); textureView.setSurfaceTextureListener(null); }
+    public boolean isRunning() { return running; }
+
+    // Tap-to-expose: reflection-alapú MSDK hívás
+    // normalizedX/Y: 0.0–1.0, TextureView-n belüli relatív pozíció
+    public void tapToFocus(float normalizedX, float normalizedY) {
+        // 1. getCamera() → reflection
+        // 2. Camera.setFocusMode(FocusMode.AUTO) → proxy callback
+        // 3. callback: setFocusTarget(PointF(nx, ny)) → reflection
+        //    → P4P v1-en: expozíció az érintett pontra (fix fókusz!)
+    }
+}
+```
+
+**Proxy pattern (minden MSDK callback):**
+```java
+// Kötelező: hashCode/equals/toString explicit kezelése!
+// Az MSDK Set gyűjteménybe teszi a callbackeket → hashCode()-ot hív.
+// null visszatérés int-re unboxolhatatlan → NPE.
+(proxy, method, args) -> {
+    switch (method.getName()) {
+        case "hashCode": return System.identityHashCode(proxy);
+        case "equals":   return proxy == (args != null ? args[0] : null);
+        case "toString": return "DroneVideoWidget$VideoDataListener";
+    }
+    // ... tényleges callback logika ...
+    return null;
+}
+```
+
+**Ismert MSDK osztályok (Crystal Sky, MSDK v4.18, P4P v1):**
+
+| Osztály | Elérés |
+|---------|--------|
+| `dji.sdk.codec.DJICodecManager` | Constructor: (Context, SurfaceTexture, int, int) |
+| `dji.sdk.camera.VideoFeeder` | `getInstance()` → `getPrimaryVideoFeed()` |
+| `VideoFeeder.VideoDataListener` | `onReceive(byte[], int)` |
+| Camera (reflection) | `product.getCamera()` |
+| `SettingsDefinitions$FocusMode` | `.AUTO` field |
+| `setFocusMode(FocusMode, CompletionCallback)` | dinamikus metóduskeresés |
+| `setFocusTarget(PointF, CompletionCallback)` | dinamikus metóduskeresés |
 
 ---
 

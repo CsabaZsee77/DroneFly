@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.4.0
+**Verzió:** v1.5.0
 **Létrehozva:** 2026-04-02
 **Utolsó módosítás:** 2026-04-06
-**Státusz:** ✅ Részben implementálva — telemetria + kamera feed PiP működik Crystal Sky-on; misszió feltöltés stub
+**Státusz:** ✅ Részben implementálva — telemetria + kamera feed PiP + tap-to-expose működik Crystal Sky-on; misszió feltöltés stub
 
 ---
 
@@ -34,6 +34,7 @@ a DroneFly app:
 | Misszió feltöltés / indítás | 🔧 Stub — valódi MSDK implementáció szükséges |
 | Misszió pause / stop | 🔧 Stub |
 | Kamera feed PiP (élő kép) | ✅ Implementálva (DroneVideoWidget) |
+| Tap-to-expose (érintéses expozíció) | ✅ Implementálva (tapToFocus + fókuszgyűrű animáció) |
 
 ---
 
@@ -215,7 +216,46 @@ csatlakoztatva van és a CAM gomb be van kapcsolva.
 
 ---
 
-## 10. Kapcsolódó modulok
+## 10. Tap-to-Expose (érintéses expozíció)
+
+```
+Felhasználó érinti a kamera képet (TextureView)
+      │
+      ▼
+px → normalizált koordináta (nx = x/width, ny = y/height)
+      │
+      ▼
+DroneVideoWidget.tapToFocus(nx, ny)
+  │
+  ├─ Camera.setFocusMode(FocusMode.AUTO) [MSDK reflection]
+  │    → onResult(null) [siker]
+  │         │
+  │         ▼
+  │    Camera.setFocusTarget(PointF(nx, ny)) [MSDK reflection]
+  │         → Drón expozíciót az érintett pontra állítja
+  │
+  └─ Párhuzamosan (UI szálon):
+       MissionPlannerActivity.showFocusRing(touchX, touchY)
+         → ImageView (focus_ring.xml) megjelenik az érintés helyén
+         → scale animáció: 1.4x → 1.0x (200 ms)
+         → 700 ms várakozás
+         → alpha fade-out (300 ms)
+         → INVISIBLE
+
+Megjegyzés: P4P v1 FIX FÓKUSZÚ lencse → a setFocusMode(AUTO) +
+setFocusTarget() a tényleges fókuszt NEM változtatja, de az expozíciót
+az érintett pontra igazítja (tap-to-expose viselkedés, mint a DJI Go 4-ben).
+```
+
+**Proxy hashCode/equals/toString kezelés:**
+Minden MSDK reflection proxy tartalmaz hashCode/equals/toString kezelést,
+mivel az MSDK belső Set gyűjteményekbe teszi a callback-eket, amelyek
+`hashCode()`-ot hívnak → null visszatérési értéket nem lehet int-re unboxolni
+→ NPE. (Korábbi bugfix: `d6912a3` + `4deba15` commitok.)
+
+---
+
+## 11. Kapcsolódó modulok
 
 | Modul | Kapcsolat típusa |
 |-------|-----------------|

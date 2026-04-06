@@ -2,9 +2,10 @@
 
 **Modul:** M04
 **Szint:** L2 – Döntési Logika
-**Verzió:** v1.0.0
+**Verzió:** v1.5.0
 **Létrehozva:** 2026-04-02
-**Státusz:** 🔧 Stub (emulátor) — MSDK döntési logika dokumentálva a valódi implementációhoz
+**Utolsó módosítás:** 2026-04-06
+**Státusz:** ✅ Részben implementálva — kamera feed + tap-to-expose döntési logika; misszió feltöltés dokumentálva
 
 ---
 
@@ -167,4 +168,75 @@ RC RTH gomb:
 
 Megjegyzés: Az MSDK állapotfigyelés (addListener) implementálása
 opcionális a v1.0.0-ban — a stop/pause az app gombokkal vezérelt.
+```
+
+---
+
+## 8. Kamera feed döntési logika (DroneVideoWidget)
+
+```
+CAM gomb megnyomva:
+  videoWidget.isRunning()?
+    │ IGEN → stop() → cameraWindow GONE → gomb szín: #CC1a1a2e (sötét)
+    │ NEM  → cameraWindow VISIBLE → start() → gomb szín: #CC226622 (zöld)
+
+start() híváskor:
+  activeSurface != null?
+    │ IGEN → attachCodecAndFeed() azonnal
+    │ NEM  → vár onSurfaceTextureAvailable() callback-re
+
+attachCodecAndFeed():
+  DJICodecManager létrehozható?
+    │ ClassNotFoundException → emulátoros stub (nincs crash, kép fekete)
+    │ OK → DJICodecManager inicializálva
+  VideoFeeder.getInstance() == null?
+    │ IGEN → SDK még nem inicializált → return
+    │ NEM  → getPrimaryVideoFeed()
+  getPrimaryVideoFeed() == null?
+    │ IGEN → kamera még nem aktív → releaseCodec() → return
+    │ NEM  → addVideoDataListener(proxy) → feed aktív
+```
+
+---
+
+## 9. Tap-to-expose döntési logika
+
+```
+Érintés a TextureView-n:
+  videoWidget.isRunning() == false?
+    │ IGEN → esemény elnyelve (return false), semmi sem történik
+    │ NEM  → folytatás
+
+  nx = touchX / textureView.getWidth()
+  ny = touchY / textureView.getHeight()
+  → tapToFocus(nx, ny) hívás
+  → showFocusRing(touchX, touchY) hívás
+
+tapToFocus(nx, ny):
+  DJISDKManager.getProduct() == null || !isConnected()?
+    │ IGEN → return (csendesen)
+    │ NEM  → getCamera() → null?
+              │ IGEN → return
+              │ NEM  →
+
+  Camera.setFocusMode(FocusMode.AUTO) keresése reflexióval:
+    setFocusMode metódus megtalálható?
+      │ NEM  → "setFocusMode metódus nem található" log → return
+      │ IGEN → proxy callback létrehozva (hashCode/equals/toString kezelve)
+
+  setFocusMode callback:
+    onResult(error == null)?
+      │ MINDKÉT esetben → setFocusTarget(camera, nx, ny) hívás
+      │   (hiba esetén is próbálkozunk — a P4P tap-to-expose tolerálja)
+
+  setFocusTarget(camera, nx, ny):
+    setFocusTarget metódus megtalálható?
+      │ NEM  → return
+      │ IGEN → invoke(camera, PointF(nx, ny), proxy)
+                → Drón expozíció az érintett pontra igazítva
+
+P4P v1 hardver korlát:
+  FIX FÓKUSZÚ lencse → a fókuszszint nem változik
+  A setFocusTarget() mégis hasznos: expozíciót / AE mérési pontot állítja
+  Viselkedés: azonos a DJI Go 4 "tap-to-focus" funkciójával P4P-n
 ```

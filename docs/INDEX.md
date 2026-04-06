@@ -4,8 +4,8 @@
 **Céleszköz:** DJI Crystal Sky (Android 5.1)
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
-**Verzió:** v1.0.0
-**Utolsó frissítés:** 2026-04-02
+**Verzió:** v1.5.0
+**Utolsó frissítés:** 2026-04-06
 
 ---
 
@@ -16,7 +16,7 @@
 | [M01 Misszió Tervező](M01_MISSZIO_TERVEZO/) | Térképes UI, polygon rajzolás, paraméter beállítás | ✅ Implementálva (v1.0.0) |
 | [M02 Grid Engine](M02_GRID_ENGINE/) | GSD kalkulátor, rácsútvonal generátor (kígyózó minta) | ✅ Implementálva (v1.0.0) |
 | [M03 Export / Import](M03_EXPORT_IMPORT/) | Litchi CSV export, KMZ export, CSV import | ✅ Implementálva (v1.0.0) |
-| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés (pause/stop/resume) | 🔧 Stub (emulátor) |
+| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose | 🔧 Részben — telemetria + kamera ✅, misszió feltöltés stub |
 
 ---
 
@@ -36,13 +36,19 @@ app/src/main/java/com/dronefly/app/
 │   ├── CsvMissionParser.java         ← M03 import
 │   └── MissionExporter.java          ← M03 export
 └── dji/
-    ├── DJIHelper.java                ← M04 SDK init (stub)
-    └── MissionUploader.java          ← M04 feltöltés + vezérlés (stub)
+    ├── DJIHelper.java                ← M04 SDK init, telemetria (reflection)
+    ├── DroneVideoWidget.java         ← M04 kamera feed PiP + tap-to-expose
+    ├── MissionUploader.java          ← M04 feltöltés + vezérlés (stub)
+    └── CameraConfigurator.java       ← M04 kamera beállítások
 
 app/src/main/res/
 ├── layout/
 │   ├── activity_main.xml
 │   └── activity_mission_planner.xml  ← M01 UI layout
+├── drawable/
+│   ├── focus_ring.xml                ← Tap-to-expose fókuszgyűrű
+│   ├── ic_launcher.xml
+│   └── status_bar_bg.xml
 ├── xml/
 │   ├── device_filter.xml             ← DJI USB filter
 │   └── file_paths.xml                ← FileProvider export útvonal

@@ -2,9 +2,10 @@
 
 **Modul:** M04
 **Szint:** L4 – Tranzakciós és Párhuzamos Kezelés
-**Verzió:** v1.0.0
+**Verzió:** v1.5.0
 **Létrehozva:** 2026-04-02
-**Státusz:** 🔧 Stub (emulátor) — dokumentálva a valódi eszköz implementációhoz
+**Utolsó módosítás:** 2026-04-06
+**Státusz:** ✅ Részben implementálva — kamera feed és tap-to-expose szálkezelés dokumentálva és tesztelve
 
 ---
 
@@ -130,4 +131,68 @@ Crystal Sky firmware:
   → Crystal Sky v1.4+ ajánlott MSDK v4.18-hoz
   → DJI Go 4 app előre telepítve — nem kell eltávolítani
   → DroneFly párhuzamosan futhat a DJI Go 4-gyel (de ne egyszerre!)
+```
+
+---
+
+## 7. Kamera feed szálkezelés (DroneVideoWidget)
+
+```
+VideoFeeder.VideoDataListener.onReceive(byte[], int):
+  → DJI SDK belső szálon érkezik (NEM main thread)
+  → sendDataToDecoder() hívás: DJICodecManager belső szálán fut
+  → UI interakció itt tilos
+
+SurfaceTextureListener callbackek:
+  → onSurfaceTextureAvailable, onSurfaceTextureDestroyed: főszálon érkeznek
+  → attachCodecAndFeed() / releaseCodec() főszálon fut (OK)
+
+TextureView touch listener:
+  → Mindig main thread → showFocusRing() közvetlenül hívható
+
+tapToFocus() reflection hívások:
+  → DJISDKManager.getProduct() thread-safe
+  → setFocusMode() callback: DJI SDK belső szálon
+  → setFocusTarget() hívás a setFocusMode callback-ből: OK
+    (nincs UI frissítés itt — az animáció a touch listenerből már indult)
+```
+
+**Fókuszgyűrű animáció szálbiztonsága:**
+```java
+// showFocusRing() mindig main thread-en hívódik (touch event)
+// Animator.start() main thread-en biztonságos
+// postDelayed() szintén OK
+focusRing.animate().scaleX(1f).scaleY(1f).setDuration(200)
+    .withEndAction(() -> focusRing.postDelayed(() ->
+        focusRing.animate().alpha(0f)...start(), 700))
+    .start();
+// → Ha a kamera ablak közben bezárul: focusRing.setVisibility(INVISIBLE) a stop()-ban
+//   nem szükséges explicit kezelés (az ablak GONE lesz, animáció ártalmatlan)
+```
+
+---
+
+## 8. Proxy NPE bugfix — tanulság
+
+```
+Tünet: DJI SDK belső NPE, VideoFeed fekete, nincs crash az appban
+Logcat: "Expected to unbox a 'int' primitive type but was returned null"
+
+Ok: Az MSDK Set<Listener> gyűjteménybe teszi a proxy callbackeket.
+    A Set.add() hívja a hashCode()-ot.
+    A reflection proxy alapértelmezetten null-t ad vissza minden metódusra.
+    null.intValue() → NullPointerException az MSDK belső kódjában.
+
+Fix (MINDEN proxy InvocationHandlerben kötelező):
+    case "hashCode": return System.identityHashCode(proxy);  // → int, sosem null
+    case "equals":   return proxy == (args != null ? args[0] : null);
+    case "toString": return "ClassName$CallbackType";
+
+Érintett osztályok:
+  DroneVideoWidget$VideoDataListener
+  DroneVideoWidget$FocusModeCallback
+  DroneVideoWidget$FocusTargetCallback
+  DJIHelper$RcBatteryCallback
+  DJIHelper$DroneBatteryCallback
+  DJIHelper$FlightStateCallback
 ```
