@@ -118,31 +118,52 @@ public class DroneVideoWidget implements TextureView.SurfaceTextureListener {
             codecManager = codecClass
                     .getConstructor(Context.class, SurfaceTexture.class, int.class, int.class)
                     .newInstance(context, surface, width, height);
+            Log.d(TAG, "DJICodecManager létrehozva");
 
-            // 2. VideoDataListener proxy
+            // 2. Primary feed lekérés — null check: kamera még nincs kész?
             Class<?> listenerClass = Class.forName(
                     "dji.sdk.camera.VideoFeeder$VideoDataListener");
+            Object feeder = Class.forName("dji.sdk.camera.VideoFeeder")
+                    .getMethod("getInstance").invoke(null);
+            if (feeder == null) {
+                Log.w(TAG, "VideoFeeder.getInstance() null – SDK nem inicializált");
+                return;
+            }
+            videoFeed = feeder.getClass()
+                    .getMethod("getPrimaryVideoFeed").invoke(feeder);
+            if (videoFeed == null) {
+                Log.w(TAG, "getPrimaryVideoFeed() null – kamera még nem aktív, próbáld újra");
+                releaseCodec();
+                return;
+            }
+
+            // 3. VideoDataListener proxy
             videoDataListener = java.lang.reflect.Proxy.newProxyInstance(
                     getClass().getClassLoader(),
                     new Class[]{listenerClass},
                     (proxy, method, args) -> {
+                        switch (method.getName()) {
+                            case "hashCode":  return System.identityHashCode(proxy);
+                            case "equals":    return proxy == (args != null ? args[0] : null);
+                            case "toString":  return "DroneVideoWidget$VideoDataListener";
+                        }
                         if ("onReceive".equals(method.getName())
                                 && args != null && args.length >= 2
                                 && codecManager != null) {
-                            byte[] data = (byte[]) args[0];
-                            int size = (int) args[1];
-                            codecManager.getClass()
-                                    .getMethod("sendDataToDecoder", byte[].class, int.class)
-                                    .invoke(codecManager, data, size);
+                            try {
+                                byte[] data = (byte[]) args[0];
+                                int size = (int) args[1];
+                                codecManager.getClass()
+                                        .getMethod("sendDataToDecoder", byte[].class, int.class)
+                                        .invoke(codecManager, data, size);
+                            } catch (Throwable t2) {
+                                Log.e(TAG, "sendDataToDecoder hiba: " + t2.getClass().getSimpleName());
+                            }
                         }
                         return null;
                     });
 
-            // 3. Primary feed lekérés + listener regisztrálás
-            Object feeder = Class.forName("dji.sdk.camera.VideoFeeder")
-                    .getMethod("getInstance").invoke(null);
-            videoFeed = feeder.getClass()
-                    .getMethod("getPrimaryVideoFeed").invoke(feeder);
+            // 4. Listener regisztrálás
             videoFeed.getClass()
                     .getMethod("addVideoDataListener", listenerClass)
                     .invoke(videoFeed, videoDataListener);
@@ -153,7 +174,9 @@ public class DroneVideoWidget implements TextureView.SurfaceTextureListener {
             // Emulátoros build — DJI SDK stub nem tartalmazza ezeket az osztályokat
             Log.d(TAG, "Kamera feed nem elérhető (emulátor stub): " + e.getMessage());
         } catch (Throwable t) {
-            Log.e(TAG, "Kamera feed hiba: " + t.getMessage());
+            Throwable cause = (t.getCause() != null) ? t.getCause() : t;
+            Log.e(TAG, "Kamera feed hiba: " + cause.getClass().getSimpleName()
+                    + " – " + cause.getMessage());
         }
     }
 

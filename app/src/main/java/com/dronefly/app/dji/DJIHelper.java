@@ -136,6 +136,11 @@ public class DJIHelper {
                         getClass().getClassLoader(),
                         new Class[]{callbackClass},
                         (proxyObj, method, args) -> {
+                            switch (method.getName()) {
+                                case "hashCode": return System.identityHashCode(proxyObj);
+                                case "equals":   return proxyObj == (args != null ? args[0] : null);
+                                case "toString": return "DJIHelper$RcBatteryCallback";
+                            }
                             if (args != null && args.length > 0) {
                                 try {
                                     int pct = (int) args[0].getClass()
@@ -168,12 +173,17 @@ public class DJIHelper {
             if (battery == null) { cb.onResult(-1); return; }
             // getChargeRemainingInPercent(CommonCallbacks.CompletionCallbackWith)
             // Egyszerűbb: StateCallback regisztrálás
-            battery.getClass().getMethod("setStateCallback",
-                    Class.forName("dji.common.battery.BatteryState$Callback"))
+            Class<?> battCbClass = Class.forName("dji.common.battery.BatteryState$Callback");
+            battery.getClass().getMethod("setStateCallback", battCbClass)
                 .invoke(battery, java.lang.reflect.Proxy.newProxyInstance(
                     getClass().getClassLoader(),
-                    new Class[]{Class.forName("dji.common.battery.BatteryState$Callback")},
+                    new Class[]{battCbClass},
                     (proxy, method, args) -> {
+                        switch (method.getName()) {
+                            case "hashCode": return System.identityHashCode(proxy);
+                            case "equals":   return proxy == (args != null ? args[0] : null);
+                            case "toString": return "DJIHelper$DroneBatteryCallback";
+                        }
                         if ("onUpdate".equals(method.getName()) && args != null && args.length > 0) {
                             try {
                                 int pct = (int) args[0].getClass()
@@ -204,6 +214,11 @@ public class DJIHelper {
                         getClass().getClassLoader(),
                         new Class[]{callbackClass},
                         (proxyObj, method, args) -> {
+                            switch (method.getName()) {
+                                case "hashCode": return System.identityHashCode(proxyObj);
+                                case "equals":   return proxyObj == (args != null ? args[0] : null);
+                                case "toString": return "DJIHelper$FlightStateCallback";
+                            }
                             if ("onUpdate".equals(method.getName()) && args != null && args.length > 0) {
                                 try {
                                     int sats = (int) args[0].getClass()
