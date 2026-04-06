@@ -10,8 +10,10 @@ import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.ImageView;
 import android.text.InputType;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -135,6 +137,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     // Kamera feed widget (PiP)
     private DroneVideoWidget videoWidget;
     private FrameLayout cameraWindow;
+    private ImageView focusRing;
 
     // DJI kapcsolat státusz
     private TextView tvDroneStatus;
@@ -289,6 +292,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         // Kamera feed PiP
         cameraWindow = findViewById(R.id.cameraWindow);
+        focusRing = findViewById(R.id.focusRing);
         TextureView cameraTextureView = findViewById(R.id.cameraTextureView);
         videoWidget = new DroneVideoWidget(this, cameraTextureView);
 
@@ -300,6 +304,18 @@ public class MissionPlannerActivity extends AppCompatActivity {
             cameraWindow.setVisibility(View.GONE);
             btnCamToggle.setBackgroundTintList(
                 android.content.res.ColorStateList.valueOf(0xCC1a1a2e));
+        });
+
+        // Tap-to-focus: érintés → fokuszgyűrű animáció + MSDK setFocusTarget hívás
+        cameraTextureView.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN && videoWidget.isRunning()) {
+                float nx = event.getX() / v.getWidth();
+                float ny = event.getY() / v.getHeight();
+                videoWidget.tapToFocus(nx, ny);
+                showFocusRing(event.getX(), event.getY());
+                return true;
+            }
+            return false;
         });
 
         // Drón spinner
@@ -413,6 +429,34 @@ public class MissionPlannerActivity extends AppCompatActivity {
             btnCamToggle.setBackgroundTintList(
                 android.content.res.ColorStateList.valueOf(0xCC226622));
         }
+    }
+
+    /**
+     * Fókuszgyűrű megjelenítése az érintés helyén, majd 1 másodperc után eltűnik.
+     * touchX/touchY: pixel koordináták a TextureView-n belül.
+     */
+    private void showFocusRing(float touchX, float touchY) {
+        int ringSize = focusRing.getWidth();
+        if (ringSize == 0) ringSize = (int) (48 * getResources().getDisplayMetrics().density);
+
+        // A cameraWindow bal felső sarka a referencia — a TextureView tölti ki teljesen
+        focusRing.setX(touchX - ringSize / 2f);
+        focusRing.setY(touchY - ringSize / 2f);
+        focusRing.setAlpha(1f);
+        focusRing.setVisibility(View.VISIBLE);
+        focusRing.setScaleX(1.4f);
+        focusRing.setScaleY(1.4f);
+
+        focusRing.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(200)
+                .withEndAction(() -> focusRing.postDelayed(() -> {
+                    focusRing.animate().alpha(0f).setDuration(300)
+                            .withEndAction(() -> focusRing.setVisibility(View.INVISIBLE))
+                            .start();
+                }, 700))
+                .start();
     }
 
     // ── Státuszsáv ────────────────────────────────────────────────────

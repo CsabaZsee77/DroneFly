@@ -5,6 +5,8 @@ import android.graphics.SurfaceTexture;
 import android.util.Log;
 import android.view.TextureView;
 
+import dji.sdk.base.BaseProduct;
+
 /**
  * DroneVideoWidget — DJI live kamera feed kezelő.
  *
@@ -74,6 +76,114 @@ public class DroneVideoWidget implements TextureView.SurfaceTextureListener {
 
     public boolean isRunning() {
         return running;
+    }
+
+    /**
+     * Tap-to-expose: a P4P v1 fix fókuszú, de az expozíciót az érintett területre igazítja.
+     * normalizedX / normalizedY: 0.0–1.0, a TextureView-n belüli relatív pozíció.
+     * MSDK v4 hívások reflexióval: Camera.setFocusMode(AF) + Camera.setFocusTarget(PointF).
+     */
+    public void tapToFocus(float normalizedX, float normalizedY) {
+        try {
+            BaseProduct p = dji.sdk.sdkmanager.DJISDKManager.getInstance().getProduct();
+            if (p == null || !p.isConnected()) return;
+            Object camera = p.getClass().getMethod("getCamera").invoke(p);
+            if (camera == null) return;
+
+            // FocusMode.AUTO enum érték lekérése
+            Class<?> focusModeClass = Class.forName(
+                    "dji.common.camera.SettingsDefinitions$FocusMode");
+            Object autoMode = focusModeClass.getField("AUTO").get(null);
+
+            // CompletionCallback proxy setFocusMode-hoz
+            Class<?> completionCbClass = Class.forName(
+                    "dji.common.commontype.DJIError");
+            // A setFocusMode aláírása: setFocusMode(FocusMode, CommonCallbacks.CompletionCallback)
+            // Megkeressük a metódust dinamikusan
+            java.lang.reflect.Method setFocusModeMethod = null;
+            for (java.lang.reflect.Method m : camera.getClass().getMethods()) {
+                if ("setFocusMode".equals(m.getName()) && m.getParameterTypes().length == 2) {
+                    setFocusModeMethod = m;
+                    break;
+                }
+            }
+            if (setFocusModeMethod == null) {
+                Log.d(TAG, "setFocusMode metódus nem található");
+                return;
+            }
+
+            Class<?> cb1Class = setFocusModeMethod.getParameterTypes()[1];
+            final float nx = normalizedX;
+            final float ny = normalizedY;
+            final Object cam = camera;
+
+            Object focusModeCallback = java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),
+                    new Class[]{cb1Class},
+                    (proxy, method, args) -> {
+                        switch (method.getName()) {
+                            case "hashCode": return System.identityHashCode(proxy);
+                            case "equals":   return proxy == (args != null ? args[0] : null);
+                            case "toString": return "DroneVideoWidget$FocusModeCallback";
+                        }
+                        // onResult(DJIError) — ha nincs hiba, setFocusTarget
+                        if ("onResult".equals(method.getName())) {
+                            boolean hasError = (args != null && args[0] != null);
+                            if (!hasError) {
+                                setFocusTarget(cam, nx, ny);
+                            } else {
+                                // Hiba esetén próbáljuk meg közvetlenül a setFocusTarget-et
+                                setFocusTarget(cam, nx, ny);
+                            }
+                        }
+                        return null;
+                    });
+
+            setFocusModeMethod.invoke(camera, autoMode, focusModeCallback);
+
+        } catch (ClassNotFoundException e) {
+            Log.d(TAG, "tapToFocus: DJI osztály nem elérhető (stub): " + e.getMessage());
+        } catch (Throwable t) {
+            Throwable cause = (t.getCause() != null) ? t.getCause() : t;
+            Log.d(TAG, "tapToFocus hiba: " + cause.getClass().getSimpleName()
+                    + " – " + cause.getMessage());
+        }
+    }
+
+    private void setFocusTarget(Object camera, float nx, float ny) {
+        try {
+            android.graphics.PointF point = new android.graphics.PointF(nx, ny);
+
+            java.lang.reflect.Method setFocusTargetMethod = null;
+            for (java.lang.reflect.Method m : camera.getClass().getMethods()) {
+                if ("setFocusTarget".equals(m.getName()) && m.getParameterTypes().length == 2) {
+                    setFocusTargetMethod = m;
+                    break;
+                }
+            }
+            if (setFocusTargetMethod == null) {
+                Log.d(TAG, "setFocusTarget metódus nem található");
+                return;
+            }
+            Class<?> cb2Class = setFocusTargetMethod.getParameterTypes()[1];
+            Object focusTargetCallback = java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),
+                    new Class[]{cb2Class},
+                    (proxy, method, args) -> {
+                        switch (method.getName()) {
+                            case "hashCode": return System.identityHashCode(proxy);
+                            case "equals":   return proxy == (args != null ? args[0] : null);
+                            case "toString": return "DroneVideoWidget$FocusTargetCallback";
+                        }
+                        return null;
+                    });
+            setFocusTargetMethod.invoke(camera, point, focusTargetCallback);
+            Log.d(TAG, "setFocusTarget → (" + nx + ", " + ny + ")");
+        } catch (Throwable t) {
+            Throwable cause = (t.getCause() != null) ? t.getCause() : t;
+            Log.d(TAG, "setFocusTarget hiba: " + cause.getClass().getSimpleName()
+                    + " – " + cause.getMessage());
+        }
     }
 
     // ── TextureView.SurfaceTextureListener ───────────────────────────────────

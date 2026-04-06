@@ -79,6 +79,16 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"/>
 
+            <!-- Fókusz jelző kör (tap-to-focus) -->
+            <ImageView
+                android:id="@+id/focusRing"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:src="@drawable/focus_ring"
+                android:visibility="invisible"
+                android:elevation="8dp"/>
+
             <!-- Fejléc sáv: "LIVE" felirat + bezáró gomb -->
             <LinearLayout
                 android:layout_width="match_parent"
