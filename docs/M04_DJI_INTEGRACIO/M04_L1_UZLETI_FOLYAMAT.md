@@ -2,9 +2,9 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.5.0
+**Verzió:** v1.6.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-06
+**Utolsó módosítás:** 2026-04-07
 **Státusz:** ✅ Részben implementálva — telemetria + kamera feed PiP + tap-to-expose működik Crystal Sky-on; misszió feltöltés stub
 
 ---
@@ -31,8 +31,9 @@ a DroneFly app:
 | RC csatlakozás érzékelés | ✅ Működik (reflection) |
 | RC akkumulátor % | ✅ Működik (BatteryState$Callback, getRemainingChargeInPercent) |
 | GPS műholdak száma | ✅ Működik (FlightController StateCallback) |
-| Misszió feltöltés / indítás | 🔧 Stub — valódi MSDK implementáció szükséges |
+| Misszió feltöltés / indítás | 🔧 Stub — valódi MSDK implementáció szükséges; ProgressDialog + AlertDialog visszajelzés ✅ |
 | Misszió pause / stop | 🔧 Stub |
+| GPS ellenőrzés (START gomb) | ✅ START csak ≥6 műhold esetén engedélyezett; „START (GPS!)" felirat ha nincs elég |
 | Kamera feed PiP (élő kép) | ✅ Implementálva (DroneVideoWidget) |
 | Tap-to-expose (érintéses expozíció) | ✅ Implementálva (tapToFocus + fókuszgyűrű animáció) |
 

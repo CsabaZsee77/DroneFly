@@ -1,7 +1,7 @@
 # ✈️ DroneFly GCS – Felhasználói Útmutató
 
-**Verzió:** v1.4.0
-**Utolsó frissítés:** 2026-04-06
+**Verzió:** v1.6.0
+**Utolsó frissítés:** 2026-04-07
 **Céleszköz:** DJI Crystal Sky tablet (Android 5.1)
 **Drón:** DJI Phantom 4 Pro v1 (és más DJI drónok)
 
@@ -85,8 +85,8 @@ Keresd a **DroneFly** ikont a Crystal Sky home képernyőjén, és érintsd meg.
 2. **Érintsd meg a területet** – minden érintés egy sarokpontot rak le
 3. **Rajzolj legalább 3 sarokpontot** → az app azonnal generálja az útvonalat
 4. **Ellenőrizd a statisztikákat** (panel alján): terület, magasság, idő
-5. **Feltöltés** gomb → várd meg a megerősítő üzenetet
-6. **START** gomb → a drón elindul
+5. **Feltöltés** gomb → erősítsd meg → várj, amíg a feltöltési folyamatjelző eltűnik és a "Feltöltés sikeres" ablak megjelenik
+6. **START** gomb → a drón elindul (csak akkor aktív, ha ≥6 GPS műhold van)
 
 ### 3. Gyors navigáció
 
@@ -128,8 +128,7 @@ Keresd a **DroneFly** ikont a Crystal Sky home képernyőjén, és érintsd meg.
 **Teteje (lebegő státuszsáv):** drón kapcsolat, RC, akkumulátorok, GPS
 
 **Jobb oldal (csúsztatható panel):**
-- `»` gomb – panel elcsúszik (több hely a térképnek)
-- `«` gomb – panel visszanyílik
+- `»` / `«` gomb – panel be/kihajtás; a gomb a panel bal alsó részén helyezkedik el (szándékosan alul, hogy ne nyíljék be véletlenül)
 
 ---
 
@@ -437,8 +436,10 @@ A start/home pont a drón felszállási helyét jelöli. Ez befolyásolja:
 
 - ✅ Drón bekapcsolva és Crystal Sky-hoz csatlakozva
 - ✅ Státuszsáv: "DRON: P4P" (zöld)
-- ✅ GPS műholdak: min. 10 (SAT: 10 H – a "H" = Home pont beállítva)
+- ✅ GPS műholdak: min. 6 (SAT: 6+, ideálisan ≥10 és "H" = Home pont beállítva)
 - ✅ Misszió generálva (narancs útvonal látható)
+
+> **GPS ellenőrzés:** A **START** gomb csak ≥6 GPS műhold esetén aktív. Ha kevesebb van, a gomb szürke és felirata **"START (GPS!)"** – várd meg, amíg a drón elegendő műholdat lát.
 
 ### Feltöltés
 
@@ -449,11 +450,13 @@ A start/home pont a drón felszállási helyét jelöli. Ez befolyásolja:
    47 waypoint feltöltése a drónra?
    [Feltöltés]  [Mégse]
    ```
-3. Várd meg: *"Feltöltve! Ellenőrizd a drónt, majd nyomj START-ot."*
+3. Megjelenik a **feltöltési folyamatjelző** ("Feltöltés folyamatban a drónra...") – ne kapcsold ki az appot!
+4. Sikeres feltöltés után **"Feltöltés sikeres"** ablak jelenik meg – nyugtázd OK-val
+5. Hiba esetén a hibaüzenet jelenik meg – ellenőrizd a drón csatlakozást és próbáld újra
 
 ### Start
 
-1. Nyomd meg a **"START"** gombot (narancs, nagy)
+1. Nyomd meg a **"START"** gombot (narancs, nagy) – csak akkor aktív, ha a feltöltés sikerült és ≥6 műhold van
 2. Megerősítő dialog:
    ```
    Repülés indítása
@@ -468,6 +471,7 @@ A start/home pont a drón felszállási helyét jelöli. Ez befolyásolja:
 > - Légitér szabad?
 > - Visual line of sight biztosított?
 > - RC vezérlő kéznél?
+> - SAT ≥10 és "H" látható a státuszsávban?
 
 ---
 

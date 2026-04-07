@@ -95,6 +95,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private boolean  missionUploaded = false;
     private boolean  missionRunning = false;
     private boolean  missionPaused  = false;
+    private int      lastSatCount   = 0;
 
     // Kamera beállítások
     private LinearLayout cameraSettingsBody, cameraManualControls;
@@ -108,7 +109,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private TextView tvTerrainInfo;
 
     // Panel csúsztatás
-    private android.widget.FrameLayout sidePanelContainer;
+    private android.widget.LinearLayout sidePanelContainer;
     private ScrollView sidePanel;
     private Button btnTogglePanel;
     private boolean panelVisible = true;
@@ -514,6 +515,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 sbDrone.setTextColor(0xFFFF4444);
                 sbGps.setText("SAT: --"); sbGps.setTextColor(0xFF888888);
                 sbDroneBatt.setText("AKKU: --"); sbDroneBatt.setTextColor(0xFF888888);
+                lastSatCount = 0;
+                updateStartButtonState();
                 return;
             }
 
@@ -549,8 +552,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
             // GPS műholdak (Flight Controller callback – csak egyszer regisztráljuk)
             dji.setFlightStateCallback((sats, homeSet) -> runOnUiThread(() -> {
                 if (sbGps == null) return;
+                lastSatCount = sats;
                 sbGps.setText("SAT: " + sats + (homeSet ? " H" : ""));
                 sbGps.setTextColor(sats >= 10 ? 0xFF44FF88 : sats >= 6 ? 0xFFFFAA00 : 0xFFFF4444);
+                updateStartButtonState();
             }));
 
         } catch (Throwable t) { /* DJI SDK nem elérhető */ }
@@ -702,7 +707,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     "Domborzat korrigalva: %.0fm - %.0fm (takeoff: %.0fm tszf)",
                     minAlt, maxAlt, takeoffElev));
                 tvTerrainInfo.setTextColor(0xFF44FF44);
-                btnUpload.setEnabled(true);
+                boolean tc = false;
+                try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
+                btnUpload.setEnabled(tc && !missionRunning);
                 btnExport.setEnabled(true);
 
                 // Stats frissítés
@@ -713,7 +720,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
             public void onError(String message) {
                 tvTerrainInfo.setText("Domborzat hiba: " + message);
                 tvTerrainInfo.setTextColor(0xFFFF4444);
-                btnUpload.setEnabled(true);
+                boolean tc = false;
+                try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
+                btnUpload.setEnabled(tc && !missionRunning);
                 btnExport.setEnabled(true);
                 Toast.makeText(MissionPlannerActivity.this,
                     "Domborzati adat nem elerheto: " + message, Toast.LENGTH_LONG).show();
@@ -1583,7 +1592,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     private void uploadCurrentSegment() {
         if (lastResult == null || lastResult.segments.isEmpty()) return;
-        if (!DJIHelper.getInstance().isConnected()) {
+        boolean drone = false;
+        try { drone = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
+        if (!drone) {
+            btnUpload.setEnabled(false); // biztonsági reset
             Toast.makeText(this, "Nincs csatlakoztatott drón", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -1606,22 +1618,35 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnUpload.setEnabled(false);
         btnStart.setEnabled(false);
         missionUploaded = false;
-        Toast.makeText(this, "Feltöltés folyamatban...", Toast.LENGTH_SHORT).show();
+
+        android.app.ProgressDialog progress = new android.app.ProgressDialog(this);
+        progress.setTitle("Misszió feltöltése");
+        progress.setMessage("Feltöltés folyamatban a drónra...");
+        progress.setCancelable(false);
+        progress.show();
+
         uploader.uploadMission(segment, buildConfig(), new MissionUploader.UploadCallback() {
             @Override public void onSuccess() {
                 runOnUiThread(() -> {
+                    progress.dismiss();
                     missionUploaded = true;
-                    btnStart.setEnabled(true);
-                    Toast.makeText(MissionPlannerActivity.this,
-                        "Feltöltve! Ellenőrizd a drónt, majd nyomj START-ot.",
-                        Toast.LENGTH_LONG).show();
+                    updateStartButtonState();
+                    new AlertDialog.Builder(MissionPlannerActivity.this)
+                        .setTitle("Feltöltés sikeres")
+                        .setMessage("A misszió sikeresen feltöltve a drónra.\n\nEllenőrizd a drónt, majd nyomj START-ot.")
+                        .setPositiveButton("OK", null)
+                        .show();
                 });
             }
             @Override public void onError(String msg) {
                 runOnUiThread(() -> {
+                    progress.dismiss();
                     btnUpload.setEnabled(true);
-                    Toast.makeText(MissionPlannerActivity.this,
-                        "Feltöltési hiba: " + msg, Toast.LENGTH_LONG).show();
+                    new AlertDialog.Builder(MissionPlannerActivity.this)
+                        .setTitle("Feltöltési hiba")
+                        .setMessage(msg)
+                        .setPositiveButton("OK", null)
+                        .show();
                 });
             }
         });
@@ -1661,6 +1686,17 @@ public class MissionPlannerActivity extends AppCompatActivity {
             })
             .setNegativeButton("Mégse", null)
             .show();
+    }
+
+    private void updateStartButtonState() {
+        // START csak ha: misszió feltöltve + elég GPS műhold (≥6) + misszió nem fut
+        boolean canStart = missionUploaded && lastSatCount >= 6 && !missionRunning;
+        btnStart.setEnabled(canStart);
+        if (missionUploaded && lastSatCount < 6 && !missionRunning) {
+            btnStart.setText("START (GPS!)");
+        } else if (!missionRunning) {
+            btnStart.setText("START");
+        }
     }
 
     private void setMissionRunning(boolean running) {
@@ -1778,7 +1814,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
         lastResult.segments.add(waypoints);
         lastResult.totalWaypoints = waypoints.size();
         currentSegmentIndex = 0;
-        btnUpload.setEnabled(true);
+        boolean csvConnected = false;
+        try { csvConnected = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
+        btnUpload.setEnabled(csvConnected);
         btnExport.setEnabled(true);
         tvStats.setText(String.format("Importált: %d waypoint", waypoints.size()));
         Toast.makeText(this, waypoints.size() + " waypoint importálva", Toast.LENGTH_SHORT).show();

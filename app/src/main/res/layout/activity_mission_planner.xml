@@ -216,19 +216,21 @@
     </LinearLayout>
 
     <!-- OLDALPANEL + TOGGLE GOMB együtt csúszik -->
-    <FrameLayout
+    <LinearLayout
         android:id="@+id/sidePanelContainer"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout_gravity="end"
+        android:orientation="horizontal"
         android:elevation="8dp">
 
-        <!-- Toggle gomb – a panel bal szélén, középen -->
+        <!-- Toggle gomb – a panel bal szélén, alul (véletlen bezárás ellen) -->
         <Button
             android:id="@+id/btnTogglePanel"
             android:layout_width="36dp"
             android:layout_height="72dp"
-            android:layout_gravity="start|center_vertical"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="24dp"
             android:text="»"
             android:textSize="16sp"
             android:textColor="#FFFFFF"
@@ -242,7 +244,6 @@
             android:id="@+id/sidePanel"
             android:layout_width="320dp"
             android:layout_height="match_parent"
-            android:layout_gravity="end"
             android:background="#EE1a1a2e">
 
             <LinearLayout
@@ -680,6 +681,6 @@
             </LinearLayout>
         </ScrollView>
 
-    </FrameLayout>
+    </LinearLayout>
 
 </FrameLayout>

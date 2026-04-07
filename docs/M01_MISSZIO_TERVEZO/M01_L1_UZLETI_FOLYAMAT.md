@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.2.0
+**Verzió:** v1.6.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-05
-**Státusz:** ✅ Implementálva (v1.2.0)
+**Utolsó módosítás:** 2026-04-07
+**Státusz:** ✅ Implementálva (v1.6.0)
 
 ---
 
@@ -176,14 +176,14 @@ Auto-generálás (autoGenerateIfReady):
 | "+ Akadály jelölése" megnyomva | obstacle mód be/ki (gomb szín + szöveg változik) |
 | Térkép érintés (obstacle mód) | Akadály dialog (sugár + magasság) → addObstacle() |
 | "Akadályok törlése" megnyomva | Megerősítő dialog → összes obstacle eltávolítás |
-| "Feltöltés" megnyomva | Megerősítő dialog → MSDK upload |
-| "START" megnyomva | Kamera konfig → mission start, Pause/Stop gombok engedélyezve |
+| "Feltöltés" megnyomva | Megerősítő dialog → MSDK upload → ProgressDialog → AlertDialog (siker/hiba) |
+| "START" megnyomva | GPS ellenőrzés (≥6 SAT) → Kamera konfig → mission start, Pause/Stop gombok engedélyezve |
 | "Szünet" megnyomva (aktív misszió) | pauseMission() hívás, gomb → "Folytatás" |
 | "Folytatás" megnyomva | resumeMission() hívás, gomb → "Szünet" |
 | "Stop" megnyomva | Megerősítő dialog → stopMission() |
 | GPS gomb megnyomva | locationOverlay.getLastFix() → térkép animáció |
 | SAT/MAP gomb megnyomva | Térképforrás váltás (ESRI ↔ OSM) |
-| "» / «" toggle gomb | Oldalpanel animált csúsztatás (250ms, DecelerateInterpolator) |
+| "» / «" toggle gomb (alul) | Oldalpanel animált csúsztatás (250ms, DecelerateInterpolator) — gomb a panel bal szélén, alul (véletlen bezárás ellen) |
 | "CSV importálása" megnyomva | Fájlválasztó → CsvMissionParser → waypontok megjelenítése |
 | "Exportálás" megnyomva | CSV / KMZ választó dialog → fájl mentés + megosztás |
 | 2 mp státusz timer | updateStatusBar() → DJI telemetria + tablet akku frissítés |
