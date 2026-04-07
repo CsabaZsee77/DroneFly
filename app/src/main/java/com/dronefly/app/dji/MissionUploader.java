@@ -46,17 +46,9 @@ public class MissionUploader {
             return;
         }
 
-        WaypointMission.Builder builder = new WaypointMission.Builder();
-        builder.waypointCount(waypoints.size())
-               .maxFlightSpeed(Math.min(15f, Math.max(1f, config.speedMs)))
-               .autoFlightSpeed(Math.min(15f, Math.max(1f, config.speedMs)))
-               .finishedAction(config.returnHome
-                       ? WaypointMissionFinishedAction.GO_HOME
-                       : WaypointMissionFinishedAction.NO_ACTION)
-               .headingMode(WaypointMissionHeadingMode.AUTO)
-               .flightPathMode(WaypointMissionFlightPathMode.NORMAL)
-               .gotoFirstWaypointMode(WaypointMissionGotoWaypointMode.SAFELY);
-
+        // Waypoint lista összeállítása (waypointList() pattern – addWaypoint() helyett,
+        // mert az MSDK v4 belső számlálója waypointCount/addWaypoint kombónál eltérhet)
+        java.util.List<Waypoint> wpList = new java.util.ArrayList<>();
         for (WaypointData wp : waypoints) {
             Waypoint waypoint = new Waypoint(
                     (float) wp.latitude,
@@ -68,8 +60,20 @@ public class MissionUploader {
             }
             waypoint.addAction(new WaypointAction(
                     WaypointActionType.GIMBAL_PITCH, (int) wp.gimbalPitch));
-            builder.addWaypoint(waypoint);
+            wpList.add(waypoint);
         }
+
+        WaypointMission.Builder builder = new WaypointMission.Builder();
+        builder.waypointList(wpList)
+               .waypointCount(wpList.size())
+               .maxFlightSpeed(Math.min(15f, Math.max(1f, config.speedMs)))
+               .autoFlightSpeed(Math.min(15f, Math.max(1f, config.speedMs)))
+               .finishedAction(config.returnHome
+                       ? WaypointMissionFinishedAction.GO_HOME
+                       : WaypointMissionFinishedAction.NO_ACTION)
+               .headingMode(WaypointMissionHeadingMode.AUTO)
+               .flightPathMode(WaypointMissionFlightPathMode.NORMAL)
+               .gotoFirstWaypointMode(WaypointMissionGotoWaypointMode.SAFELY);
 
         DJIError loadError = operator.loadMission(builder.build());
         if (loadError != null) {
