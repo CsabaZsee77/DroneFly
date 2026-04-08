@@ -542,6 +542,14 @@
                     android:layout_marginBottom="8dp"/>
 
                 <!-- Projekt mentés / betöltés -->
+                <Button android:id="@+id/btnNewPlan"
+                    android:text="Uj terv"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#4a235a"
+                    android:layout_marginBottom="6dp"/>
+
                 <TextView android:id="@+id/tvCurrentPlanName"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

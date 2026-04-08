@@ -139,7 +139,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private Button  btnObstacle, btnClearObstacles;
 
     // Projekt mentés / betöltés
-    private Button btnSaveProject, btnSaveAsProject, btnLoadProject;
+    private Button btnNewPlan, btnSaveProject, btnSaveAsProject, btnLoadProject;
     private TextView tvCurrentPlanName;
     private File currentPlanFile = null;
     private static final String PREFS_RESUME = "dronefly_resume";
@@ -289,6 +289,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbAngle.setOnSeekBarChangeListener(listener);
         sbOffset.setOnSeekBarChangeListener(listener);
 
+        btnNewPlan        = findViewById(R.id.btnNewPlan);
         btnSaveProject    = findViewById(R.id.btnSaveProject);
         btnSaveAsProject  = findViewById(R.id.btnSaveAsProject);
         btnLoadProject    = findViewById(R.id.btnLoadProject);
@@ -372,6 +373,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnStopMission.setOnClickListener(v -> confirmStopMission());
         btnSimulate.setOnClickListener(v -> toggleSimulation());
 
+        btnNewPlan.setOnClickListener(v -> confirmNewPlan());
         btnSaveProject.setOnClickListener(v -> saveCurrentOrShowDialog());
         btnSaveAsProject.setOnClickListener(v -> showSaveProjectDialog());
         btnLoadProject.setOnClickListener(v -> showLoadProjectDialog());
@@ -985,6 +987,46 @@ public class MissionPlannerActivity extends AppCompatActivity {
     }
 
     // ── Projekt mentés / betöltés ─────────────────────────────────────────
+
+    /** Új terv létrehozása – megerősítő dialóg, ha van rajzolt terv. */
+    private void confirmNewPlan() {
+        if (polygonPoints.isEmpty()) {
+            // Nincs mit elveszíteni
+            currentPlanFile = null;
+            updatePlanNameLabel();
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle("Új terv")
+            .setNegativeButton("Mégse", null);
+
+        if (currentPlanFile != null) {
+            // Van mentett fájl – kínáljuk a mentést is
+            builder.setMessage("Az aktuális terv bezárásra kerül.\nMentsd el, mielőtt új tervet kezdesz?")
+                .setPositiveButton("Mentés és bezárás", (d, w) -> {
+                    saveCurrentOrShowDialog();
+                    // saveCurrentOrShowDialog után (ha sikeres) zárjuk be a tervet
+                    // Mivel a mentés szinkron, utána azonnal nullázunk
+                    clearAll();
+                    currentPlanFile = null;
+                    updatePlanNameLabel();
+                })
+                .setNeutralButton("Bezárás mentés nélkül", (d, w) -> {
+                    clearAll();
+                    currentPlanFile = null;
+                    updatePlanNameLabel();
+                });
+        } else {
+            // Mentetlen terv – elég egyszerű megerősítés
+            builder.setMessage("Az aktuális rajzolt terület elvész. Biztosan új tervet kezdesz?")
+                .setPositiveButton("Igen, új terv", (d, w) -> {
+                    clearAll();
+                    currentPlanFile = null;
+                    updatePlanNameLabel();
+                });
+        }
+        builder.show();
+    }
 
     /** SAVE – felülírja az aktuális fájlt; ha nincs, SAVE AS dialógot nyit. */
     private void saveCurrentOrShowDialog() {
