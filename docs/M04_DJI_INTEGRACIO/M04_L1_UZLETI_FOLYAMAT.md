@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.6.0
+**Verzió:** v1.6.1
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-07
-**Státusz:** ✅ Részben implementálva — telemetria + kamera feed PiP + tap-to-expose működik Crystal Sky-on; misszió feltöltés stub
+**Utolsó módosítás:** 2026-04-08
+**Státusz:** ✅ Teljes MSDK v4 integráció — feltöltés, vezérlés, haladásjelző, misszió folytatás, szimuláció
 
 ---
 
@@ -20,7 +20,7 @@ a DroneFly app:
 - **Leállítja** (kézi vezérlés átvehető)
 - **Telemetriát jelenít meg** — RC és drón akkumulátor, GPS műholdak, drón neve
 
-**Jelenlegi build állapot (v1.3.0):**
+**Jelenlegi build állapot (v1.6.1):**
 
 | Funkció | Státusz |
 |---------|---------|
@@ -30,10 +30,13 @@ a DroneFly app:
 | Drón akkumulátor % | ✅ Működik (BatteryState callback) |
 | RC csatlakozás érzékelés | ✅ Működik (reflection) |
 | RC akkumulátor % | ✅ Működik (BatteryState$Callback, getRemainingChargeInPercent) |
-| GPS műholdak száma | ✅ Működik (FlightController StateCallback) |
-| Misszió feltöltés / indítás | 🔧 Stub — valódi MSDK implementáció szükséges; ProgressDialog + AlertDialog visszajelzés ✅ |
-| Misszió pause / stop | 🔧 Stub |
+| GPS műholdak száma + drón pozíció | ✅ Működik (FlightController StateCallback, lat/lon is) |
+| Misszió feltöltés / indítás | ✅ Valódi MSDK implementáció; ProgressDialog + AlertDialog visszajelzés |
+| Misszió pause / resume / stop | ✅ Valódi MSDK implementáció |
 | GPS ellenőrzés (START gomb) | ✅ START csak ≥6 műhold esetén engedélyezett; „START (GPS!)" felirat ha nincs elég |
+| Haladásjelző (drón marker + zöld vonal + WP számláló) | ✅ WaypointMissionOperatorListener alapú |
+| Misszió folytatása (resume dialog) | ✅ Utolsó elért WP−1 indexről, akkucsere után |
+| Szimuláció (10× gyorsított animáció) | ✅ Inkrementális polyline, rate-limited invalidate |
 | Kamera feed PiP (élő kép) | ✅ Implementálva (DroneVideoWidget) |
 | Tap-to-expose (érintéses expozíció) | ✅ Implementálva (tapToFocus + fókuszgyűrű animáció) |
 
@@ -115,26 +118,100 @@ stopMission():
 
 ---
 
-## 6. Stub implementáció (emulátor build)
+## 6. Haladásjelző folyamata
 
-```java
-// dji/MissionUploader.java — jelenlegi stub
-public class MissionUploader {
-    public void uploadMission(List<WaypointData> waypoints,
-                              MissionConfig config, UploadCallback callback) {
-        if (callback != null)
-            callback.onError("Stub build – drón nem csatlakoztatva");
-    }
-    public void startMission(UploadCallback callback) { ... }
-    public void pauseMission(UploadCallback callback) { ... }
-    public void resumeMission(UploadCallback callback) { ... }
-    public void stopMission(UploadCallback callback) { ... }
-}
+```
+startMission() sikeresen meghívva
+      │
+      ▼
+MissionUploader.startListening(totalWaypoints, listener)
+  │
+  └─ WaypointMissionOperator.addListener(executionListener)
+       │
+       ├─ onExecutionUpdate(event)
+       │    └─ progress.isWaypointReached == true
+       │         └─ trackedWaypointIndex = progress.targetWaypointIndex
+       │              ├─ MissionPlannerActivity.updateProgressUI(index, total)
+       │              │    → tvMissionProgress.setText("WP: X / Y")
+       │              │    → pbMissionProgress.setProgress(X)
+       │              ├─ updateDroneMarker(lat, lon)  [GPS callback-ből]
+       │              └─ updateCompletedOverlay(index)  → zöld Polyline
+       │
+       └─ onExecutionFinish(error)
+            └─ listener.onMissionFinished(success, lastIndex)
+                 → setMissionRunning(false)
+                 → stopListening()
+                 → clearDroneMarker() + clearCompletedOverlay()
 ```
 
 ---
 
-## 7. Valódi eszközre való aktiválás lépései
+## 7. Misszió folytatása (resume) folyamata
+
+```
+Misszió megszakítása (RTH / Stop / akkucsere)
+      │
+      │  [resumeWaypointIndex mentve az utolsó onWaypointReached alapján]
+      │
+Drón újraindul → Crystal Sky újra csatlakozik
+      │
+      ▼
+Felhasználó megnyomja a "Feltöltés" gombot
+      │
+      ▼
+MissionPlannerActivity.uploadCurrentSegment()
+  └─ resumeWaypointIndex > 0 && resumeSegmentIndex == currentSegmentIndex?
+       │
+       ├─ Igen → AlertDialog:
+       │    "Folytatod a missziót? Az előző repülés a(z) N. waypontnál szakadt meg."
+       │    [Folytatás (WP N-1-től)]  [Újrakezdés]
+       │         │
+       │         ├─ Folytatás: fromIndex = resumeWaypointIndex - 1
+       │         │   doUpload(segment.subList(fromIndex, size), fromIndex, size)
+       │         │
+       │         └─ Újrakezdés: fromIndex = 0
+       │             doUpload(segment, 0, size)
+       │
+       └─ Nem → normál feltöltés (fromIndex = 0)
+```
+
+**Állapot tárolása:** Csak memóriában (app futása alatt). Ha az appot bezárják, az állapot elveszik → újrakezdés szükséges.
+
+---
+
+## 8. Szimuláció folyamata
+
+```
+"Szimuláció" gomb megnyomva (feltöltés után engedélyezett)
+      │
+      ▼
+MissionPlannerActivity.startSimulation()
+  ├─ Összes szegmens waypontjainak összegyűjtése (allWaypoints lista)
+  ├─ simCompletedPoints = new ArrayList<>()  [inkrementális lista]
+  ├─ completedOverlay = new Polyline()  [egyszer létrehozva]
+  └─ simulateStep(allWaypoints, 0, speedMs)
+       │
+       ├─ updateDroneMarker(wp.lat, wp.lon)
+       ├─ simCompletedPoints.add(GeoPoint)  [inkrementális hozzáadás]
+       ├─ completedOverlay.setPoints(simCompletedPoints)
+       ├─ if (index % 10 == 0) mapView.invalidate()  [rate-limited]
+       ├─ tvMissionProgress.setText("SIM  WP: X / Y")
+       └─ simHandler.postDelayed(→ simulateStep(index+1), delayMs)
+            delayMs = distanceBetween / (speedMs × 10) × 1000
+            clamp: 80ms – 3000ms
+
+"Szimulacio leállítása" gomb / útvonal vége:
+  → stopSimulation()
+  → simHandler.removeCallbacksAndMessages(null)
+  → clearDroneMarker(), clearCompletedOverlay()
+  → tvMissionProgress.setText(""), pbMissionProgress GONE
+```
+
+**Teljesítmény:** O(n) memóriafoglalás (korábbi O(n²) helyett), Crystal Sky 4666 WP-nél sem fagy le.
+
+---
+
+## 10. Valódi eszközre való aktiválás lépései
 
 ```
 1. developer.dji.com → App Key regisztráció
@@ -161,7 +238,7 @@ public class MissionUploader {
 
 ---
 
-## 8. RC és fizikai vezérlők prioritása
+## 11. RC és fizikai vezérlők prioritása
 
 ```
 Az MSDK waypoint misszió FUTÁS KÖZBEN:
@@ -181,7 +258,7 @@ Biztonsági kikapcsولás:
 
 ---
 
-## 9. Kamera feed PiP (DroneVideoWidget)
+## 12. Kamera feed PiP (DroneVideoWidget)
 
 ```
 CAM gomb megnyomva (btnCamToggle)
@@ -217,7 +294,7 @@ csatlakoztatva van és a CAM gomb be van kapcsolva.
 
 ---
 
-## 10. Tap-to-Expose (érintéses expozíció)
+## 13. Tap-to-Expose (érintéses expozíció)
 
 ```
 Felhasználó érinti a kamera képet (TextureView)
@@ -256,7 +333,7 @@ mivel az MSDK belső Set gyűjteményekbe teszi a callback-eket, amelyek
 
 ---
 
-## 11. Kapcsolódó modulok
+## 14. Kapcsolódó modulok
 
 | Modul | Kapcsolat típusa |
 |-------|-----------------|
