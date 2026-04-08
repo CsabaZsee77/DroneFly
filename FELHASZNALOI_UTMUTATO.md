@@ -1,6 +1,6 @@
 # ✈️ DroneFly GCS – Felhasználói Útmutató
 
-**Verzió:** v1.6.1
+**Verzió:** v1.7.0
 **Utolsó frissítés:** 2026-04-08
 **Céleszköz:** DJI Crystal Sky tablet (Android 5.1)
 **Drón:** DJI Phantom 4 Pro v1 (és más DJI drónok)
@@ -538,9 +538,9 @@ Onnan folytatod, vagy újrakezded?
 4. **Folytatás:** Az app a megszakítás előtti waypointtól (−1 biztonsági átfedés) újra feltölti a maradék útvonalat és automatikusan elindítja
 5. **Újrakezdés:** A teljes szegmens elejéről indul
 
-> **Fontos:** A folytatási állapot csak az app futása alatt él. Ha az appot teljesen bezárják (vagy a tablet újraindul), az állapot elveszik, és az újrakezdés szükséges.
+> **Fontos:** A folytatási állapot **tablet újraindítás után is megmarad**, ha a terv el van mentve fájlba. Elég betölteni a tervet, az app automatikusan visszatölti a megszakítási pontot. Ha a terv nincs mentve (csak memóriában él), az állapot elvész tablet újraindítás esetén.
 
-> **Ajánlott:** Akkucsere előtt jegyezd meg a WP számot (látható a haladásjelzőn), hogy szükség esetén manuálisan is tudj tájékozódni.
+> **Ajánlott:** Repülés előtt mindig mentsd el a tervet (legalább egyszer), hogy akkucsere + tablet újraindítás után is folytatni tudd.
 
 ---
 
@@ -578,6 +578,12 @@ A szimuláció **10× gyorsított** – pl. 5 m/s beállított sebességnél a d
 
 A DroneFly az elkészített repülési terveket a tableten helyben tudja menteni és visszatölteni. Ez az **offline, szerkeszthető mentési** funkció — nem a CSV/KMZ exportálás.
 
+### Az aktuális terv neve
+
+A panel tetején mindig látható, melyik terv van betöltve:
+- **Dőlt szürke „Mentetlen terv"** – a terv még nincs fájlba mentve
+- **Fehér szöveg** (pl. `Eszaki_tabla_2026-04-08`) – a betöltött/mentett terv neve
+
 ### Mit ment el?
 
 | Adat | Mentve? |
@@ -589,19 +595,39 @@ A DroneFly az elkészített repülési terveket a tableten helyben tudja menteni
 | Akadályok (pozíció, sugár, magasság) | ✅ igen |
 | Generált waypontok | ❌ nem kell — betöltés után automatikusan újragenerálódik |
 
-### Terv mentése
+### Új terv
 
-1. Rajzold meg a területet és állítsd be a paramétereket
-2. Nyomd meg a **„Terv mentése"** gombot
-3. Írd be a terv nevét (pl. „Északi tábla 2026-04-05")
-   - Az első érintésre a szöveg kijelölődik, azonnal felülírható
-   - Alapértelmezett: előző betöltött terv neve, vagy az aktuális dátum
-4. Nyomd meg a **„Mentés"** gombot
+Az **„Új terv"** gomb teljesen nullázza az állapotot (rajz, akadályok, beállítások).
 
-A fájl elmentődik a tablet belső tárhelyére:
+- **Ha nincs rajzolt terület:** azonnal töröl, dialog nélkül
+- **Ha van mentett terv:** dialog jelenik meg:
+  - `[Mentés és bezárás]` – elmenti, majd törli
+  - `[Bezárás mentés nélkül]` – azonnal töröl
+  - `[Mégse]` – visszalép
+- **Ha mentetlen rajz van:** egyszerű megerősítő dialog (`[Igen, új terv]` / `[Mégse]`)
+
+### Terv mentése (SAVE)
+
+A **„Mentés"** gomb viselkedése az aktuális állapottól függ:
+
+- **Ha a terv már el van mentve:** közvetlenül felülírja a fájlt (dialog nélkül)
+- **Ha mentetlen terv:** SAVE AS dialóg nyílik (lásd alább)
+
+### Mentés másként (SAVE AS)
+
+A **„Mentés másként"** gomb mindig új nevet kér:
+
+1. Írd be a terv nevét (pl. „Északi tábla 2026-04-08")
+2. Nyomd meg a **„Mentés"** gombot
+
+A fájl elmentődik a tablet tárhelyére:
 ```
-/sdcard/Android/data/com.dronefly.app/files/missions/Északi_tábla_2026-04-05.dronefly.json
+/sdcard/Android/data/com.dronefly.app/files/missions/Eszaki_tabla_2026-04-08.dronefly.json
 ```
+
+> **Tipp:** Feltöltés előtt érdemes elmenteni a tervet – így az akkucsere utáni folytatási pont is megmarad tablet újraindítás esetén (lásd: Misszió folytatása).
+
+> **Automatikus mentés:** Ha feltöltöd a missziót és a terv még nincs mentve, az app automatikusan elmenti `auto_DÁTUM` névvel. A névtábla frissül, és utána a "Mentés" gomb már felülírja ezt a fájlt.
 
 ### Terv betöltése
 
@@ -613,6 +639,7 @@ A fájl elmentődik a tablet belső tárhelyére:
    - Visszaállítja a poligont és az összes beállítást
    - Visszahelyezi az akadályokat a térképre
    - **Automatikusan újragenerálja** a misszió útvonalát
+   - Visszatölti az esetleges mentett folytatási pontot (akkucsere utánra)
    - A térkép a betöltött területre ugrik
 
 > **Fontos:** A betöltés felülírja a jelenlegi rajzot és beállításokat!

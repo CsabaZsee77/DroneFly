@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.6.0
+**Verzió:** v1.7.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-07
-**Státusz:** ✅ Implementálva (v1.6.0)
+**Utolsó módosítás:** 2026-04-08
+**Státusz:** ✅ Implementálva (v1.7.0)
 
 ---
 
@@ -34,6 +34,7 @@ A felhasználó:
 - Litchi CSV export — a meglévő webes misszió-tervező adatai importálhatók
 - KMZ export — DJI Pilot appban megnyitható
 - Akkumulátorcsere kezelés: 99 waypontnál nagyobb misszió auto-felosztás
+- **Terv-kezelés:** Új terv / Mentés / Mentés másként / Betöltés; currentPlanFile tracking; resume perzisztencia SharedPreferences-ben
 - Közvetlenül a Crystal Sky-on futtatható, nincs szükség számítógépre
 
 ---
@@ -158,7 +159,8 @@ Auto-generálás (autoGenerateIfReady):
   │
   ▼
 "Utolsó pont törlése" gomb → removeLastPolygonPoint()
-"Összes törlés" gomb → polygon + akadályok + útvonal + markerek mind törlődnek
+"Összes törlés" gomb → polygon + akadályok + útvonal + markerek törlődnek (currentPlanFile megmarad)
+"Új terv" gomb → confirmNewPlan() → clearAll() + currentPlanFile = null (megerősítő dialoggal)
 ```
 
 ---
@@ -186,6 +188,11 @@ Auto-generálás (autoGenerateIfReady):
 | "» / «" toggle gomb (alul) | Oldalpanel animált csúsztatás (250ms, DecelerateInterpolator) — gomb a panel bal szélén, alul (véletlen bezárás ellen) |
 | "CSV importálása" megnyomva | Fájlválasztó → CsvMissionParser → waypontok megjelenítése |
 | "Exportálás" megnyomva | CSV / KMZ választó dialog → fájl mentés + megosztás |
+| "Új terv" megnyomva | confirmNewPlan() → dialog ha van rajz; clearAll() + currentPlanFile=null |
+| "Mentés" megnyomva | saveCurrentOrShowDialog() → felülírás ha van fájl, egyébként SAVE AS |
+| "Mentés másként" megnyomva | showSaveProjectDialog() → új fájlnév dialog → saveProject() |
+| "Terv betöltése" megnyomva | listProjects() → kiválasztás → confirmLoadProject() → loadProject() + loadResumeState() |
+| Feltöltés (mentetlen terv) | doUpload() elején: auto-mentés auto_DÁTUM névvel → currentPlanFile beáll |
 | 2 mp státusz timer | updateStatusBar() → DJI telemetria + tablet akku frissítés |
 
 ---
@@ -203,7 +210,41 @@ Auto-generálás (autoGenerateIfReady):
 
 ---
 
-## 7. Akkumulátorcsere kezelés
+## 7. Terv-kezelés
+
+```
+currentPlanFile (File | null) — az éppen aktív .dronefly.json fájl referenciája
+
+"Új terv" gomb:
+  polygonPoints üres? → clearAll(), currentPlanFile=null (dialog nélkül)
+  van mentett fájl?  → [Mentés és bezárás] / [Bezárás mentés nélkül] / [Mégse]
+  mentetlen rajz?    → [Igen, új terv] / [Mégse]
+
+"Mentés" gomb (saveCurrentOrShowDialog):
+  currentPlanFile != null → ProjectManager.saveProjectToFile(currentPlanFile, ...)
+  currentPlanFile == null → showSaveProjectDialog() (SAVE AS)
+
+"Mentés másként" gomb (showSaveProjectDialog):
+  → nevet kér → ProjectManager.saveProject(ctx, name, ...) → currentPlanFile = saved
+
+"Terv betöltése":
+  → loadProject(file) → currentPlanFile = file → loadResumeState()
+
+Feltöltés (doUpload), ha currentPlanFile == null:
+  → ProjectManager.saveProject(ctx, "auto_DÁTUM", ...) → currentPlanFile = saved
+  → ettől kezdve saveResumeState() tud perzisztálni
+
+Resume perzisztencia (SharedPreferences "dronefly_resume"):
+  kulcs: currentPlanFile.getAbsolutePath()
+  érték: "segmentIndex:waypointIndex"
+  ment:  minden onWaypointReached hívásnál
+  töröl: sikeres onMissionFinished hívásnál
+  tölt:  loadProject() → loadResumeState()
+```
+
+---
+
+## 8. Akkumulátorcsere kezelés
 
 A MSDK v4 egyetlen misszióban maximum 99 waypointot kezel megbízhatóan.
 Nagy területek esetén az app automatikusan szegmensekre osztja a missziót:
@@ -229,7 +270,7 @@ Drón repüli az 1. szegmenst
 
 ---
 
-## 8. Kapcsolódó modulok
+## 9. Kapcsolódó modulok
 
 | Modul | Kapcsolat típusa |
 |-------|-----------------|
