@@ -112,6 +112,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private Button btnSimulate;
     private final Handler simHandler = new Handler(Looper.getMainLooper());
     private boolean simRunning = false;
+    private List<org.osmdroid.util.GeoPoint> simCompletedPoints;
 
     // Kamera beállítások
     private LinearLayout cameraSettingsBody, cameraManualControls;
@@ -1972,6 +1973,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
         float speedMs = buildConfig().speedMs;
         clearCompletedOverlay();
 
+        // Inkrementális pont-lista és Polyline egyszer létrehozva
+        simCompletedPoints = new ArrayList<>();
+        completedOverlay = new org.osmdroid.views.overlay.Polyline();
+        completedOverlay.getOutlinePaint().setColor(0xFF00CC44);
+        completedOverlay.getOutlinePaint().setStrokeWidth(5f);
+        mapView.getOverlays().add(completedOverlay);
+
         // Elindítjuk a szimulációt az első waypointtól
         simulateStep(allWaypoints, 0, speedMs);
     }
@@ -1984,17 +1992,12 @@ public class MissionPlannerActivity extends AppCompatActivity {
         WaypointData wp = waypoints.get(index);
         updateDroneMarker(wp.latitude, wp.longitude);
 
-        // Befejezett útvonal zölddel
-        List<org.osmdroid.util.GeoPoint> done = new ArrayList<>();
-        for (int i = 0; i <= index; i++)
-            done.add(new org.osmdroid.util.GeoPoint(waypoints.get(i).latitude, waypoints.get(i).longitude));
-        if (completedOverlay != null) mapView.getOverlays().remove(completedOverlay);
-        completedOverlay = new org.osmdroid.views.overlay.Polyline();
-        completedOverlay.setPoints(done);
-        completedOverlay.getOutlinePaint().setColor(0xFF00CC44);
-        completedOverlay.getOutlinePaint().setStrokeWidth(5f);
-        mapView.getOverlays().add(completedOverlay);
-        mapView.invalidate();
+        // Inkrementálisan hozzáadjuk az új pontot (nem építjük újra az egész listát)
+        simCompletedPoints.add(new org.osmdroid.util.GeoPoint(wp.latitude, wp.longitude));
+        completedOverlay.setPoints(simCompletedPoints);
+
+        // Térkép újrarajzolás csak minden 10. lépésnél (teljesítmény)
+        if (index % 10 == 0) mapView.invalidate();
 
         // Haladás UI
         tvMissionProgress.setText(String.format("SIM  WP: %d / %d", index + 1, waypoints.size()));
@@ -2004,6 +2007,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         int nextIndex = index + 1;
         if (nextIndex >= waypoints.size()) {
+            mapView.invalidate();
             simHandler.postDelayed(() -> stopSimulation(), 1500);
             return;
         }
