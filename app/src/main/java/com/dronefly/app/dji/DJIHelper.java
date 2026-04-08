@@ -196,8 +196,10 @@ public class DJIHelper {
         } catch (Throwable t) { cb.onResult(-1); }
     }
 
-    /** GPS műholdak száma – Flight Controller state callback (reflexió) */
-    public interface GpsCallback { void onResult(int satellites, boolean homeSet); }
+    /** Flight Controller state callback – műholdak, home pont, drón GPS pozíció */
+    public interface GpsCallback {
+        void onResult(int satellites, boolean homeSet, double latitude, double longitude);
+    }
 
     public void setFlightStateCallback(GpsCallback cb) {
         try {
@@ -205,7 +207,6 @@ public class DJIHelper {
             if (p == null || !p.isConnected()) return;
             Object fc = p.getClass().getMethod("getFlightController").invoke(p);
             if (fc == null) return;
-            // Dinamikusan keresünk setStateCallback metódust — nem hardcode-oljuk az osztályt
             for (java.lang.reflect.Method setter : fc.getClass().getMethods()) {
                 if ("setStateCallback".equals(setter.getName())
                         && setter.getParameterTypes().length == 1) {
@@ -225,13 +226,24 @@ public class DJIHelper {
                                         .getMethod("getSatelliteCount").invoke(args[0]);
                                     boolean homeSet = (boolean) args[0].getClass()
                                         .getMethod("isHomePointSet").invoke(args[0]);
-                                    cb.onResult(sats, homeSet);
+                                    double lat = 0, lon = 0;
+                                    try {
+                                        Object loc = args[0].getClass()
+                                            .getMethod("getAircraftLocation").invoke(args[0]);
+                                        if (loc != null) {
+                                            lat = (double) loc.getClass()
+                                                .getMethod("getLatitude").invoke(loc);
+                                            lon = (double) loc.getClass()
+                                                .getMethod("getLongitude").invoke(loc);
+                                        }
+                                    } catch (Throwable ignored) {}
+                                    cb.onResult(sats, homeSet, lat, lon);
                                 } catch (Throwable t2) { /* ignore */ }
                             }
                             return null;
                         });
                     setter.invoke(fc, proxy);
-                    return; // callback regisztrálva
+                    return;
                 }
             }
             Log.d(TAG, "FlightState: setStateCallback metódus nem található az FC-n");

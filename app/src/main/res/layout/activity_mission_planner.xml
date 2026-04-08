@@ -623,6 +623,15 @@
                     android:backgroundTint="#334400"
                     android:layout_marginBottom="6dp"/>
 
+                <Button android:id="@+id/btnSimulate"
+                    android:text="Szimulacio"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#005533"
+                    android:enabled="false"
+                    android:layout_marginBottom="6dp"/>
+
                 <Button android:id="@+id/btnUpload"
                     android:text="Feltoltes"
                     android:layout_width="match_parent"
@@ -640,6 +649,29 @@
                     android:backgroundTint="#FF6600"
                     android:enabled="false"
                     android:layout_marginBottom="4dp"/>
+
+                <!-- Misszió haladás -->
+                <TextView
+                    android:id="@+id/tvMissionProgress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#FFAA00"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:layout_marginBottom="2dp"/>
+
+                <ProgressBar
+                    android:id="@+id/pbMissionProgress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressTint="#FF6600"
+                    android:visibility="gone"
+                    android:layout_marginBottom="8dp"/>
 
                 <!-- Misszió közbeni vezérlés -->
                 <LinearLayout

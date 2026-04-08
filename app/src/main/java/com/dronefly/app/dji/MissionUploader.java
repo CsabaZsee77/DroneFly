@@ -3,6 +3,7 @@ package com.dronefly.app.dji;
 import com.dronefly.app.model.MissionConfig;
 import com.dronefly.app.model.WaypointData;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import dji.common.error.DJIError;
@@ -10,19 +11,44 @@ import dji.common.mission.waypoint.Waypoint;
 import dji.common.mission.waypoint.WaypointAction;
 import dji.common.mission.waypoint.WaypointActionType;
 import dji.common.mission.waypoint.WaypointMission;
+import dji.common.mission.waypoint.WaypointMissionDownloadEvent;
+import dji.common.mission.waypoint.WaypointMissionExecutionEvent;
 import dji.common.mission.waypoint.WaypointMissionFinishedAction;
 import dji.common.mission.waypoint.WaypointMissionFlightPathMode;
 import dji.common.mission.waypoint.WaypointMissionGotoWaypointMode;
 import dji.common.mission.waypoint.WaypointMissionHeadingMode;
+import dji.common.mission.waypoint.WaypointMissionUploadEvent;
 import dji.sdk.mission.MissionControl;
 import dji.sdk.mission.waypoint.WaypointMissionOperator;
+import dji.sdk.mission.waypoint.WaypointMissionOperatorListener;
 
 public class MissionUploader {
+
+    // ── Általános feltöltési callback ──────────────────────────────────────────
 
     public interface UploadCallback {
         void onSuccess();
         void onError(String message);
     }
+
+    // ── Misszió végrehajtás figyelő ────────────────────────────────────────────
+
+    /**
+     * Repülés közbeni haladás és befejezés értesítések.
+     * A waypointIndex 0-alapú, a feltöltött szegmensen belüli index.
+     * Az actualIndex = progressOffset + waypointIndex (teljes szegmensben).
+     */
+    public interface MissionProgressListener {
+        void onWaypointReached(int waypointIndex, int totalWaypoints);
+        void onMissionFinished(boolean completedSuccessfully, int lastReachedIndex);
+    }
+
+    // ── Belső állapot ──────────────────────────────────────────────────────────
+
+    private WaypointMissionOperatorListener executionListener;
+    private int trackedWaypointIndex = -1;
+
+    // ── SDK operator elérés ────────────────────────────────────────────────────
 
     private WaypointMissionOperator getOperator() {
         try {
@@ -33,6 +59,8 @@ public class MissionUploader {
             return null;
         }
     }
+
+    // ── Misszió feltöltés ──────────────────────────────────────────────────────
 
     public void uploadMission(List<WaypointData> waypoints, MissionConfig config,
                               UploadCallback callback) {
@@ -46,9 +74,8 @@ public class MissionUploader {
             return;
         }
 
-        // Waypoint lista összeállítása (waypointList() pattern – addWaypoint() helyett,
-        // mert az MSDK v4 belső számlálója waypointCount/addWaypoint kombónál eltérhet)
-        java.util.List<Waypoint> wpList = new java.util.ArrayList<>();
+        // Waypoint lista összeállítása (waypointList() pattern)
+        List<Waypoint> wpList = new ArrayList<>();
         for (WaypointData wp : waypoints) {
             Waypoint waypoint = new Waypoint(
                     (float) wp.latitude,
@@ -92,6 +119,67 @@ public class MissionUploader {
         });
     }
 
+    // ── Listener indítás / leállítás ───────────────────────────────────────────
+
+    /**
+     * Elindítja a waypoint végrehajtás figyelőt.
+     * @param totalWaypoints A feltöltött waypontok száma (a haladás kiszámításához)
+     * @param listener       Visszahívó felület
+     */
+    public void startListening(int totalWaypoints, MissionProgressListener listener) {
+        WaypointMissionOperator operator = getOperator();
+        if (operator == null) return;
+
+        stopListening(); // előző listener eltávolítása ha volt
+        trackedWaypointIndex = -1;
+
+        executionListener = new WaypointMissionOperatorListener() {
+
+            @Override
+            public void onDownloadUpdate(WaypointMissionDownloadEvent event) {}
+
+            @Override
+            public void onUploadUpdate(WaypointMissionUploadEvent event) {}
+
+            @Override
+            public void onExecutionUpdate(WaypointMissionExecutionEvent event) {
+                if (event == null || event.getProgress() == null) return;
+                dji.common.mission.waypoint.WaypointExecutionProgress p = event.getProgress();
+                if (p.isWaypointReached) {
+                    trackedWaypointIndex = p.targetWaypointIndex;
+                    if (listener != null) {
+                        listener.onWaypointReached(trackedWaypointIndex, totalWaypoints);
+                    }
+                }
+            }
+
+            @Override
+            public void onExecutionStart() {}
+
+            @Override
+            public void onExecutionFinish(DJIError error) {
+                if (listener != null) {
+                    listener.onMissionFinished(error == null, trackedWaypointIndex);
+                }
+            }
+        };
+
+        operator.addListener(executionListener);
+    }
+
+    /** Leállítja a végrehajtás figyelőt. */
+    public void stopListening() {
+        try {
+            WaypointMissionOperator operator = getOperator();
+            if (operator != null && executionListener != null) {
+                operator.removeListener(executionListener);
+            }
+        } catch (Throwable ignored) {}
+        executionListener = null;
+    }
+
+    // ── Misszió vezérlők ───────────────────────────────────────────────────────
+
     public void startMission(UploadCallback callback) {
         WaypointMissionOperator operator = getOperator();
         if (operator == null) {
@@ -108,10 +196,6 @@ public class MissionUploader {
         });
     }
 
-    /**
-     * Misszió szüneteltetése – a drón lebeg az aktuális pozícióban.
-     * Folytatás: resumeMission()-nel.
-     */
     public void pauseMission(UploadCallback callback) {
         WaypointMissionOperator operator = getOperator();
         if (operator == null) {
@@ -128,9 +212,6 @@ public class MissionUploader {
         });
     }
 
-    /**
-     * Misszió folytatása szünet után.
-     */
     public void resumeMission(UploadCallback callback) {
         WaypointMissionOperator operator = getOperator();
         if (operator == null) {
@@ -149,7 +230,7 @@ public class MissionUploader {
 
     /**
      * Misszió leállítása – a drón lebeg, kézi vezérlés átvehető.
-     * RTH-hoz használd ezután a kontrolleren a Return to Home gombot.
+     * RTH-hoz a kontrolleren a Return to Home gombot kell nyomni.
      */
     public void stopMission(UploadCallback callback) {
         WaypointMissionOperator operator = getOperator();

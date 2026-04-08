@@ -97,6 +97,22 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private boolean  missionPaused  = false;
     private int      lastSatCount   = 0;
 
+    // Misszió folytatás (megszakadás utáni resume)
+    private int resumeSegmentIndex   = -1;  // melyik szegmensnél szakadt meg
+    private int resumeWaypointIndex  = -1;  // utolsó elért waypoint indexe a szegmensen belül
+    private int uploadedSegmentSize  = 0;   // feltöltött szegmens teljes mérete
+
+    // Haladásjelző – térkép overlays és progress UI
+    private org.osmdroid.views.overlay.Marker droneMarker;
+    private org.osmdroid.views.overlay.Polyline completedOverlay;
+    private TextView tvMissionProgress;
+    private android.widget.ProgressBar pbMissionProgress;
+
+    // Szimuláció
+    private Button btnSimulate;
+    private final Handler simHandler = new Handler(Looper.getMainLooper());
+    private boolean simRunning = false;
+
     // Kamera beállítások
     private LinearLayout cameraSettingsBody, cameraManualControls;
     private Switch switchCameraAuto;
@@ -342,10 +358,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnTogglePanel     = findViewById(R.id.btnTogglePanel);
         btnTogglePanel.setOnClickListener(v -> toggleSidePanel());
 
-        btnPauseMission = findViewById(R.id.btnPauseMission);
-        btnStopMission  = findViewById(R.id.btnStopMission);
+        btnPauseMission    = findViewById(R.id.btnPauseMission);
+        btnStopMission     = findViewById(R.id.btnStopMission);
+        btnSimulate        = findViewById(R.id.btnSimulate);
+        tvMissionProgress  = findViewById(R.id.tvMissionProgress);
+        pbMissionProgress  = findViewById(R.id.pbMissionProgress);
         btnPauseMission.setOnClickListener(v -> togglePauseMission());
         btnStopMission.setOnClickListener(v -> confirmStopMission());
+        btnSimulate.setOnClickListener(v -> toggleSimulation());
 
         btnSaveProject.setOnClickListener(v -> showSaveProjectDialog());
         btnLoadProject.setOnClickListener(v -> showLoadProjectDialog());
@@ -549,13 +569,16 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 }
             }));
 
-            // GPS műholdak (Flight Controller callback – csak egyszer regisztráljuk)
-            dji.setFlightStateCallback((sats, homeSet) -> runOnUiThread(() -> {
+            // GPS műholdak + drón pozíció (Flight Controller callback)
+            dji.setFlightStateCallback((sats, homeSet, lat, lon) -> runOnUiThread(() -> {
                 if (sbGps == null) return;
                 lastSatCount = sats;
                 sbGps.setText("SAT: " + sats + (homeSet ? " H" : ""));
                 sbGps.setTextColor(sats >= 10 ? 0xFF44FF88 : sats >= 6 ? 0xFFFFAA00 : 0xFFFF4444);
                 updateStartButtonState();
+                if (missionRunning && lat != 0 && lon != 0) {
+                    updateDroneMarker(lat, lon);
+                }
             }));
 
         } catch (Throwable t) { /* DJI SDK nem elérhető */ }
@@ -711,6 +734,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
                 btnUpload.setEnabled(tc && !missionRunning);
                 btnExport.setEnabled(true);
+        if (btnSimulate != null) btnSimulate.setEnabled(true);
 
                 // Stats frissítés
                 updateStatsWithTerrain(result);
@@ -724,6 +748,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
                 btnUpload.setEnabled(tc && !missionRunning);
                 btnExport.setEnabled(true);
+        if (btnSimulate != null) btnSimulate.setEnabled(true);
                 Toast.makeText(MissionPlannerActivity.this,
                     "Domborzati adat nem elerheto: " + message, Toast.LENGTH_LONG).show();
             }
@@ -1397,6 +1422,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         currentSegmentIndex = 0;
         btnUpload.setEnabled(DJIHelper.getInstance().isConnected() && !missionRunning);
         btnExport.setEnabled(true);
+        if (btnSimulate != null) btnSimulate.setEnabled(true);
 
         double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
         StringBuilder sb = new StringBuilder();
@@ -1490,6 +1516,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         try { connected = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
         btnUpload.setEnabled(connected && !missionRunning);
         btnExport.setEnabled(true);
+        if (btnSimulate != null) btnSimulate.setEnabled(true);
 
         double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
         StringBuilder sbStats = new StringBuilder();
@@ -1595,12 +1622,45 @@ public class MissionPlannerActivity extends AppCompatActivity {
         boolean drone = false;
         try { drone = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
         if (!drone) {
-            btnUpload.setEnabled(false); // biztonsági reset
+            btnUpload.setEnabled(false);
             Toast.makeText(this, "Nincs csatlakoztatott drón", Toast.LENGTH_SHORT).show();
             return;
         }
         List<WaypointData> segment = lastResult.segments.get(currentSegmentIndex);
         int total = lastResult.segments.size();
+
+        // Ha van előző megszakadás ugyanennél a szegmensnél, felajánljuk a folytatást
+        if (resumeWaypointIndex > 0 && resumeSegmentIndex == currentSegmentIndex) {
+            int fromIndex = Math.max(0, resumeWaypointIndex - 1);
+            int remaining = segment.size() - fromIndex;
+            new AlertDialog.Builder(this)
+                .setTitle("Misszió folytatása")
+                .setMessage(String.format(
+                    "Az előző misszió a %d. waypointnál szakadt meg (%d/%d).\n\n" +
+                    "Folytatod a %d. waypointtól (%d WP), vagy újrakezded az elejéről (%d WP)?",
+                    resumeWaypointIndex + 1, resumeWaypointIndex + 1, segment.size(),
+                    fromIndex + 1, remaining, segment.size()))
+                .setPositiveButton("Folytatás (" + (fromIndex + 1) + ". WP-től)", (d, w) ->
+                    doUpload(segment.subList(fromIndex, segment.size()), fromIndex, segment.size()))
+                .setNegativeButton("Újrakezdem az elejéről", (d, w) -> {
+                    resumeWaypointIndex = -1;
+                    resumeSegmentIndex  = -1;
+                    String confirmMsg = total > 1
+                        ? String.format("Szegmens %d/%d feltöltése (%d waypoint)?",
+                            currentSegmentIndex + 1, total, segment.size())
+                        : String.format("%d waypoint feltöltése a drónra?", segment.size());
+                    new AlertDialog.Builder(this)
+                        .setTitle("Misszió feltöltése")
+                        .setMessage(confirmMsg)
+                        .setPositiveButton("Feltöltés", (d2, w2) ->
+                            doUpload(segment, 0, segment.size()))
+                        .setNegativeButton("Mégse", null)
+                        .show();
+                })
+                .show();
+            return;
+        }
+
         String msg = total > 1
             ? String.format("Szegmens %d/%d feltöltése (%d waypoint)?",
                 currentSegmentIndex + 1, total, segment.size())
@@ -1609,19 +1669,27 @@ public class MissionPlannerActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
             .setTitle("Misszió feltöltése")
             .setMessage(msg)
-            .setPositiveButton("Feltöltés", (d, w) -> doUpload(segment))
+            .setPositiveButton("Feltöltés", (d, w) -> doUpload(segment, 0, segment.size()))
             .setNegativeButton("Mégse", null)
             .show();
     }
 
-    private void doUpload(List<WaypointData> segment) {
+    /**
+     * @param segment          A feltöltendő waypontok listája (lehet részleges – resume esetén)
+     * @param progressOffset   Hányadik waypointtól indul a szegmensen belül (resume esetén > 0)
+     * @param totalSegmentSize A szegmens teljes mérete (haladásjelzőhöz)
+     */
+    private void doUpload(List<WaypointData> segment, int progressOffset, int totalSegmentSize) {
         btnUpload.setEnabled(false);
         btnStart.setEnabled(false);
         missionUploaded = false;
+        uploadedSegmentSize = totalSegmentSize;
 
         android.app.ProgressDialog progress = new android.app.ProgressDialog(this);
         progress.setTitle("Misszió feltöltése");
-        progress.setMessage("Feltöltés folyamatban a drónra...");
+        progress.setMessage(progressOffset > 0
+            ? String.format("Feltöltés a %d. waypointtól...", progressOffset + 1)
+            : "Feltöltés folyamatban a drónra...");
         progress.setCancelable(false);
         progress.show();
 
@@ -1633,7 +1701,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     updateStartButtonState();
                     new AlertDialog.Builder(MissionPlannerActivity.this)
                         .setTitle("Feltöltés sikeres")
-                        .setMessage("A misszió sikeresen feltöltve a drónra.\n\nEllenőrizd a drónt, majd nyomj START-ot.")
+                        .setMessage(progressOffset > 0
+                            ? String.format("Folytatás: %d. waypointtól feltöltve.\n\nEllenőrizd a drónt, majd nyomj START-ot.", progressOffset + 1)
+                            : "A misszió sikeresen feltöltve a drónra.\n\nEllenőrizd a drónt, majd nyomj START-ot.")
                         .setPositiveButton("OK", null)
                         .show();
                 });
@@ -1674,6 +1744,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                                     Toast.makeText(MissionPlannerActivity.this,
                                         "Repülés elindítva!", Toast.LENGTH_LONG).show();
                                     setMissionRunning(true);
+                                    startMissionListener();
                                 });
                             }
                             @Override public void onError(String errMsg) {
@@ -1705,9 +1776,17 @@ public class MissionPlannerActivity extends AppCompatActivity {
         missionUploaded = false;
         btnPauseMission.setEnabled(running);
         btnStopMission.setEnabled(running);
+        btnSimulate.setEnabled(!running && lastResult != null);
         btnPauseMission.setText("Szünet");
         btnUpload.setEnabled(!running && lastResult != null);
         btnStart.setEnabled(false);
+        if (!running) {
+            uploader.stopListening();
+            clearDroneMarker();
+            clearCompletedOverlay();
+            tvMissionProgress.setText("");
+            pbMissionProgress.setVisibility(android.view.View.GONE);
+        }
     }
 
     private void togglePauseMission() {
@@ -1767,6 +1846,191 @@ public class MissionPlannerActivity extends AppCompatActivity {
             .show();
     }
 
+    // ── Misszió listener (haladásjelző + resume mentés) ───────────────────────
+
+    private void startMissionListener() {
+        if (lastResult == null || lastResult.segments.isEmpty()) return;
+        int totalSize = uploadedSegmentSize > 0 ? uploadedSegmentSize : 0;
+        int offset    = (resumeSegmentIndex == currentSegmentIndex && resumeWaypointIndex > 0)
+                        ? Math.max(0, resumeWaypointIndex - 1) : 0;
+
+        pbMissionProgress.setMax(totalSize > 0 ? totalSize : 100);
+        pbMissionProgress.setProgress(offset);
+        pbMissionProgress.setVisibility(android.view.View.VISIBLE);
+
+        uploader.startListening(totalSize - offset, new MissionUploader.MissionProgressListener() {
+            @Override
+            public void onWaypointReached(int index, int total) {
+                runOnUiThread(() -> {
+                    int actualIndex = offset + index;
+                    resumeWaypointIndex = actualIndex;
+                    resumeSegmentIndex  = currentSegmentIndex;
+                    updateProgressUI(actualIndex, totalSize);
+                    updateCompletedOverlay(actualIndex);
+                });
+            }
+            @Override
+            public void onMissionFinished(boolean completedSuccessfully, int lastIndex) {
+                runOnUiThread(() -> {
+                    if (completedSuccessfully) {
+                        resumeWaypointIndex = -1;
+                        resumeSegmentIndex  = -1;
+                        Toast.makeText(MissionPlannerActivity.this,
+                            "Misszió befejezve!", Toast.LENGTH_LONG).show();
+                    }
+                    // Ha megszakadt: resumeWaypointIndex megmarad a folytatáshoz
+                    setMissionRunning(false);
+                });
+            }
+        });
+    }
+
+    private void updateProgressUI(int actualIndex, int totalSize) {
+        if (tvMissionProgress == null || pbMissionProgress == null) return;
+        tvMissionProgress.setText(String.format("WP: %d / %d", actualIndex + 1, totalSize));
+        if (totalSize > 0) {
+            pbMissionProgress.setMax(totalSize);
+            pbMissionProgress.setProgress(actualIndex + 1);
+        }
+    }
+
+    // ── Drón marker (valódi repülés + szimuláció) ─────────────────────────────
+
+    private void updateDroneMarker(double lat, double lon) {
+        if (mapView == null) return;
+        org.osmdroid.util.GeoPoint pos = new org.osmdroid.util.GeoPoint(lat, lon);
+        if (droneMarker == null) {
+            droneMarker = new org.osmdroid.views.overlay.Marker(mapView);
+            droneMarker.setIcon(getResources().getDrawable(R.drawable.ic_drone_marker));
+            droneMarker.setAnchor(
+                org.osmdroid.views.overlay.Marker.ANCHOR_CENTER,
+                org.osmdroid.views.overlay.Marker.ANCHOR_CENTER);
+            droneMarker.setTitle("Drón");
+            droneMarker.setInfoWindow(null);
+            mapView.getOverlays().add(droneMarker);
+        }
+        droneMarker.setPosition(pos);
+        mapView.invalidate();
+    }
+
+    private void clearDroneMarker() {
+        if (droneMarker != null && mapView != null) {
+            mapView.getOverlays().remove(droneMarker);
+            mapView.invalidate();
+        }
+        droneMarker = null;
+    }
+
+    private void updateCompletedOverlay(int upToWaypointIndex) {
+        if (lastResult == null || lastResult.segments.isEmpty()) return;
+        List<WaypointData> segment = lastResult.segments.get(currentSegmentIndex);
+        List<org.osmdroid.util.GeoPoint> completedPts = new ArrayList<>();
+        int limit = Math.min(upToWaypointIndex + 1, segment.size());
+        for (int i = 0; i < limit; i++) {
+            WaypointData wp = segment.get(i);
+            completedPts.add(new org.osmdroid.util.GeoPoint(wp.latitude, wp.longitude));
+        }
+        if (completedOverlay != null) mapView.getOverlays().remove(completedOverlay);
+        completedOverlay = new org.osmdroid.views.overlay.Polyline();
+        completedOverlay.setPoints(completedPts);
+        completedOverlay.getOutlinePaint().setColor(0xFF00CC44);
+        completedOverlay.getOutlinePaint().setStrokeWidth(5f);
+        mapView.getOverlays().add(completedOverlay);
+        mapView.invalidate();
+    }
+
+    private void clearCompletedOverlay() {
+        if (completedOverlay != null && mapView != null) {
+            mapView.getOverlays().remove(completedOverlay);
+            mapView.invalidate();
+        }
+        completedOverlay = null;
+    }
+
+    // ── Szimuláció ────────────────────────────────────────────────────────────
+
+    private void toggleSimulation() {
+        if (simRunning) {
+            stopSimulation();
+        } else {
+            startSimulation();
+        }
+    }
+
+    private void startSimulation() {
+        if (lastResult == null || lastResult.segments.isEmpty()) return;
+
+        // Összes waypoint összegyűjtése az összes szegmensből
+        List<WaypointData> allWaypoints = new ArrayList<>();
+        for (List<WaypointData> seg : lastResult.segments) allWaypoints.addAll(seg);
+        if (allWaypoints.isEmpty()) return;
+
+        simRunning = true;
+        btnSimulate.setText("Szimulacio leallitasa");
+        btnUpload.setEnabled(false);
+
+        float speedMs = buildConfig().speedMs;
+        clearCompletedOverlay();
+
+        // Elindítjuk a szimulációt az első waypointtól
+        simulateStep(allWaypoints, 0, speedMs);
+    }
+
+    private void simulateStep(List<WaypointData> waypoints, int index, float speedMs) {
+        if (!simRunning || index >= waypoints.size()) {
+            stopSimulation();
+            return;
+        }
+        WaypointData wp = waypoints.get(index);
+        updateDroneMarker(wp.latitude, wp.longitude);
+
+        // Befejezett útvonal zölddel
+        List<org.osmdroid.util.GeoPoint> done = new ArrayList<>();
+        for (int i = 0; i <= index; i++)
+            done.add(new org.osmdroid.util.GeoPoint(waypoints.get(i).latitude, waypoints.get(i).longitude));
+        if (completedOverlay != null) mapView.getOverlays().remove(completedOverlay);
+        completedOverlay = new org.osmdroid.views.overlay.Polyline();
+        completedOverlay.setPoints(done);
+        completedOverlay.getOutlinePaint().setColor(0xFF00CC44);
+        completedOverlay.getOutlinePaint().setStrokeWidth(5f);
+        mapView.getOverlays().add(completedOverlay);
+        mapView.invalidate();
+
+        // Haladás UI
+        tvMissionProgress.setText(String.format("SIM  WP: %d / %d", index + 1, waypoints.size()));
+        pbMissionProgress.setMax(waypoints.size());
+        pbMissionProgress.setProgress(index + 1);
+        pbMissionProgress.setVisibility(android.view.View.VISIBLE);
+
+        int nextIndex = index + 1;
+        if (nextIndex >= waypoints.size()) {
+            simHandler.postDelayed(() -> stopSimulation(), 1500);
+            return;
+        }
+        // Idő kiszámítása a következő waypointig (10x gyorsítva)
+        WaypointData next = waypoints.get(nextIndex);
+        float[] dist = new float[1];
+        android.location.Location.distanceBetween(
+            wp.latitude, wp.longitude, next.latitude, next.longitude, dist);
+        long delayMs = (long) (dist[0] / (speedMs * 10f) * 1000f);
+        delayMs = Math.max(80, Math.min(delayMs, 3000));
+
+        simHandler.postDelayed(() -> simulateStep(waypoints, nextIndex, speedMs), delayMs);
+    }
+
+    private void stopSimulation() {
+        simRunning = false;
+        simHandler.removeCallbacksAndMessages(null);
+        clearDroneMarker();
+        clearCompletedOverlay();
+        tvMissionProgress.setText("");
+        pbMissionProgress.setVisibility(android.view.View.GONE);
+        if (btnSimulate != null) btnSimulate.setText("Szimulacio");
+        boolean connected = false;
+        try { connected = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
+        btnUpload.setEnabled(connected && lastResult != null && !missionRunning);
+    }
+
     // ── CSV Import ─────────────────────────────────────────────────────────
 
     private void pickCsvFile() {
@@ -1818,6 +2082,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         try { csvConnected = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
         btnUpload.setEnabled(csvConnected);
         btnExport.setEnabled(true);
+        if (btnSimulate != null) btnSimulate.setEnabled(true);
         tvStats.setText(String.format("Importált: %d waypoint", waypoints.size()));
         Toast.makeText(this, waypoints.size() + " waypoint importálva", Toast.LENGTH_SHORT).show();
     }
