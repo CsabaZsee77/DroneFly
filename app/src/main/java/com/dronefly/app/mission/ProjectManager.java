@@ -126,6 +126,67 @@ public class ProjectManager {
         return file;
     }
 
+    /**
+     * Repülési tervet ment egy meglévő fájlba (felülírás, SAVE).
+     * A fájl neve nem változik, csak a tartalma frissül.
+     */
+    public static void saveProjectToFile(Context ctx,
+                                          File targetFile,
+                                          String name,
+                                          List<GeoPoint> polygon,
+                                          GeoPoint startPoint,
+                                          MissionConfig config) throws Exception {
+        JSONObject root = new JSONObject();
+        root.put("version", FORMAT_VERSION);
+        root.put("name", name);
+        root.put("savedAt",
+            new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+                .format(new Date()));
+
+        JSONArray polyArr = new JSONArray();
+        for (GeoPoint p : polygon) {
+            JSONObject pt = new JSONObject();
+            pt.put("lat", p.getLatitude());
+            pt.put("lon", p.getLongitude());
+            polyArr.put(pt);
+        }
+        root.put("polygon", polyArr);
+
+        if (startPoint != null) {
+            JSONObject sp = new JSONObject();
+            sp.put("lat", startPoint.getLatitude());
+            sp.put("lon", startPoint.getLongitude());
+            root.put("startPoint", sp);
+        }
+
+        JSONObject cfg = new JSONObject();
+        cfg.put("gsdCm",            config.gsdCm);
+        cfg.put("sidelapPercent",   config.sidelapPercent);
+        cfg.put("frontlapPercent",  config.frontlapPercent);
+        cfg.put("speedMs",          config.speedMs);
+        cfg.put("flightAngleDeg",   config.flightAngleDeg);
+        cfg.put("offsetM",          config.offsetM);
+        cfg.put("returnHome",       config.returnHome);
+        cfg.put("terrainFollowing", config.terrainFollowing);
+        if (config.droneProfile != null) cfg.put("droneProfileName", config.droneProfile.name);
+        root.put("config", cfg);
+
+        JSONArray obsArr = new JSONArray();
+        for (ObstacleData o : config.obstacles) {
+            JSONObject oj = new JSONObject();
+            oj.put("lat",     o.latitude);
+            oj.put("lon",     o.longitude);
+            oj.put("radiusM", o.radiusM);
+            oj.put("heightM", o.heightM);
+            obsArr.put(oj);
+        }
+        root.put("obstacles", obsArr);
+
+        FileWriter fw = new FileWriter(targetFile);
+        fw.write(root.toString(2));
+        fw.close();
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     //  Betöltés
     // ─────────────────────────────────────────────────────────────────────────

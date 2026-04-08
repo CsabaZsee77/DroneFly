@@ -139,8 +139,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private Button  btnObstacle, btnClearObstacles;
 
     // Projekt mentés / betöltés
-    private Button btnSaveProject, btnLoadProject;
-    private String lastLoadedProjectName = null; // betöltött terv neve (előtöltés a mentés dialóghoz)
+    private Button btnSaveProject, btnSaveAsProject, btnLoadProject;
+    private TextView tvCurrentPlanName;
+    private File currentPlanFile = null;
+    private static final String PREFS_RESUME = "dronefly_resume";
 
     // Státuszsáv
     private TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt;
@@ -288,7 +290,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbOffset.setOnSeekBarChangeListener(listener);
 
         btnSaveProject    = findViewById(R.id.btnSaveProject);
+        btnSaveAsProject  = findViewById(R.id.btnSaveAsProject);
         btnLoadProject    = findViewById(R.id.btnLoadProject);
+        tvCurrentPlanName = findViewById(R.id.tvCurrentPlanName);
         btnUndoPoint      = findViewById(R.id.btnUndoPoint);
         btnObstacle       = findViewById(R.id.btnObstacle);
         btnClearObstacles = findViewById(R.id.btnClearObstacles);
@@ -368,7 +372,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnStopMission.setOnClickListener(v -> confirmStopMission());
         btnSimulate.setOnClickListener(v -> toggleSimulation());
 
-        btnSaveProject.setOnClickListener(v -> showSaveProjectDialog());
+        btnSaveProject.setOnClickListener(v -> saveCurrentOrShowDialog());
+        btnSaveAsProject.setOnClickListener(v -> showSaveProjectDialog());
         btnLoadProject.setOnClickListener(v -> showLoadProjectDialog());
         btnUndoPoint.setOnClickListener(v -> removeLastPolygonPoint());
         btnObstacle.setOnClickListener(v -> toggleObstacleMode());
@@ -981,6 +986,29 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     // ── Projekt mentés / betöltés ─────────────────────────────────────────
 
+    /** SAVE – felülírja az aktuális fájlt; ha nincs, SAVE AS dialógot nyit. */
+    private void saveCurrentOrShowDialog() {
+        if (currentPlanFile != null) {
+            if (polygonPoints.isEmpty()) {
+                Toast.makeText(this, "Nincs rajzolt terület — nincs mit menteni!", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            try {
+                String name = currentPlanFile.getName()
+                    .replace(ProjectManager.FILE_EXT, "").replace('_', ' ');
+                ProjectManager.saveProjectToFile(
+                    this, currentPlanFile, name, polygonPoints, startPoint, buildConfig());
+                updatePlanNameLabel();
+                Toast.makeText(this, "Mentve: " + currentPlanFile.getName(), Toast.LENGTH_SHORT).show();
+            } catch (Exception e) {
+                Toast.makeText(this, "Mentési hiba: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        } else {
+            showSaveProjectDialog();
+        }
+    }
+
+    /** SAVE AS – mindig új fájlnév dialóggal. */
     private void showSaveProjectDialog() {
         final int pad = (int) (getResources().getDisplayMetrics().density * 16);
         final EditText etName = new EditText(this);
@@ -989,9 +1017,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
         etName.setBackgroundColor(0xFFEEEEEE);
         etName.setPadding(pad, pad / 2, pad, pad / 2);
         etName.setSelectAllOnFocus(true);
-        // Alapértelmezett név: előző betöltött terv neve vagy dátum
-        String defaultName = (lastLoadedProjectName != null && !lastLoadedProjectName.isEmpty())
-            ? lastLoadedProjectName
+        // Alapértelmezett név: aktuális fájlnév vagy dátum
+        String defaultName = (currentPlanFile != null)
+            ? currentPlanFile.getName().replace(ProjectManager.FILE_EXT, "").replace('_', ' ')
             : new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
                 .format(new java.util.Date());
         etName.setText(defaultName);
@@ -1033,12 +1061,26 @@ public class MissionPlannerActivity extends AppCompatActivity {
             MissionConfig config = buildConfig();
             File saved = ProjectManager.saveProject(
                 this, name, polygonPoints, startPoint, config);
-            lastLoadedProjectName = name;
+            currentPlanFile = saved;
+            updatePlanNameLabel();
             Toast.makeText(this,
                 "Mentve: " + saved.getName(), Toast.LENGTH_LONG).show();
         } catch (Exception e) {
             Toast.makeText(this,
                 "Mentési hiba: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void updatePlanNameLabel() {
+        if (tvCurrentPlanName == null) return;
+        if (currentPlanFile != null) {
+            String name = currentPlanFile.getName()
+                .replace(ProjectManager.FILE_EXT, "").replace('_', ' ');
+            tvCurrentPlanName.setText(name);
+            tvCurrentPlanName.setTextColor(0xFFCCCCCC);
+        } else {
+            tvCurrentPlanName.setText("Mentetlen terv");
+            tvCurrentPlanName.setTextColor(0xFF888888);
         }
     }
 
@@ -1126,7 +1168,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 mapView.getController().animateTo(center);
             }
 
-            lastLoadedProjectName = data.name;
+            currentPlanFile = file;
+            loadResumeState();
+            updatePlanNameLabel();
 
             // Ha van elég pont, automatikusan generáljuk
             if (polygonPoints.size() >= 3) {
@@ -1681,6 +1725,18 @@ public class MissionPlannerActivity extends AppCompatActivity {
      * @param totalSegmentSize A szegmens teljes mérete (haladásjelzőhöz)
      */
     private void doUpload(List<WaypointData> segment, int progressOffset, int totalSegmentSize) {
+        // Ha a terv nincs elmentve, automatikusan mentjük, hogy a resume állapot perzisztálható legyen
+        if (currentPlanFile == null && !polygonPoints.isEmpty()) {
+            try {
+                String autoName = "auto_" + new java.text.SimpleDateFormat(
+                    "yyyy-MM-dd_HH-mm", java.util.Locale.getDefault()).format(new java.util.Date());
+                File saved = ProjectManager.saveProject(
+                    this, autoName, polygonPoints, startPoint, buildConfig());
+                currentPlanFile = saved;
+                updatePlanNameLabel();
+            } catch (Exception ignored) {}
+        }
+
         btnUpload.setEnabled(false);
         btnStart.setEnabled(false);
         missionUploaded = false;
@@ -1847,6 +1903,48 @@ public class MissionPlannerActivity extends AppCompatActivity {
             .show();
     }
 
+    // ── Resume állapot perzisztencia (SharedPreferences) ─────────────────────
+
+    private void saveResumeState() {
+        if (currentPlanFile == null) return;
+        getSharedPreferences(PREFS_RESUME, MODE_PRIVATE)
+            .edit()
+            .putString(currentPlanFile.getAbsolutePath(),
+                       resumeSegmentIndex + ":" + resumeWaypointIndex)
+            .apply();
+    }
+
+    private void loadResumeState() {
+        if (currentPlanFile == null) {
+            resumeSegmentIndex  = -1;
+            resumeWaypointIndex = -1;
+            return;
+        }
+        String saved = getSharedPreferences(PREFS_RESUME, MODE_PRIVATE)
+            .getString(currentPlanFile.getAbsolutePath(), null);
+        if (saved != null && saved.contains(":")) {
+            try {
+                String[] parts = saved.split(":");
+                resumeSegmentIndex  = Integer.parseInt(parts[0]);
+                resumeWaypointIndex = Integer.parseInt(parts[1]);
+            } catch (NumberFormatException ignored) {
+                resumeSegmentIndex  = -1;
+                resumeWaypointIndex = -1;
+            }
+        } else {
+            resumeSegmentIndex  = -1;
+            resumeWaypointIndex = -1;
+        }
+    }
+
+    private void clearResumeState() {
+        if (currentPlanFile == null) return;
+        getSharedPreferences(PREFS_RESUME, MODE_PRIVATE)
+            .edit()
+            .remove(currentPlanFile.getAbsolutePath())
+            .apply();
+    }
+
     // ── Misszió listener (haladásjelző + resume mentés) ───────────────────────
 
     private void startMissionListener() {
@@ -1866,6 +1964,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     int actualIndex = offset + index;
                     resumeWaypointIndex = actualIndex;
                     resumeSegmentIndex  = currentSegmentIndex;
+                    saveResumeState();
                     updateProgressUI(actualIndex, totalSize);
                     updateCompletedOverlay(actualIndex);
                 });
@@ -1876,10 +1975,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     if (completedSuccessfully) {
                         resumeWaypointIndex = -1;
                         resumeSegmentIndex  = -1;
+                        clearResumeState();
                         Toast.makeText(MissionPlannerActivity.this,
                             "Misszió befejezve!", Toast.LENGTH_LONG).show();
                     }
-                    // Ha megszakadt: resumeWaypointIndex megmarad a folytatáshoz
+                    // Ha megszakadt: resumeWaypointIndex + SharedPreferences megmarad a folytatáshoz
                     setMissionRunning(false);
                 });
             }
