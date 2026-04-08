@@ -40,6 +40,9 @@ import com.dronefly.app.model.CameraSettings;
 
 // DJI kapcsolat listener – valós idejű státusz frissítés
 // (az Activity implements DJIHelper.ConnectionListener)
+import com.dronefly.app.layers.AdminBoundaryLayer;
+import com.dronefly.app.layers.AirspaceLayer;
+import com.dronefly.app.layers.ProtectedAreasLayer;
 import com.dronefly.app.mission.CsvMissionParser;
 import com.dronefly.app.mission.ElevationProvider;
 import com.dronefly.app.mission.GridMissionGenerator;
@@ -138,6 +141,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private boolean obstacleMode = false;
     private Button  btnObstacle, btnClearObstacles;
 
+    // Térkép rétegek
+    private Button btnLayerProtected, btnLayerAirspace, btnLayerBoundary;
+    private ProtectedAreasLayer protectedLayer;
+    private AirspaceLayer airspaceLayer;
+    private AdminBoundaryLayer boundaryLayer;
+    private static final String OPENAIP_API_KEY = ""; // ide kerül a kulcs ha megvan
+
     // Projekt mentés / betöltés
     private Button btnNewPlan, btnSaveProject, btnSaveAsProject, btnLoadProject;
     private TextView tvCurrentPlanName;
@@ -207,6 +217,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
         mapView.getController().setZoom(11.0);  // Pest megye / Budapest térség
         mapView.getController().setCenter(new GeoPoint(47.55, 19.15)); // Pest megye közepe
         mapView.postInvalidate();
+
+        // Réteg objektumok inicializálása
+        protectedLayer = new ProtectedAreasLayer(mapView);
+        airspaceLayer  = new AirspaceLayer(mapView, OPENAIP_API_KEY);
+        boundaryLayer  = new AdminBoundaryLayer(mapView);
 
         RotationGestureOverlay rotation = new RotationGestureOverlay(mapView);
         rotation.setEnabled(true);
@@ -312,6 +327,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         btnMapToggle = findViewById(R.id.btnMapToggle);
         btnMapToggle.setOnClickListener(v -> toggleMapSource());
+
+        btnLayerProtected = findViewById(R.id.btnLayerProtected);
+        btnLayerAirspace  = findViewById(R.id.btnLayerAirspace);
+        btnLayerBoundary  = findViewById(R.id.btnLayerBoundary);
+        btnLayerProtected.setOnClickListener(v -> toggleLayer("N2K"));
+        btnLayerAirspace.setOnClickListener(v -> toggleLayer("LGT"));
+        btnLayerBoundary.setOnClickListener(v -> toggleLayer("HAT"));
 
         // Kamera feed PiP
         cameraWindow = findViewById(R.id.cameraWindow);
@@ -804,6 +826,35 @@ public class MissionPlannerActivity extends AppCompatActivity {
                        "World_Imagery/MapServer/tile/" + zoom + "/" + y + "/" + x;
             }
         };
+    }
+
+    private void toggleLayer(final String layerId) {
+        org.osmdroid.util.BoundingBox bbox = mapView.getBoundingBox();
+        if ("N2K".equals(layerId)) {
+            btnLayerProtected.setEnabled(false);
+            protectedLayer.toggle(bbox, new Runnable() {
+                @Override public void run() {
+                    btnLayerProtected.setEnabled(true);
+                    btnLayerProtected.setAlpha(protectedLayer.isVisible() ? 1.0f : 0.5f);
+                }
+            });
+        } else if ("LGT".equals(layerId)) {
+            btnLayerAirspace.setEnabled(false);
+            airspaceLayer.toggle(bbox, new Runnable() {
+                @Override public void run() {
+                    btnLayerAirspace.setEnabled(true);
+                    btnLayerAirspace.setAlpha(airspaceLayer.isVisible() ? 1.0f : 0.5f);
+                }
+            });
+        } else if ("HAT".equals(layerId)) {
+            btnLayerBoundary.setEnabled(false);
+            boundaryLayer.toggle(bbox, new Runnable() {
+                @Override public void run() {
+                    btnLayerBoundary.setEnabled(true);
+                    btnLayerBoundary.setAlpha(boundaryLayer.isVisible() ? 1.0f : 0.5f);
+                }
+            });
+        }
     }
 
     private void toggleMapSource() {

@@ -58,6 +58,52 @@
                 android:textColor="#FFFFFF"
                 android:textStyle="bold"
                 android:padding="0dp"
+                android:backgroundTint="#CC1a1a2e"
+                android:layout_marginBottom="8dp"/>
+
+            <!-- Réteg gombok elválasztó -->
+            <View
+                android:layout_width="32dp"
+                android:layout_height="1dp"
+                android:background="#CC334466"
+                android:layout_marginBottom="8dp"/>
+
+            <!-- Védett területek (Natura 2000 + NP) -->
+            <Button
+                android:id="@+id/btnLayerProtected"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="N2K"
+                android:textSize="9sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:padding="0dp"
+                android:backgroundTint="#CC1a2e1a"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- Légtér (OpenAIP) -->
+            <Button
+                android:id="@+id/btnLayerAirspace"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="LGT"
+                android:textSize="9sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:padding="0dp"
+                android:backgroundTint="#CC2e1a1a"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- Településhatár -->
+            <Button
+                android:id="@+id/btnLayerBoundary"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="HAT"
+                android:textSize="9sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:padding="0dp"
                 android:backgroundTint="#CC1a1a2e"/>
 
         </LinearLayout>
