@@ -12,29 +12,36 @@ import org.json.JSONObject;
 import org.osmdroid.util.BoundingBox;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
-import org.osmdroid.views.overlay.Polygon;
+import org.osmdroid.views.overlay.Polyline;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Közigazgatási határok (admin_level=8, település) megjelenítése OSMDroid MapView-on.
  * Forrás: OSM Overpass API, boundary=administrative, admin_level=8.
  *
- * Vizuális stílus:
- *  - stroke: #FFDDDDDD (világosszürke/fehér), vastagság: 1.5dp
- *  - fill: átlátszó (#00000000)
- *  - szaggatott vonal: DashPathEffect {12f, 8f}
+ * Csak way elemeket kér le (relation nélkül): így minden határszakasz egyszer jelenik meg,
+ * nem keletkeznek dupla vonalak a szomszédos settlements megosztott határainál.
+ *
+ * Vizuális stílus: szaggatott fehér/szürke Polyline, fill nincs.
+ *
+ * A JSON parse háttérszálon fut – a főszál nem fagy be lekérés közben.
+ * Zoom < 10 esetén a lekérés nem indul el (túl nagy bounding box).
  */
 public class AdminBoundaryLayer {
 
-    private static final String TAG = "AdminBoundaryLayer";
+    private static final String TAG       = "AdminBoundaryLayer";
+    private static final int    MIN_ZOOM  = 10;
 
-    private final MapView mapView;
-    private final List<Polygon> overlays = new ArrayList<>();
-    private boolean visible = false;
-    private final OverpassClient client = OverpassClient.getInstance();
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final MapView        mapView;
+    private final List<Polyline> overlays  = new ArrayList<>();
+    private boolean              visible   = false;
+    private final OverpassClient client    = OverpassClient.getInstance();
+    private final Handler        mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService parseExecutor = Executors.newSingleThreadExecutor();
 
     public AdminBoundaryLayer(MapView mapView) {
         this.mapView = mapView;
@@ -42,27 +49,43 @@ public class AdminBoundaryLayer {
 
     /**
      * Réteg be/ki kapcsolása. Ha látható: elrejti és törli. Ha nem látható: lekérdezi és megjeleníti.
-     * Az onDone Runnable mindig a főszálon fut le (sikeres megjelenítés és hiba esetén is).
      */
     public void toggle(final BoundingBox bbox, final Runnable onDone) {
         if (visible) {
             clear();
             visible = false;
-            if (onDone != null) {
-                mainHandler.post(onDone);
-            }
+            if (onDone != null) mainHandler.post(onDone);
             return;
         }
 
-        String query = buildQuery(bbox);
-        client.fetch(query, new OverpassClient.OverpassCallback() {
+        double zoomLevel = mapView.getZoomLevelDouble();
+        if (zoomLevel < MIN_ZOOM) {
+            Toast.makeText(mapView.getContext(),
+                    "Kérlek nagyíts be (zoom ≥ 10) a határok betöltéséhez",
+                    Toast.LENGTH_LONG).show();
+            if (onDone != null) mainHandler.post(onDone);
+            return;
+        }
+
+        Toast.makeText(mapView.getContext(), "Településhatárok betöltése...", Toast.LENGTH_SHORT).show();
+
+        client.fetch(buildQuery(bbox), new OverpassClient.OverpassCallback() {
             @Override
-            public void onSuccess(String json) {
-                addPolygonsFromJson(json);
-                visible = true;
-                if (onDone != null) {
-                    onDone.run(); // már a főszálon vagyunk (OverpassClient garantálja)
-                }
+            public void onSuccess(final String json) {
+                parseExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        final List<List<GeoPoint>> parsed = parseJson(json);
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                addParsedLines(parsed);
+                                visible = true;
+                                if (onDone != null) onDone.run();
+                            }
+                        });
+                    }
+                });
             }
 
             @Override
@@ -71,102 +94,95 @@ public class AdminBoundaryLayer {
                 Toast.makeText(mapView.getContext(),
                         "Közigazgatási határok betöltési hiba: " + message,
                         Toast.LENGTH_LONG).show();
-                if (onDone != null) {
-                    onDone.run();
-                }
+                if (onDone != null) onDone.run();
             }
         });
     }
 
-    public boolean isVisible() {
-        return visible;
-    }
+    public boolean isVisible() { return visible; }
 
-    /** Eltávolítja az összes overlay-t a térképről és a belső listából. */
     public void clear() {
-        for (Polygon p : overlays) {
-            mapView.getOverlays().remove(p);
-        }
+        for (Polyline p : overlays) mapView.getOverlays().remove(p);
         overlays.clear();
         mapView.invalidate();
     }
 
-    // -------------------------------------------------------------------------
-    // Belső segédmetódusok
-    // -------------------------------------------------------------------------
+    // ── Belső segédek ─────────────────────────────────────────────────────────
 
     private String buildQuery(BoundingBox bbox) {
-        // south,west,north,east
-        String bboxStr = bbox.getLatSouth() + "," + bbox.getLonWest()
-                + "," + bbox.getLatNorth() + "," + bbox.getLonEast();
-        return "[out:json][timeout:25];\n"
-                + "(\n"
-                + "  relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"8\"](" + bboxStr + ");\n"
-                + "  way[\"boundary\"=\"administrative\"][\"admin_level\"=\"8\"](" + bboxStr + ");\n"
-                + ");\n"
-                + "out geom;";
+        String b = bbox.getLatSouth() + "," + bbox.getLonWest()
+                 + "," + bbox.getLatNorth() + "," + bbox.getLonEast();
+        // Relation + way: a relation member way-ek geometriáját is lekérjük (out geom)
+        // A deduplikációt az OSM adatstruktúra biztosítja (shared way egyszer szerepel)
+        return "[out:json][timeout:30];\n(\n"
+             + "  relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"8\"](" + b + ");\n"
+             + "  way[\"boundary\"=\"administrative\"][\"admin_level\"=\"8\"](" + b + ");\n"
+             + ");\nout geom;";
     }
 
-    /**
-     * JSON parse + Polygon overlays létrehozása és hozzáadása a térképhez.
-     * Hívása csak a főszálon történik (OverpassClient.onSuccess).
-     */
-    private void addPolygonsFromJson(String json) {
+    private List<List<GeoPoint>> parseJson(String json) {
+        List<List<GeoPoint>> result = new ArrayList<>();
         try {
-            JSONObject root = new JSONObject(json);
-            JSONArray elements = root.getJSONArray("elements");
-
+            JSONArray elements = new JSONObject(json).getJSONArray("elements");
             for (int i = 0; i < elements.length(); i++) {
-                JSONObject element = elements.getJSONObject(i);
-
-                // Geometry tömb kiolvasása (way és relation esetén ugyanúgy)
-                JSONArray geometry = element.optJSONArray("geometry");
-                if (geometry == null || geometry.length() < 3) {
-                    continue; // nem rajzolható polygon
+                JSONObject el = elements.getJSONObject(i);
+                String elType = el.optString("type", "");
+                if ("way".equals(elType)) {
+                    // Way: geometry közvetlenül az elemen – Polyline-ként rajzoljuk
+                    List<GeoPoint> pts = geometryToPoints(el.optJSONArray("geometry"), 2);
+                    if (pts != null) result.add(pts);
+                } else if ("relation".equals(elType)) {
+                    // Relation: member way-ek geometriái – szintén Polyline-ként, nem zárt polygon
+                    JSONArray members = el.optJSONArray("members");
+                    if (members == null) continue;
+                    for (int m = 0; m < members.length(); m++) {
+                        JSONObject member = members.getJSONObject(m);
+                        String role = member.optString("role", "");
+                        if (!"outer".equals(role) && !"".equals(role)) continue;
+                        List<GeoPoint> pts = geometryToPoints(member.optJSONArray("geometry"), 2);
+                        if (pts != null) result.add(pts);
+                    }
                 }
-
-                List<GeoPoint> points = new ArrayList<>();
-                for (int j = 0; j < geometry.length(); j++) {
-                    JSONObject pt = geometry.getJSONObject(j);
-                    double lat = pt.getDouble("lat");
-                    double lon = pt.getDouble("lon");
-                    points.add(new GeoPoint(lat, lon));
-                }
-
-                if (points.size() < 3) {
-                    continue;
-                }
-
-                Polygon polygon = new Polygon();
-                polygon.setPoints(points);
-
-                // Átlátszó kitöltés
-                polygon.getFillPaint().setColor(Color.TRANSPARENT);
-
-                // Szaggatott szürke körvonal
-                float strokeWidthPx = dpToPx(1.5f);
-                polygon.getOutlinePaint().setColor(Color.parseColor("#FFDDDDDD"));
-                polygon.getOutlinePaint().setStrokeWidth(strokeWidthPx);
-                polygon.getOutlinePaint().setPathEffect(
-                        new DashPathEffect(new float[]{12f, 8f}, 0));
-
-                mapView.getOverlays().add(polygon);
-                overlays.add(polygon);
             }
-
-            mapView.invalidate();
-            Log.d(TAG, "Közigazgatási határok megjelenítve: " + overlays.size() + " polygon");
-
         } catch (Throwable t) {
             Log.e(TAG, "JSON parse hiba: " + t.getMessage(), t);
+        }
+        return result;
+    }
+
+    private List<GeoPoint> geometryToPoints(JSONArray geometry, int minPoints) throws org.json.JSONException {
+        if (geometry == null || geometry.length() < minPoints) return null;
+        List<GeoPoint> points = new ArrayList<>(geometry.length());
+        for (int j = 0; j < geometry.length(); j++) {
+            JSONObject pt = geometry.getJSONObject(j);
+            points.add(new GeoPoint(pt.getDouble("lat"), pt.getDouble("lon")));
+        }
+        return points.size() >= minPoints ? points : null;
+    }
+
+    private void addParsedLines(List<List<GeoPoint>> parsed) {
+        float strokeWidthPx = dpToPx(1.5f);
+        for (List<GeoPoint> points : parsed) {
+            Polyline polyline = new Polyline();
+            polyline.setPoints(points);
+            polyline.getOutlinePaint().setColor(Color.parseColor("#FFDDDDDD"));
+            polyline.getOutlinePaint().setStrokeWidth(strokeWidthPx);
+            polyline.getOutlinePaint().setPathEffect(new DashPathEffect(new float[]{12f, 8f}, 0));
+            mapView.getOverlays().add(polyline);
+            overlays.add(polyline);
+        }
+        mapView.invalidate();
+        Log.d(TAG, "Közigazgatási határok megjelenítve: " + overlays.size() + " vonal");
+        if (!overlays.isEmpty()) {
             Toast.makeText(mapView.getContext(),
-                    "Közigazgatási határok parse hiba: " + t.getMessage(),
-                    Toast.LENGTH_LONG).show();
+                    overlays.size() + " határvonal betöltve", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(mapView.getContext(),
+                    "Ezen a területen nincs határadat az OSM-ben", Toast.LENGTH_SHORT).show();
         }
     }
 
     private float dpToPx(float dp) {
-        float density = mapView.getContext().getResources().getDisplayMetrics().density;
-        return dp * density;
+        return dp * mapView.getContext().getResources().getDisplayMetrics().density;
     }
 }

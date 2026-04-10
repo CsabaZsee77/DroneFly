@@ -94,17 +94,17 @@
                 android:backgroundTint="#CC2e1a1a"
                 android:layout_marginBottom="4dp"/>
 
-            <!-- Településhatár -->
+            <!-- Területhasználati zónák (landuse) -->
             <Button
-                android:id="@+id/btnLayerBoundary"
+                android:id="@+id/btnLayerLandUse"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
-                android:text="HAT"
+                android:text="ZÓN"
                 android:textSize="9sp"
                 android:textColor="#FFFFFF"
                 android:textStyle="bold"
                 android:padding="0dp"
-                android:backgroundTint="#CC1a1a2e"/>
+                android:backgroundTint="#CC2e1a00"/>
 
         </LinearLayout>
 

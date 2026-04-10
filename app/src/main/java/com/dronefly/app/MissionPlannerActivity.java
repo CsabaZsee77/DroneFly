@@ -40,7 +40,7 @@ import com.dronefly.app.model.CameraSettings;
 
 // DJI kapcsolat listener – valós idejű státusz frissítés
 // (az Activity implements DJIHelper.ConnectionListener)
-import com.dronefly.app.layers.AdminBoundaryLayer;
+import com.dronefly.app.layers.LandUseLayer;
 import com.dronefly.app.layers.AirspaceLayer;
 import com.dronefly.app.layers.ProtectedAreasLayer;
 import com.dronefly.app.mission.CsvMissionParser;
@@ -142,10 +142,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private Button  btnObstacle, btnClearObstacles;
 
     // Térkép rétegek
-    private Button btnLayerProtected, btnLayerAirspace, btnLayerBoundary;
+    private Button btnLayerProtected, btnLayerAirspace, btnLayerLandUse;
     private ProtectedAreasLayer protectedLayer;
     private AirspaceLayer airspaceLayer;
-    private AdminBoundaryLayer boundaryLayer;
+    private LandUseLayer landUseLayer;
     private static final String OPENAIP_API_KEY = ""; // ide kerül a kulcs ha megvan
 
     // Projekt mentés / betöltés
@@ -221,7 +221,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         // Réteg objektumok inicializálása
         protectedLayer = new ProtectedAreasLayer(mapView);
         airspaceLayer  = new AirspaceLayer(mapView, OPENAIP_API_KEY);
-        boundaryLayer  = new AdminBoundaryLayer(mapView);
+        landUseLayer   = new LandUseLayer(mapView);
 
         RotationGestureOverlay rotation = new RotationGestureOverlay(mapView);
         rotation.setEnabled(true);
@@ -330,10 +330,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         btnLayerProtected = findViewById(R.id.btnLayerProtected);
         btnLayerAirspace  = findViewById(R.id.btnLayerAirspace);
-        btnLayerBoundary  = findViewById(R.id.btnLayerBoundary);
+        btnLayerLandUse   = findViewById(R.id.btnLayerLandUse);
         btnLayerProtected.setOnClickListener(v -> toggleLayer("N2K"));
         btnLayerAirspace.setOnClickListener(v -> toggleLayer("LGT"));
-        btnLayerBoundary.setOnClickListener(v -> toggleLayer("HAT"));
+        btnLayerLandUse.setOnClickListener(v -> toggleLayer("ZON"));
 
         // Kamera feed PiP
         cameraWindow = findViewById(R.id.cameraWindow);
@@ -831,27 +831,39 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private void toggleLayer(final String layerId) {
         org.osmdroid.util.BoundingBox bbox = mapView.getBoundingBox();
         if ("N2K".equals(layerId)) {
+            if (!btnLayerProtected.isEnabled()) return; // betöltés közben ne fogadjon újabb kattintást
+            final String origText = btnLayerProtected.getText().toString();
             btnLayerProtected.setEnabled(false);
+            btnLayerProtected.setText("N2K...");
             protectedLayer.toggle(bbox, new Runnable() {
                 @Override public void run() {
+                    btnLayerProtected.setText(origText);
                     btnLayerProtected.setEnabled(true);
                     btnLayerProtected.setAlpha(protectedLayer.isVisible() ? 1.0f : 0.5f);
                 }
             });
         } else if ("LGT".equals(layerId)) {
+            if (!btnLayerAirspace.isEnabled()) return;
+            final String origText = btnLayerAirspace.getText().toString();
             btnLayerAirspace.setEnabled(false);
+            btnLayerAirspace.setText("LGT...");
             airspaceLayer.toggle(bbox, new Runnable() {
                 @Override public void run() {
+                    btnLayerAirspace.setText(origText);
                     btnLayerAirspace.setEnabled(true);
                     btnLayerAirspace.setAlpha(airspaceLayer.isVisible() ? 1.0f : 0.5f);
                 }
             });
-        } else if ("HAT".equals(layerId)) {
-            btnLayerBoundary.setEnabled(false);
-            boundaryLayer.toggle(bbox, new Runnable() {
+        } else if ("ZON".equals(layerId)) {
+            if (!btnLayerLandUse.isEnabled()) return;
+            final String origText = btnLayerLandUse.getText().toString();
+            btnLayerLandUse.setEnabled(false);
+            btnLayerLandUse.setText("ZÓN...");
+            landUseLayer.toggle(bbox, new Runnable() {
                 @Override public void run() {
-                    btnLayerBoundary.setEnabled(true);
-                    btnLayerBoundary.setAlpha(boundaryLayer.isVisible() ? 1.0f : 0.5f);
+                    btnLayerLandUse.setText(origText);
+                    btnLayerLandUse.setEnabled(true);
+                    btnLayerLandUse.setAlpha(landUseLayer.isVisible() ? 1.0f : 0.5f);
                 }
             });
         }

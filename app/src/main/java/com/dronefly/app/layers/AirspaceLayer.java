@@ -146,10 +146,12 @@ public class AirspaceLayer {
                     final String json = sb.toString();
                     Log.d(TAG, "OpenAIP válasz: " + json.length() + " karakter");
 
+                    // JSON parse ugyanezen a háttérszálon – ne fagyassza a UI-t
+                    final List<ParsedAirspace> parsed = parseGeoJson(json);
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
-                            addPolygonsFromGeoJson(json);
+                            addParsedOverlays(parsed);
                             visible = true;
                             if (onDone != null) onDone.run();
                         }
@@ -174,11 +176,9 @@ public class AirspaceLayer {
         });
     }
 
-    /**
-     * GeoJSON FeatureCollection parse + Polygon overlays létrehozása.
-     * Hívása csak a főszálon történik.
-     */
-    private void addPolygonsFromGeoJson(String json) {
+    /** Háttérszálon futó GeoJSON parse – csak sima Java objektumokat hoz létre. */
+    private List<ParsedAirspace> parseGeoJson(String json) {
+        List<ParsedAirspace> result = new ArrayList<>();
         try {
             JSONObject root = new JSONObject(json);
             JSONArray features = root.getJSONArray("features");
@@ -194,45 +194,48 @@ public class AirspaceLayer {
                 JSONObject geometry = feature.optJSONObject("geometry");
                 if (geometry == null) continue;
 
-                String geomType = geometry.optString("type", "");
-                if (!"Polygon".equals(geomType)) continue;
+                if (!"Polygon".equals(geometry.optString("type", ""))) continue;
 
                 JSONArray coordinateRings = geometry.optJSONArray("coordinates");
                 if (coordinateRings == null || coordinateRings.length() == 0) continue;
 
-                // Az első ring az exterior ring
                 JSONArray ring = coordinateRings.getJSONArray(0);
                 if (ring.length() < 3) continue;
 
-                List<GeoPoint> points = new ArrayList<>();
+                List<GeoPoint> points = new ArrayList<>(ring.length());
                 for (int j = 0; j < ring.length(); j++) {
                     JSONArray coord = ring.getJSONArray(j);
                     // GeoJSON: [longitude, latitude]
-                    double lon = coord.getDouble(0);
-                    double lat = coord.getDouble(1);
-                    points.add(new GeoPoint(lat, lon));
+                    points.add(new GeoPoint(coord.getDouble(1), coord.getDouble(0)));
                 }
 
-                if (points.size() < 3) continue;
-
-                Polygon polygon = new Polygon();
-                polygon.setPoints(points);
-                polygon.getFillPaint().setColor(getFillColor(type));
-                polygon.getOutlinePaint().setColor(getStrokeColor(type));
-                polygon.getOutlinePaint().setStrokeWidth(dpToPx(getStrokeWidth(type)));
-
-                mapView.getOverlays().add(polygon);
-                overlays.add(polygon);
+                if (points.size() >= 3) result.add(new ParsedAirspace(points, type));
             }
-
-            mapView.invalidate();
-            Log.d(TAG, "Légtér megjelenítve: " + overlays.size() + " polygon");
-
         } catch (Throwable t) {
             Log.e(TAG, "GeoJSON parse hiba: " + t.getMessage(), t);
+        }
+        return result;
+    }
+
+    /** Főszálon: Polygon overlay-ek létrehozása és hozzáadása a térképhez. */
+    private void addParsedOverlays(List<ParsedAirspace> parsed) {
+        for (ParsedAirspace pa : parsed) {
+            Polygon polygon = new Polygon();
+            polygon.setPoints(pa.points);
+            polygon.getFillPaint().setColor(getFillColor(pa.type));
+            polygon.getOutlinePaint().setColor(getStrokeColor(pa.type));
+            polygon.getOutlinePaint().setStrokeWidth(dpToPx(getStrokeWidth(pa.type)));
+            mapView.getOverlays().add(polygon);
+            overlays.add(polygon);
+        }
+        mapView.invalidate();
+        Log.d(TAG, "Légtér megjelenítve: " + overlays.size() + " polygon");
+        if (!overlays.isEmpty()) {
             Toast.makeText(mapView.getContext(),
-                    "Légtér parse hiba: " + t.getMessage(),
-                    Toast.LENGTH_LONG).show();
+                    overlays.size() + " légtér betöltve", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(mapView.getContext(),
+                    "Ezen a területen nincs légtéradat", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -273,5 +276,15 @@ public class AirspaceLayer {
     private float dpToPx(float dp) {
         float density = mapView.getContext().getResources().getDisplayMetrics().density;
         return dp * density;
+    }
+
+    /** Egyszerű adatstruktúra a háttérszálas parse eredményéhez. */
+    private static class ParsedAirspace {
+        final List<GeoPoint> points;
+        final int type;
+        ParsedAirspace(List<GeoPoint> points, int type) {
+            this.points = points;
+            this.type = type;
+        }
     }
 }

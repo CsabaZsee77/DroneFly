@@ -20,9 +20,11 @@ import java.util.concurrent.Executors;
 public class OverpassClient {
 
     private static final String TAG = "OverpassClient";
-    private static final String BASE_URL = "https://overpass-api.de/api/interpreter?data=";
+    // HTTP POST – elkerüli az HTTPS/TLS problémákat Android 5.1-en,
+    // a query a request bodybe kerül (nincs URL-hossz limit sem).
+    private static final String POST_URL = "http://overpass-api.de/api/interpreter";
     private static final int CONNECT_TIMEOUT_MS = 20000;
-    private static final int READ_TIMEOUT_MS = 30000;
+    private static final int READ_TIMEOUT_MS = 90000;
 
     private static OverpassClient instance;
 
@@ -55,14 +57,21 @@ public class OverpassClient {
             public void run() {
                 HttpURLConnection conn = null;
                 try {
-                    String encoded = URLEncoder.encode(overpassQuery, "UTF-8");
-                    URL url = new URL(BASE_URL + encoded);
-
+                    URL url = new URL(POST_URL);
                     conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("GET");
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true);
+                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
                     conn.setRequestProperty("Accept", "application/json");
                     conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
                     conn.setReadTimeout(READ_TIMEOUT_MS);
+
+                    // Query a POST bodybe: data=<url-encoded query>
+                    String body = "data=" + URLEncoder.encode(overpassQuery, "UTF-8");
+                    byte[] bodyBytes = body.getBytes("UTF-8");
+                    conn.setFixedLengthStreamingMode(bodyBytes.length);
+                    conn.getOutputStream().write(bodyBytes);
+                    conn.getOutputStream().flush();
 
                     int responseCode = conn.getResponseCode();
                     if (responseCode != 200) {
