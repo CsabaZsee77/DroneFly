@@ -23,8 +23,9 @@
 12. [Misszió Közbeni Vezérlés](#-misszió-közbeni-vezérlés)
 13. [Haladásjelző és Misszió Folytatása](#-haladásjelző-és-misszió-folytatása)
 14. [Szimuláció](#-szimuláció)
-15. [Repülési Terv Mentése és Betöltése](#-repülési-terv-mentése-és-betöltése)
-16. [Exportálás és Importálás](#-exportálás-és-importálás)
+15. [Térkép Rétegek](#-térkép-rétegek)
+16. [Repülési Terv Mentése és Betöltése](#-repülési-terv-mentése-és-betöltése)
+17. [Exportálás és Importálás](#-exportálás-és-importálás)
 17. [Kamera Beállítások](#-kamera-beállítások)
 18. [Élő Kamera Feed (CAM)](#-élő-kamera-feed-cam)
 19. [Státuszsáv](#-státuszsáv)
@@ -571,6 +572,61 @@ A szimuláció **10× gyorsított** – pl. 5 m/s beállított sebességnél a d
 - A szimuláció automatikusan megáll, ha az útvonal végére ér
 
 > **Megjegyzés:** Nagy útvonalakon (4000+ WP) a szimuláció is lassan épülhet fel az első néhány másodpercben, de nem okoz lefagyást – a térkép csak 10 lépésenként frissül.
+
+---
+
+## 🗺️ Térkép Rétegek
+
+A bal oldali panelen három gomb engedélyezi az opcionális térképrétegeket. Minden réteg az aktuálisan látható területre tölt be adatot az internetről – ha nincs kapcsolat, a rétegek nem töltődnek be.
+
+### Gombok és visszajelzés
+
+| Gomb | Réteg | Tartalom |
+|------|-------|----------|
+| **N2K** | Natura 2000 / védett területek | Természetvédelmi területek, nemzeti parkok |
+| **LGT** | Légtér (OpenAIP) | Légtérosztályok, CTR, TMA körzetök |
+| **ZÓN** | Területhasználati zónák | Lakóterület, ipari, katonai, repülőtér |
+
+**Betöltés jelzése:** Gomb megnyomásakor a szöveg `N2K...` / `LGT...` / `ZÓN...`-ra változik – ez jelzi, hogy a lekérés folyamatban van. Betöltés után a gomb visszaáll és teljesen világos lesz (nem halvány). Ha halvány marad → ki van kapcsolva vagy az adott területen nincs adat.
+
+**Kikapcsolás:** Ugyanarra a gombra kattintva az összes overlay eltűnik.
+
+**Fontos:** Az Overpass szerver (OSM adatbázis) néha lassú vagy forgalmas – ha az első kattintásra nem tölt be, várj 30-60 másodpercet, majd próbáld újra. Ne kattints gyorsan többször egymás után.
+
+### Zoom követelmény
+
+Zoom szint < 10 esetén a lekérés nem indul el (a bounding box túl nagy lenne). Nagyíts be a területre, majd aktiváld a réteget.
+
+### N2K – Natura 2000 / Védett területek
+
+Természetvédelmi korlátozások alatt álló területek. Drónos repüléshez előzetes engedély szükséges.
+
+**Szín kód:**
+- 🟢 **Zöld** – protect_class 2 (nemzeti park)
+- 🟠 **Narancs** – protect_class 4 (Natura 2000 SAC/SCI)
+- 🟫 **Barna** – protect_class 5–6 (egyéb védett terület)
+
+A kitöltés a védett terület belsejét jelöli. Zárt területeknél félátlátszó fill + körvonal, nagyobb összetett területeknél csak körvonal jelenik meg.
+
+> **Adatok teljessége:** Az OSM-alapú N2K réteg a valóság kb. 60-70%-át fedi le. A nagyobb nemzeti parkok és főbb SAC területek általában szerepelnek; kisebb, kevésbé ismert N2K jelölések hiányozhatnak. Hivatalos forráshoz a természetvédelem.hu adatait javasoljuk.
+
+### LGT – Légtér (OpenAIP)
+
+OpenAIP API-ból lekért légtérosztályok. **API kulcs szükséges** – jelenleg nincs beállítva, ezért ez a gomb Toast üzenettel jelez, de nem tölt be adatot.
+
+> Amint OpenAIP API kulcs rendelkezésre áll, a funkció automatikusan aktiválható.
+
+### ZÓN – Területhasználati zónák
+
+Drónozás szempontjából releváns területbesorolásokat mutat. **Nem közigazgatási határ** – hanem a tényleges területhasználatot jelöli.
+
+**Szín kód:**
+- 🔴 **Piros** – lakóterület (residential), kereskedelmi (commercial/retail) → ⚠ lakott területre vonatkozó korlátozások
+- ⬛ **Szürke** – ipari terület (industrial)
+- 🟣 **Lila** – repülőtér (aerodrome) → 🚫 CTR körzet, engedély nélkül tilos
+- 🔴 **Sötétpiros** – katonai terület (military) → 🚫 tiltott zóna
+
+> **Megjegyzés:** A réteg az OSM `landuse` tagjein alapul. Vidéki területeken előfordulhat, hogy kevés vagy egyáltalán nincs adat (a szántók, rétek nincsenek feltérkép mindenhol).
 
 ---
 
