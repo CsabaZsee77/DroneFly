@@ -146,7 +146,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private ProtectedAreasLayer protectedLayer;
     private AirspaceLayer airspaceLayer;
     private LandUseLayer landUseLayer;
-    private static final String OPENAIP_API_KEY = ""; // ide kerül a kulcs ha megvan
+    private static final String OPENAIP_API_KEY = ""; // OpenAIP API kulcs – megvárjuk az új platform endpoint-ját
 
     // Projekt mentés / betöltés
     private Button btnNewPlan, btnSaveProject, btnSaveAsProject, btnLoadProject;

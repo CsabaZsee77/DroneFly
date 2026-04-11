@@ -39,11 +39,11 @@ import java.util.concurrent.Executors;
  */
 public class AirspaceLayer {
 
-    private static final String TAG = "AirspaceLayer";
-    // OpenAIP v2 airspace endpoint: bbox=west,south,east,north
-    private static final String API_BASE = "https://api.airspace.openaip.net/api/airspaces";
+    private static final String TAG          = "AirspaceLayer";
+    private static final String API_BASE     = "https://api.openaip.net/api/airspaces";
     private static final int CONNECT_TIMEOUT_MS = 20000;
-    private static final int READ_TIMEOUT_MS = 30000;
+    private static final int READ_TIMEOUT_MS    = 30000;
+    private static final int MAX_OVERLAYS       = 200;
 
     private final MapView mapView;
     private final String apiKey;
@@ -111,12 +111,13 @@ public class AirspaceLayer {
                     // OpenAIP bbox sorrend: west,south,east,north
                     String bboxParam = bbox.getLonWest() + "," + bbox.getLatSouth()
                             + "," + bbox.getLonEast() + "," + bbox.getLatNorth();
-                    String urlStr = API_BASE + "?bbox=" + bboxParam + "&apiKey=" + apiKey;
+                    String urlStr = API_BASE + "?bbox=" + bboxParam;
 
                     URL url = new URL(urlStr);
                     conn = (HttpURLConnection) url.openConnection();
                     conn.setRequestMethod("GET");
                     conn.setRequestProperty("Accept", "application/json");
+                    conn.setRequestProperty("x-openaip-api-key", apiKey);
                     conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
                     conn.setReadTimeout(READ_TIMEOUT_MS);
 
@@ -219,7 +220,9 @@ public class AirspaceLayer {
 
     /** Főszálon: Polygon overlay-ek létrehozása és hozzáadása a térképhez. */
     private void addParsedOverlays(List<ParsedAirspace> parsed) {
+        int added = 0;
         for (ParsedAirspace pa : parsed) {
+            if (added >= MAX_OVERLAYS) break;
             Polygon polygon = new Polygon();
             polygon.setPoints(pa.points);
             polygon.getFillPaint().setColor(getFillColor(pa.type));
@@ -227,6 +230,7 @@ public class AirspaceLayer {
             polygon.getOutlinePaint().setStrokeWidth(dpToPx(getStrokeWidth(pa.type)));
             mapView.getOverlays().add(polygon);
             overlays.add(polygon);
+            added++;
         }
         mapView.invalidate();
         Log.d(TAG, "Légtér megjelenítve: " + overlays.size() + " polygon");
