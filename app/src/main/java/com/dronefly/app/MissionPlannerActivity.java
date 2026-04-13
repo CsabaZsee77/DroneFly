@@ -146,7 +146,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private ProtectedAreasLayer protectedLayer;
     private AirspaceLayer airspaceLayer;
     private LandUseLayer landUseLayer;
-    private static final String OPENAIP_API_KEY = ""; // OpenAIP API kulcs – megvárjuk az új platform endpoint-ját
+    private static final String OPENAIP_API_KEY = "ebe3e1941252167b80e2e974613600a1";
+    // LGT magassági szűrő
+    private android.widget.TextView tvAltFilter;
+    private int altPresetIndex = 0; // 0 = ∞ (minden légtér látszik)
 
     // Projekt mentés / betöltés
     private Button btnNewPlan, btnSaveProject, btnSaveAsProject, btnLoadProject;
@@ -334,6 +337,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnLayerProtected.setOnClickListener(v -> toggleLayer("N2K"));
         btnLayerAirspace.setOnClickListener(v -> toggleLayer("LGT"));
         btnLayerLandUse.setOnClickListener(v -> toggleLayer("ZON"));
+
+        // LGT magassági szűrő gombok
+        tvAltFilter = findViewById(R.id.tvAltFilter);
+        findViewById(R.id.btnAltDown).setOnClickListener(v -> changeAltPreset(-1));
+        findViewById(R.id.btnAltUp).setOnClickListener(v -> changeAltPreset(+1));
 
         // Kamera feed PiP
         cameraWindow = findViewById(R.id.cameraWindow);
@@ -826,6 +834,19 @@ public class MissionPlannerActivity extends AppCompatActivity {
                        "World_Imagery/MapServer/tile/" + zoom + "/" + y + "/" + x;
             }
         };
+    }
+
+    /**
+     * LGT magassági szűrő léptetése.
+     * direction: +1 = növel (kevesebb légtér látszik), -1 = csökkent (több látszik)
+     * Előre beállított értékek: ∞ (0), 30, 40, 50, 60, 80, 100, 120, 150 m
+     */
+    private void changeAltPreset(int direction) {
+        int[] presets = AirspaceLayer.ALT_PRESETS;
+        altPresetIndex = (altPresetIndex + direction + presets.length) % presets.length;
+        int meters = presets[altPresetIndex];
+        airspaceLayer.setAltitudeFilter(meters);
+        tvAltFilter.setText(meters == 0 ? "∞" : meters + "m");
     }
 
     private void toggleLayer(final String layerId) {

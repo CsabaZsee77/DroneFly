@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.3.0
+**Verzió:** v1.8.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-05
-**Státusz:** ✅ Implementálva (v1.3.0)
+**Utolsó módosítás:** 2026-04-12
+**Státusz:** ✅ Implementálva (v1.8.0)
 
 ---
 
@@ -19,6 +19,10 @@
 | `model/ObstacleData.java` | Akadály adatmodellje | ✅ Implementálva |
 | `model/DroneProfile.java` | Drón kamera profil adatmodellje | ✅ Implementálva |
 | `model/DroneProfiles.java` | Ismert drón profilok listája | ✅ Implementálva |
+| `layers/OverpassClient.java` | HTTP POST kliens az OSM Overpass API-hoz (SSL bypass Android 5.1) | ✅ Implementálva |
+| `layers/ProtectedAreasLayer.java` | N2K réteg — Natura 2000 + védett területek Overpass-ból | ✅ Implementálva |
+| `layers/AirspaceLayer.java` | LGT réteg — légterek OpenAIP Core API-ból, magassági szűrővel | ✅ Implementálva |
+| `layers/LandUseLayer.java` | ZÓN réteg — területhasználati zónák Overpass-ból | ✅ Implementálva |
 | `res/layout/activity_mission_planner.xml` | UI layout — teljes képernyős térkép + lebegő panel | ✅ Implementálva |
 | `res/drawable/status_bar_bg.xml` | Státuszsáv lekerekített háttér drawable | ✅ Implementálva |
 
@@ -29,7 +33,7 @@
 - `mission/ProjectManager.java` — M03 Projekt mentés/betöltés (JSON)
 - `dji/MissionUploader.java` — M04 DJI Integráció
 - `dji/DJIHelper.java` — M04 DJI telemetria
-- OSMDroid `MapView`, `Marker`, `Polygon`, `Polyline`, `MyLocationNewOverlay`
+- OSMDroid `MapView`, `Marker`, `Polygon`, `Polyline`, `MyLocationNewOverlay`, `Overlay`
 
 ---
 
@@ -84,6 +88,17 @@ boolean cameraExpanded = false;
 // Domborzatkövetés
 Switch switchTerrain;
 TextView tvTerrainInfo;
+
+// Térkép rétegek
+Button btnLayerProtected, btnLayerAirspace, btnLayerLandUse;
+ProtectedAreasLayer protectedLayer;        // N2K réteg (Overpass API)
+AirspaceLayer airspaceLayer;               // LGT réteg (OpenAIP Core API)
+LandUseLayer landUseLayer;                 // ZÓN réteg (Overpass API)
+static final String OPENAIP_API_KEY = "ebe3e1941252167b80e2e974613600a1";
+// LGT magassági szűrő
+TextView tvAltFilter;                      // ▼ [Xm] ▲ – aktuális szűrő megjelenítés
+int altPresetIndex = 0;                    // index az AirspaceLayer.ALT_PRESETS tömbben
+// ALT_PRESETS = {0, 30, 40, 50, 60, 80, 100, 120, 150} (0 = összes/∞)
 
 // UI elemek
 TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvOffset, tvStats;
@@ -406,7 +421,7 @@ public class ObstacleData {
 
 ---
 
-## Layout struktúra (v1.2.0)
+## Layout struktúra (v1.8.0)
 
 ```
 FrameLayout (rootLayout, full screen)
@@ -414,7 +429,16 @@ FrameLayout (rootLayout, full screen)
 │   ├─ org.osmdroid.views.MapView (id: mapView)
 │   └─ LinearLayout (vertical, top|start, margin 8dp)
 │       ├─ Button (id: btnMyLocation, 48×48dp, "GPS", #CC1a1a2e)
-│       └─ Button (id: btnMapToggle, 48×48dp, "SAT"/"MAP", #CC1a1a2e)
+│       ├─ Button (id: btnMapToggle, 48×48dp, "SAT"/"MAP", #CC1a1a2e)
+│       ├─ Button (id: btnCamToggle, 48×48dp, "CAM", #CC1a1a2e)
+│       ├─ View (elválasztó, 32×1dp, #CC334466)
+│       ├─ Button (id: btnLayerProtected, 48×48dp, "N2K", #CC1a2e1a)
+│       ├─ Button (id: btnLayerAirspace, 48×48dp, "LGT", #CC2e1a1a)
+│       ├─ LinearLayout (id: layoutAltFilter, 48×20dp, horizontal)   ← LGT magassági szűrő
+│       │   ├─ Button (id: btnAltDown, 16×20dp, "▼", #881a1a1a)
+│       │   ├─ TextView (id: tvAltFilter, 0dp weight=1, "∞"/"Xm", #FFAA44)
+│       │   └─ Button (id: btnAltUp, 16×20dp, "▲", #881a1a1a)
+│       └─ Button (id: btnLayerLandUse, 48×48dp, "ZÓN", #CC2e1a00)
 │
 ├─ LinearLayout (id: statusBar, top, 38dp magasság, lebegő sziget)
 │   │   marginStart=64dp, marginEnd=364dp (GPS gombok és panel között)
