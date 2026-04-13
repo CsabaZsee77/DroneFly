@@ -1,7 +1,7 @@
 # ✈️ DroneFly GCS – Felhasználói Útmutató
 
-**Verzió:** v1.8.0
-**Utolsó frissítés:** 2026-04-12
+**Verzió:** v1.9.0
+**Utolsó frissítés:** 2026-04-13
 **Céleszköz:** DJI Crystal Sky tablet (Android 5.1)
 **Drón:** DJI Phantom 4 Pro v1 (és más DJI drónok)
 
@@ -625,36 +625,38 @@ A kitöltés a védett terület belsejét jelöli. Zárt határvonalú területe
 
 Az OpenAIP Core API-ból lekért, Magyarország felett aktív légtérosztályok. Ez a **legfontosabb réteg** a szabályszerű repülés tervezéséhez.
 
+**Megjelenés:** Minden légtér típusonként eltérő **félátlátszó kitöltéssel** és körvonallal jelenik meg, így könnyen megkülönböztethetők egymástól.
+
 **Szín kód:**
 
-| Szín | Légtér típus | Jelentés |
-|------|-------------|----------|
-| 🔴 Piros (vastag) | CTR (Control Zone) | Repülőtér kontrollzóna – engedély szükséges |
-| 🔴 Piros | Prohibited (P) | Tiltott légtér – repülés tilos |
-| 🟠 Narancs | Danger (D) | Veszélyes légtér – óvatosság szükséges |
-| 🟠 Narancs (halvány) | Restricted (R) | Korlátozott légtér – feltételek teljesülése esetén repülhető |
-| 🟡 Sárga | ATZ (Aerodrome Traffic Zone) | Repülőtér forgalmi zóna |
-| 🟡 Halvány sárga | TMZ (Transponder Mandatory Zone) | Transzponder kötelező |
-| 🔵 Kék (halvány) | RMZ (Radio Mandatory Zone) | Rádiókommunikáció kötelező |
+| Kitöltés / Körvonal | Légtér típus | Jelentés |
+|---------------------|-------------|----------|
+| 🔴 Piros (sötét) | CTR (Control Zone) | Repülőtér kontrollzóna – engedély szükséges |
+| 🔴 Piros (mély) | Prohibited (P) | Tiltott légtér – repülés tilos |
+| 🔴 Piros | Danger (D) | Veszélyes légtér – óvatosság szükséges |
+| 🟠 Narancs | Restricted (R) | Korlátozott légtér – feltételek teljesülése esetén repülhető |
+| 🟠 Narancs (halvány) | ATZ (Aerodrome Traffic Zone) | Repülőtér forgalmi zóna |
+| 🟡 Sárga | TMZ (Transponder Mandatory Zone) | Transzponder kötelező |
+| 🔵 Kék | RMZ (Radio Mandatory Zone) | Rádiókommunikáció kötelező |
 
 > **TMA (Terminal Control Area)** típusú légtereket az app kizárja – ezek akkora polygonok (pl. Budapest TMA az egész ország felett), hogy megjelenítésük lefagyasztaná a rendszert.
 
-#### Magassági szűrő – ▼ [Xm] ▲
+#### Magassági szűrő – ALT gomb
 
-Az LGT gomb alatt egy kis **▼ [Xm] ▲** vezérlő jelenik meg. Ezzel beállíthatod a tervezett repülési magasságot, és az app **csak azokat a légtereket mutatja**, amelyekkel ütközésben vagy.
+Az LGT gomb alatt egy **`ALT:∞`** feliratú gomb jelenik meg. Koppintásra körkörösen lépteti a tervezett repülési magasságot, és az app **csak azokat a légtereket mutatja**, amelyekkel ütközésben vagy.
 
 ```
-▼ [∞]  ▲   → minden légtér látszik (alap)
-▼ [40m] ▲  → csak azok a légterek látszanak, amelyek 0–40 m között érintkeznek
-▼ [120m] ▲ → EU Open kategória maximális magassága
+ALT:∞    → minden légtér látszik (alap)
+ALT:40m  → csak azok a légterek látszanak, amelyek 0–40 m között érintkeznek
+ALT:120m → EU Open kategória maximális magassága
 ```
+
+**Lépések (koppintásra vált):** `ALT:∞` → `ALT:30m` → `ALT:40m` → `ALT:50m` → `ALT:60m` → `ALT:80m` → `ALT:100m` → `ALT:120m` → vissza `ALT:∞`
 
 **Működési logika:**
 - Ha egy légtér GND (talajszint) referenciájú és az **alsó határa > tervezett magasság** → eltűnik (nem ütközöl vele)
 - Ha a légtér GND-től indul (pl. CTR 0–2500 ft), és 40 m-en repülsz → megjelenik (ütközés van)
 - MSL (tengerszint) vagy FL (flight level) referenciájú légterek mindig látszanak – az AGL-konverzió terepmagasság nélkül nem megbízható
-
-**Lépések:** ∞ → 30m → 40m → 50m → 60m → 80m → 100m → 120m → 150m → vissza ∞
 
 > **Példa – Budapest CTR:** A CTR GND-től indul. Ha 40 m-en tervezel repülni és a CTR-t látod, engedélyt kell kérned. Ha a szűrőt 40 m-re állítod és a CTR eltűnik, az azt jelenti, hogy annak alsó határa 40 m felett van – nem ütközöl vele. (A Budapest CTR esetén GND-ről indul, tehát 40 m-en is látszik.)
 
@@ -1027,11 +1029,12 @@ Sávköz (~44 m, 75% sidelap, 3 cm GSD esetén):
 4. Ne kattints többször gyorsan – a gomb le van tiltva betöltés közben, de ez látható: a gomb szövege `N2K...` / `ZÓN...`
 5. Ha a gomb szövege visszavált és a réteg halvány → azon a területen nincs OSM-adat
 
-### Az LGT réteg lefagyasztja az appot
+### Az LGT réteg problémái
 
-- A Crystal Sky Crystal Sky CPU-ja korlátozott – sok légtér egyszerre megjeleníthető, de ha **nagyon nagy területen** aktiválod (egész ország), csökkentsd a zoom szintet és kapcsold ki, majd nagyíts be a repülési területre és kapcsold be újra
-- A **TMA** (Terminal Control Area) típusú légterek automatikusan ki vannak zárva (ezer pontból álló óriási polygonok) – ez nem hiba
-- Ha a szűrő aktív (pl. 40m) és kevés légtér jelenik meg: ez helyes működés – a szűrő kizárja a magasabb alsó határú légtereket
+- Ha **nagyon nagy területen** aktiválod (egész ország kiszoomolva), csökkentsd a zoom szintet és kapcsold ki, majd nagyíts be a repülési területre és kapcsold be újra
+- A **TMA** (Terminal Control Area) típusú légterek automatikusan ki vannak zárva – ezek hatalmas polygonok (pl. Budapest TMA az egész ország felett), megjelenítésük nem hasznos
+- Ha az `ALT:Xm` szűrő aktív és kevés légtér jelenik meg: ez helyes működés – a szűrő kizárja az ütközést nem okozó légtereket
+- Ha **minden légtér látszik** beállított szűrő esetén is: az azért van, mert azok GND-től indulnak (pl. CTR 0 m–762 m) – bármely magasságon ütközés van, ez helyes viselkedés
 
 ### Az akadály beviteli mezőben a szám nem látszik
 

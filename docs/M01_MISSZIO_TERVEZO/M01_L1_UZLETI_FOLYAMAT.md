@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.8.0
+**Verzió:** v1.9.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-12
-**Státusz:** ✅ Implementálva (v1.8.0)
+**Utolsó módosítás:** 2026-04-13
+**Státusz:** ✅ Implementálva (v1.9.0)
 
 ---
 
@@ -36,7 +36,8 @@ A felhasználó:
 - Akkumulátorcsere kezelés: 99 waypontnál nagyobb misszió auto-felosztás
 - **Terv-kezelés:** Új terv / Mentés / Mentés másként / Betöltés; currentPlanFile tracking; resume perzisztencia SharedPreferences-ben
 - **Térkép rétegek:** N2K (Natura 2000 védett területek), LGT (légterek, OpenAIP), ZÓN (területhasználati zónák) – bal oldali gombok, internet-kapcsolattal töltődnek be, ki/bekapcsolhatók
-- **LGT magassági szűrő:** ▼/▲ gombokkal állítható tervezett repülési magasság (∞/30/40/50/60/80/100/120/150 m), csak az ütköző légterek jelennek meg; MSL/FL-referenciájú légterek mindig látszanak (biztonságos oldal)
+- **LGT megjelenítés:** légterek típusonként eltérő félátlátszó színkitöltéssel (piros: CTR/Prohibited/Danger, narancs: ATZ/Restricted, kék: RMZ, sárga: TMZ) + körvonallal jelennek meg
+- **LGT magassági szűrő:** egyetlen `ALT:∞` gombbal ciklikusan léptethető tervezett repülési magasság (∞/30/40/50/60/80/100/120 m), csak az ütköző légterek jelennek meg; MSL/FL-referenciájú légterek mindig látszanak (biztonságos oldal)
 - **Jogi háttér (ZÓN réteghez):** 2024. dec. 18. óta hatályos Lt. módosítás alapján lakott terület = életvitelszerű tartózkodási hely; eseti légtér szükséges lakóingatlanok felett/mellett
 - Közvetlenül a Crystal Sky-on futtatható, nincs szükség számítógépre
 

@@ -4,8 +4,8 @@
 **Céleszköz:** DJI Crystal Sky (Android 5.1)
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
-**Verzió:** v1.8.0
-**Utolsó frissítés:** 2026-04-12
+**Verzió:** v1.9.0
+**Utolsó frissítés:** 2026-04-13
 
 ---
 

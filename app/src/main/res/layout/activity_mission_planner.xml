@@ -94,47 +94,18 @@
                 android:backgroundTint="#CC2e1a1a"
                 android:layout_marginBottom="2dp"/>
 
-            <!-- LGT magassági szűrő: ▼ [XXm] ▲ -->
-            <LinearLayout
-                android:id="@+id/layoutAltFilter"
+            <!-- LGT magassági szűrő: koppintásra vált ∞ ↔ 120m -->
+            <Button
+                android:id="@+id/btnAltFilter"
                 android:layout_width="48dp"
-                android:layout_height="20dp"
-                android:orientation="horizontal"
-                android:layout_marginBottom="4dp">
-
-                <Button
-                    android:id="@+id/btnAltDown"
-                    android:layout_width="16dp"
-                    android:layout_height="20dp"
-                    android:text="▼"
-                    android:textSize="7sp"
-                    android:textColor="#CCCCCC"
-                    android:padding="0dp"
-                    android:backgroundTint="#881a1a1a"/>
-
-                <TextView
-                    android:id="@+id/tvAltFilter"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="20dp"
-                    android:text="∞"
-                    android:textColor="#FFAA44"
-                    android:textSize="8sp"
-                    android:textStyle="bold"
-                    android:gravity="center"
-                    android:background="#661a1a1a"/>
-
-                <Button
-                    android:id="@+id/btnAltUp"
-                    android:layout_width="16dp"
-                    android:layout_height="20dp"
-                    android:text="▲"
-                    android:textSize="7sp"
-                    android:textColor="#CCCCCC"
-                    android:padding="0dp"
-                    android:backgroundTint="#881a1a1a"/>
-
-            </LinearLayout>
+                android:layout_height="44dp"
+                android:text="ALT:∞"
+                android:textSize="9sp"
+                android:textColor="#FFAA44"
+                android:textStyle="bold"
+                android:padding="0dp"
+                android:backgroundTint="#991a0a0a"
+                android:layout_marginBottom="4dp"/>
 
             <!-- Területhasználati zónák (landuse) -->
             <Button
