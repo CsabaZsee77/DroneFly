@@ -158,9 +158,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private static final String PREFS_RESUME = "dronefly_resume";
 
     // Státuszsáv
-    private TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt;
+    private TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt, sbKp;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private static final int STATUS_INTERVAL_MS = 2000;
+    private long lastKpFetchMs = 0;
+    private static final long KP_FETCH_INTERVAL_MS = 10 * 60 * 1000L; // 10 perc
 
     private static final float MAX_ALTITUDE_LEGAL = 120f; // EU Open kategória limit (m)
 
@@ -526,6 +528,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbGps       = findViewById(R.id.sbGps);
         sbDroneBatt = findViewById(R.id.sbDroneBatt);
         sbTabletBatt= findViewById(R.id.sbTabletBatt);
+        sbKp        = findViewById(R.id.sbKp);
         updateStatusBar();
     }
 
@@ -619,6 +622,25 @@ public class MissionPlannerActivity extends AppCompatActivity {
             }));
 
         } catch (Throwable t) { /* DJI SDK nem elérhető */ }
+
+        // ── Kp-index (geomágneses aktivitás) – 10 percenként frissül ──
+        long now = System.currentTimeMillis();
+        if (sbKp != null && (now - lastKpFetchMs) >= KP_FETCH_INTERVAL_MS) {
+            lastKpFetchMs = now;
+            KpIndexProvider.fetch(kp -> {
+                if (sbKp == null) return;
+                if (kp < 0) {
+                    sbKp.setText("MAG: --");
+                    sbKp.setTextColor(0xFF888888);
+                } else {
+                    sbKp.setText("MAG: " + kp);
+                    if      (kp <= 2) sbKp.setTextColor(0xFF44FF88);
+                    else if (kp <= 4) sbKp.setTextColor(0xFFFFAA00);
+                    else if (kp == 5) sbKp.setTextColor(0xFFFF8800);
+                    else              sbKp.setTextColor(0xFFFF4444);
+                }
+            });
+        }
     }
 
     // ── Panel csúsztatás ──────────────────────────────────────────────

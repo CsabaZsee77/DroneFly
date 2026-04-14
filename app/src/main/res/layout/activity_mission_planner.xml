@@ -272,6 +272,18 @@
             android:textColor="#888888"
             android:textSize="11sp"/>
 
+        <!-- Elválasztó -->
+        <View android:layout_width="1dp" android:layout_height="20dp" android:background="#334466" android:layout_marginStart="6dp" android:layout_marginEnd="6dp"/>
+
+        <!-- Geomágneses aktivitás (NOAA Kp-index) -->
+        <TextView
+            android:id="@+id/sbKp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MAG: --"
+            android:textColor="#888888"
+            android:textSize="11sp"/>
+
     </LinearLayout>
 
     <!-- OLDALPANEL + TOGGLE GOMB együtt csúszik -->
