@@ -71,12 +71,14 @@ public class KpIndexProvider {
                 while ((line = r.readLine()) != null) sb.append(line);
             }
 
-            // Válasz: [ [header], [..., kp_str], [..., kp_str], ... ]
-            // Az utolsó sor [1] indexe a legfrissebb Kp érték (string "0"–"9")
+            // Válasz: [ ["time_tag","Kp"], ["2026-04-13 00:00:00","2.00"], ... ]
+            // A NOAA float stringként adja vissza az értéket (pl. "2.00", "1.67"),
+            // ezért Double.parseDouble() → kerekítés, nem Integer.parseInt().
             JSONArray arr = new JSONArray(sb.toString());
             if (arr.length() < 2) return -1;
             JSONArray last = arr.getJSONArray(arr.length() - 1);
-            return Integer.parseInt(last.getString(1).trim());
+            double kpFloat = Double.parseDouble(last.getString(1).trim());
+            return (int) Math.round(kpFloat);
 
         } catch (Throwable t) {
             Log.d(TAG, "Kp lekérés sikertelen: " + t.getMessage());
