@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.6.1
+**Verzió:** v1.7.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-08
-**Státusz:** ✅ Teljes MSDK v4 integráció — feltöltés, vezérlés, haladásjelző, misszió folytatás, szimuláció
+**Utolsó módosítás:** 2026-04-13
+**Státusz:** ✅ Teljes MSDK v4 integráció — feltöltés, vezérlés, haladásjelző, misszió folytatás, szimuláció, kézi felszállás utáni indítás
 
 ---
 
@@ -31,7 +31,9 @@ a DroneFly app:
 | RC csatlakozás érzékelés | ✅ Működik (reflection) |
 | RC akkumulátor % | ✅ Működik (BatteryState$Callback, getRemainingChargeInPercent) |
 | GPS műholdak száma + drón pozíció | ✅ Működik (FlightController StateCallback, lat/lon is) |
+| Repülési állapot (isFlying) | ✅ Működik (FlightController StateCallback, volatile cache) |
 | Misszió feltöltés / indítás | ✅ Valódi MSDK implementáció; ProgressDialog + AlertDialog visszajelzés |
+| Kézi felszállás utáni misszióindítás | ✅ isFlying() alapú állapotfelismerés; differenciált dialog |
 | Misszió pause / resume / stop | ✅ Valódi MSDK implementáció |
 | GPS ellenőrzés (START gomb) | ✅ START csak ≥6 műhold esetén engedélyezett; „START (GPS!)" felirat ha nincs elég |
 | Haladásjelző (drón marker + zöld vonal + WP számláló) | ✅ WaypointMissionOperatorListener alapú |
@@ -54,7 +56,51 @@ a DroneFly app:
 
 ---
 
-## 3. Misszió feltöltés és indítás folyamata (valódi eszközön)
+## 3. Kézi felszállás utáni misszióindítás
+
+Az operátor manuálisan felszállhat RC-vel, majd az appból indíthatja el az automatikus missziót. A drón az első waypointra repül, onnan a terv szerint hajtja végre a felmérést.
+
+**Workflow:**
+
+```
+1. Misszió generálva (polygon + paraméterek)
+      │
+      ▼
+2. [Feltöltés] gomb → misszió feltöltve a drónra (drón még a földön vagy levegőben)
+      │
+      ▼
+3. Operátor kézzel felszállt RC-vel → körözés, ellenőrzés
+      │
+      ▼
+4. [START] gomb megnyomva
+      │
+      ▼
+isFlying() == true?
+  │
+  ├─ IGEN (levegőben):
+  │    Dialog: "A drón levegőben van. A misszió indítása után az első
+  │             waypointra repül (SAFELY módban: előbb a misszió
+  │             magasságára emelkedik)."
+  │    [START] → startMission() → drón az 1. waypointra repül
+  │
+  └─ NEM (földön):
+       Dialog: "A drón felszáll és elindítja a missziót. Biztos vagy benne?"
+       [START] → startMission() → auto-felszállás → 1. waypoint
+```
+
+**Miért SAFELY mód?**
+A `gotoFirstWaypointMode = SAFELY` azt jelenti, hogy a drón levegőből indítva is
+először a misszió tervezett magasságára emelkedik, majd onnan repül az 1. waypointra.
+Ez megakadályozza, hogy a drón alacsony körözésből egyenesen nekimenjen egy akadálynak.
+
+**Feltöltés időzítése:**
+A misszió feltölthető még a felszállás előtt (ajánlott), vagy levegőben is.
+Az MSDK v4 `startMission()` mindkét esetben működik — a drón állapota (földön/levegőben)
+csak az automatikus felszállást befolyásolja, az útvonal végrehajtását nem.
+
+---
+
+## 5. Misszió feltöltés és indítás folyamata (valódi eszközön)
 
 ```
 [Feltöltés + Start] gomb megnyomva
@@ -90,7 +136,7 @@ MissionUploader.startMission(callback)
 
 ---
 
-## 4. Misszió szüneteltetés / folytatás
+## 6. Misszió szüneteltetés / folytatás
 
 ```
 pauseMission():
@@ -106,7 +152,7 @@ resumeMission():
 
 ---
 
-## 5. Misszió leállítás
+## 7. Misszió leállítás
 
 ```
 stopMission():
@@ -118,7 +164,7 @@ stopMission():
 
 ---
 
-## 6. Haladásjelző folyamata
+## 8. Haladásjelző folyamata
 
 ```
 startMission() sikeresen meghívva
@@ -146,7 +192,7 @@ MissionUploader.startListening(totalWaypoints, listener)
 
 ---
 
-## 7. Misszió folytatása (resume) folyamata
+## 9. Misszió folytatása (resume) folyamata
 
 ```
 Misszió megszakítása (RTH / Stop / akkucsere)
@@ -179,7 +225,7 @@ MissionPlannerActivity.uploadCurrentSegment()
 
 ---
 
-## 8. Szimuláció folyamata
+## 10. Szimuláció folyamata
 
 ```
 "Szimuláció" gomb megnyomva (feltöltés után engedélyezett)

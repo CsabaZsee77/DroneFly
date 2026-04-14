@@ -4,7 +4,7 @@
 **Céleszköz:** DJI Crystal Sky (Android 5.1)
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
-**Verzió:** v1.9.0
+**Verzió:** v1.9.1
 **Utolsó frissítés:** 2026-04-13
 
 ---
@@ -16,7 +16,7 @@
 | [M01 Misszió Tervező](M01_MISSZIO_TERVEZO/) | Térképes UI, polygon rajzolás, paraméter beállítás | ✅ Implementálva (v1.0.0) |
 | [M02 Grid Engine](M02_GRID_ENGINE/) | GSD kalkulátor, rácsútvonal generátor (kígyózó minta) | ✅ Implementálva (v1.0.0) |
 | [M03 Export / Import](M03_EXPORT_IMPORT/) | Litchi CSV export, KMZ export, CSV import | ✅ Implementálva (v1.0.0) |
-| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose | 🔧 Részben — telemetria + kamera ✅, misszió feltöltés stub |
+| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose, kézi felszállás utáni indítás | ✅ Implementálva — telemetria, kamera, misszió feltöltés/indítás, isFlying állapot |
 
 ---
 

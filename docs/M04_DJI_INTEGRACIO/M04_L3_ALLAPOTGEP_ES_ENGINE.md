@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.5.0
+**Verzió:** v1.6.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-06
-**Státusz:** ✅ Részben implementálva — RC akku, drón akku, drón név, GPS, kamera feed PiP, tap-to-expose (reflection); misszió feltöltés stub
+**Utolsó módosítás:** 2026-04-13
+**Státusz:** ✅ Implementálva — RC akku, drón akku, drón név, GPS, isFlying, kamera feed PiP, tap-to-expose (reflection); misszió feltöltés valódi MSDK
 
 ---
 
@@ -174,7 +174,7 @@ public class DJIHelper {
 
     // Callback interfészek (telemetria visszahívásokhoz)
     public interface BatteryCallback { void onResult(int percent); }
-    public interface GpsCallback { void onResult(int satelliteCount, boolean homeSet); }
+    public interface GpsCallback { void onResult(int satelliteCount, boolean homeSet, double latitude, double longitude); }
     public interface ConnectionListener {
         void onRegistered(boolean success, String message);
         void onProductConnected(String productName);
@@ -184,9 +184,10 @@ public class DJIHelper {
     // Singleton
     public static DJIHelper getInstance() { ... }
 
-    // Kapcsolat állapot
+    // Kapcsolat és repülési állapot
     public boolean isConnected() { ... }
     public boolean isRegistered() { ... }
+    public boolean isFlying() { return droneIsFlying; }  // volatile, szálbiztos
     public String getConnectedProductName() { ... }
 
     // RC kapcsolat (reflection: Aircraft → getRemoteController().isConnected())
@@ -206,10 +207,16 @@ public class DJIHelper {
     // kérdezi le reflexióval, így SDK verzióváltásra robusztus.
     public void getRcBatteryPercent(BatteryCallback callback) { ... }
 
-    // GPS műholdak + Home pont (Flight Controller state callback)
+    // GPS műholdak + Home pont + repülési állapot (Flight Controller state callback)
     // Dinamikus osztálylekérés: setStateCallback() paramétertípusából reflexióval.
-    // → state.getSatelliteCount(), state.isHomePointSet()
+    // → state.getSatelliteCount(), state.isHomePointSet(), state.isFlying()
+    // Az isFlying() eredménye a droneIsFlying volatile mezőbe kerül (szálbiztos).
     public void setFlightStateCallback(GpsCallback callback) { ... }
+
+    // Repülési állapot lekérdezése (szinkron, volatile cache alapján)
+    // true  = drón levegőben van (utolsó FlightController callback alapján)
+    // false = földön, vagy SDK nem elérhető (biztonságos alapértelmezés)
+    public boolean isFlying() { return droneIsFlying; }
 
     // DJI kapcsolat listener (M01 státusz frissítéshez)
     public void setListener(ConnectionListener listener) { ... }

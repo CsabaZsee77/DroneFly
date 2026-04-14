@@ -1906,9 +1906,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     private void startMission() {
         if (!missionUploaded) return;
+        boolean airborne = false;
+        try { airborne = DJIHelper.getInstance().isFlying(); } catch (Throwable t) {}
+        String message = airborne
+                ? "A drón levegőben van. A misszió indítása után az első waypointra repül (SAFELY módban: előbb a misszió magasságára emelkedik)."
+                : "A drón felszáll és elindítja a missziót. Biztos vagy benne?";
         new AlertDialog.Builder(this)
             .setTitle("Repülés indítása")
-            .setMessage("A drón elindítja a missziót. Biztos vagy benne?")
+            .setMessage(message)
             .setPositiveButton("START", (d, w) -> {
                 // Kamera beállítások alkalmazása, utána misszió indítás
                 Toast.makeText(this, "Kamera beállítása...", Toast.LENGTH_SHORT).show();

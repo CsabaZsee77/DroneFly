@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L4 – Tranzakciós és Párhuzamos Kezelés
-**Verzió:** v1.5.0
+**Verzió:** v1.6.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-06
-**Státusz:** ✅ Részben implementálva — kamera feed és tap-to-expose szálkezelés dokumentálva és tesztelve
+**Utolsó módosítás:** 2026-04-13
+**Státusz:** ✅ Implementálva — misszió szálkezelés, volatile isFlying cache, kamera feed és tap-to-expose szálkezelés
 
 ---
 
@@ -100,7 +100,32 @@ Misszió feltöltési idő (P4P v1, ~99 waypoint):
 
 ---
 
-## 5. Párhuzamossági korlátok
+## 5. isFlying volatile cache — szálbiztonsági magyarázat
+
+```
+DJI FlightController StateCallback:
+  → DJI SDK belső szálon érkezik (NEM main thread)
+  → droneIsFlying = state.isFlying()  [volatile write, SDK szálon]
+
+MissionPlannerActivity.startMission():
+  → Main thread-en fut (gomb click handler)
+  → DJIHelper.isFlying()  [volatile read, main thread]
+
+volatile garantálja:
+  → A main thread mindig a legfrissebb értéket olvassa
+  → Nincs szükség synchronized blokkra (egyszerű boolean, atomi read/write)
+  → Ha a drón épp felszállás közben van és a callback még nem érkezett meg,
+    az isFlying() false-t adhat vissza — ez biztonságos: a "földi" dialog
+    jelenik meg, de a startMission() MSDK hívás levegőben is működik
+```
+
+**Következmény:** Az isFlying() nem garantál 100%-os pontosságot a felszállás
+első pillanatában, de ez nem jelent funkcionális hibát — mindkét dialog-ág
+ugyanazt a startMission() hívást végzi el.
+
+---
+
+## 6. Párhuzamossági korlátok
 
 ```
 Egyszerre csak 1 misszió futhat a drónonn:
@@ -118,7 +143,7 @@ App lifecycle párhuzamosság:
 
 ---
 
-## 6. SDK verzió kompatibilitás
+## 7. SDK verzió kompatibilitás
 
 ```
 MSDK v4.18 + Phantom 4 Pro v1:
@@ -135,7 +160,7 @@ Crystal Sky firmware:
 
 ---
 
-## 7. Kamera feed szálkezelés (DroneVideoWidget)
+## 8. Kamera feed szálkezelés (DroneVideoWidget)
 
 ```
 VideoFeeder.VideoDataListener.onReceive(byte[], int):
@@ -172,7 +197,7 @@ focusRing.animate().scaleX(1f).scaleY(1f).setDuration(200)
 
 ---
 
-## 8. Proxy NPE bugfix — tanulság
+## 9. Proxy NPE bugfix — tanulság
 
 ```
 Tünet: DJI SDK belső NPE, VideoFeed fekete, nincs crash az appban

@@ -25,6 +25,7 @@ public class DJIHelper {
 
     private ConnectionListener listener;
     private boolean registered = false;
+    private volatile boolean droneIsFlying = false;
 
     public static DJIHelper getInstance() {
         if (instance == null) instance = new DJIHelper();
@@ -237,6 +238,10 @@ public class DJIHelper {
                                                 .getMethod("getLongitude").invoke(loc);
                                         }
                                     } catch (Throwable ignored) {}
+                                    try {
+                                        droneIsFlying = (boolean) args[0].getClass()
+                                            .getMethod("isFlying").invoke(args[0]);
+                                    } catch (Throwable ignored) {}
                                     cb.onResult(sats, homeSet, lat, lon);
                                 } catch (Throwable t2) { /* ignore */ }
                             }
@@ -251,6 +256,9 @@ public class DJIHelper {
             Log.d(TAG, "FlightState callback hiba: " + t.getMessage());
         }
     }
+
+    /** Visszaadja, hogy a drón jelenleg levegőben van-e (utolsó flight state callback alapján). */
+    public boolean isFlying() { return droneIsFlying; }
 
     public boolean isConnected() {
         try {

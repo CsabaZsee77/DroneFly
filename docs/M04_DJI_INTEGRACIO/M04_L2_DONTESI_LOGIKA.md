@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L2 – Döntési Logika
-**Verzió:** v1.5.0
+**Verzió:** v1.6.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-06
-**Státusz:** ✅ Részben implementálva — kamera feed + tap-to-expose döntési logika; misszió feltöltés dokumentálva
+**Utolsó módosítás:** 2026-04-13
+**Státusz:** ✅ Implementálva — misszió feltöltés/indítás, kézi felszállás utáni indítás, kamera feed, tap-to-expose
 
 ---
 
@@ -110,7 +110,40 @@ uploadMission() hívás előtt:
 
 ---
 
-## 5. Hibakódok és magyarázatok
+## 5. Misszióindítás döntési logika (levegőben vs. földön)
+
+```
+[START] gomb megnyomva (missionUploaded == true)
+      │
+      ▼
+DJIHelper.getInstance().isFlying()
+      │
+      ├─ true (drón levegőben)
+      │    Dialog cím:    "Repülés indítása"
+      │    Dialog szöveg: "A drón levegőben van. A misszió indítása után
+      │                    az első waypointra repül (SAFELY módban:
+      │                    előbb a misszió magasságára emelkedik)."
+      │    [START] → startMission() közvetlenül
+      │
+      └─ false (drón földön, vagy isFlying nem érhető el)
+           Dialog cím:    "Repülés indítása"
+           Dialog szöveg: "A drón felszáll és elindítja a missziót.
+                           Biztos vagy benne?"
+           [START] → startMission() → auto-felszállás + 1. waypoint
+
+Mindkét esetben a tényleges misszió-indítás azonos:
+  CameraConfigurator.applySettings() → MissionUploader.startMission()
+  → setMissionRunning(true) + startMissionListener()
+
+isFlying() visszatérési értéke:
+  - DJIHelper.droneIsFlying volatile mező (FlightController StateCallback frissíti)
+  - Ha az SDK nem elérhető / nincs csatlakoztatva → false (biztonságos alapértelmezés)
+  - Catch(Throwable) → false (nem crashel)
+```
+
+---
+
+## 6. Hibakódok és magyarázatok
 
 | MSDK DJIError | Magyar üzenet az appban |
 |---------------|------------------------|
