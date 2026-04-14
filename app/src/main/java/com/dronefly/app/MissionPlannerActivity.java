@@ -559,6 +559,27 @@ public class MissionPlannerActivity extends AppCompatActivity {
             }
         } catch (Throwable t) { /* ignore */ }
 
+        // ── Kp-index (geomágneses aktivitás) – 10 percenként frissül ──
+        if (sbKp != null) {
+            long now = System.currentTimeMillis();
+            if ((now - lastKpFetchMs) >= KP_FETCH_INTERVAL_MS) {
+                lastKpFetchMs = now;
+                KpIndexProvider.fetch(kp -> {
+                    if (sbKp == null) return;
+                    if (kp < 0) {
+                        sbKp.setText("MAG: --");
+                        sbKp.setTextColor(0xFF888888);
+                    } else {
+                        sbKp.setText("MAG: " + kp);
+                        if      (kp <= 2) sbKp.setTextColor(0xFF44FF88);
+                        else if (kp <= 4) sbKp.setTextColor(0xFFFFAA00);
+                        else if (kp == 5) sbKp.setTextColor(0xFFFF8800);
+                        else              sbKp.setTextColor(0xFFFF4444);
+                    }
+                });
+            }
+        }
+
         // ── DJI telemetria ──
         try {
             DJIHelper dji = DJIHelper.getInstance();
@@ -623,24 +644,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         } catch (Throwable t) { /* DJI SDK nem elérhető */ }
 
-        // ── Kp-index (geomágneses aktivitás) – 10 percenként frissül ──
-        long now = System.currentTimeMillis();
-        if (sbKp != null && (now - lastKpFetchMs) >= KP_FETCH_INTERVAL_MS) {
-            lastKpFetchMs = now;
-            KpIndexProvider.fetch(kp -> {
-                if (sbKp == null) return;
-                if (kp < 0) {
-                    sbKp.setText("MAG: --");
-                    sbKp.setTextColor(0xFF888888);
-                } else {
-                    sbKp.setText("MAG: " + kp);
-                    if      (kp <= 2) sbKp.setTextColor(0xFF44FF88);
-                    else if (kp <= 4) sbKp.setTextColor(0xFFFFAA00);
-                    else if (kp == 5) sbKp.setTextColor(0xFFFF8800);
-                    else              sbKp.setTextColor(0xFFFF4444);
-                }
-            });
-        }
     }
 
     // ── Panel csúsztatás ──────────────────────────────────────────────

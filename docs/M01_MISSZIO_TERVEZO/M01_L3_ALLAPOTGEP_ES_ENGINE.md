@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.9.0
+**Verzió:** v1.9.3
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-13
-**Státusz:** ✅ Implementálva (v1.9.0)
+**Utolsó módosítás:** 2026-04-14
+**Státusz:** ✅ Implementálva (v1.9.3)
 
 ---
 
@@ -69,9 +69,11 @@ int currentSegmentIndex = 0;
 GridMissionGenerator.GeneratorResult lastResult;
 
 // Státuszsáv
-TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt;
+TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt, sbKp;
 Handler statusHandler = new Handler(Looper.getMainLooper());
 static final int STATUS_INTERVAL_MS = 2000;
+long lastKpFetchMs = 0;
+static final long KP_FETCH_INTERVAL_MS = 10 * 60 * 1000L; // 10 perc
 
 // Panel
 FrameLayout sidePanelContainer;
@@ -340,10 +342,23 @@ void updateStatusBar() {
     sbTabletBatt.setText("TAB: " + pct + "%" + (charging ? "+" : ""));
     // szín: <20%=piros, <40%=narancs, ≥40%=zöld
 
+    // Kp-index (NOAA, 10 percenként) — dróntól FÜGGETLENÜL fut
+    if (sbKp != null && (now - lastKpFetchMs) >= KP_FETCH_INTERVAL_MS) {
+        lastKpFetchMs = now;
+        KpIndexProvider.fetch(kp -> {
+            // callback főszálon érkezik vissza
+            if (kp < 0) { sbKp.setText("MAG: --"); /* szürke */ }
+            else {
+                sbKp.setText("MAG: " + kp);
+                // 0–2: zöld | 3–4: sárga | 5: narancs | 6+: piros
+            }
+        });
+    }
+
     // DJI telemetria (DJIHelper reflection-alapú)
     if (!DJIHelper.isConnected()) {
         // minden mező "--" → szürkére
-        return;
+        return;  // ← itt tér vissza ha nincs drón; Kp-index már lefutott
     }
     sbDrone.setText(DJIHelper.getConnectedProductName());   // zöld
     sbRc.setText("RC: " + (DJIHelper.isRcConnected() ? "OK" : "nincs"));
@@ -454,7 +469,9 @@ FrameLayout (rootLayout, full screen)
 │   ├─ separator
 │   ├─ TextView (id: sbDroneBatt) "DRON AKKU: --" / "AKKU: 92%"
 │   ├─ separator
-│   └─ TextView (id: sbTabletBatt)"TAB: --" / "TAB: 78%"
+│   ├─ TextView (id: sbTabletBatt)"TAB: --" / "TAB: 78%"
+│   ├─ separator
+│   └─ TextView (id: sbKp)       "MAG: --" / "MAG: 0–9" (zöld/sárga/narancs/piros)
 │
 └─ FrameLayout (id: sidePanelContainer, end, elevation=8dp)
     │   (együtt csúszik: toggle gomb + panel ScrollView)

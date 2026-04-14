@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.9.0
+**Verzió:** v1.9.3
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-13
-**Státusz:** ✅ Implementálva (v1.9.0)
+**Utolsó módosítás:** 2026-04-14
+**Státusz:** ✅ Implementálva (v1.9.3)
 
 ---
 
@@ -30,7 +30,7 @@ A felhasználó:
 - **Offset (túlrepülési határ):** a drón a megrajzolt területhatáron túl is kap waypointot
 - **Akadályjelölés:** veszélyes akadályok (fa, torony) jelölhetők körrel, a generátor kihagyja a waypontokat az akadály zónájában
 - **Domborzatkövetés:** SRTM DEM alapján a waypointok magassága korrigálható
-- **Státuszsáv:** drón neve, RC kapcsolat+akkumulátor, GPS műholdak, drón akkumulátor, tablet akkumulátor
+- **Státuszsáv:** drón neve, RC kapcsolat+akkumulátor, GPS műholdak, drón akkumulátor, tablet akkumulátor, geomágneses aktivitás (Kp-index)
 - Litchi CSV export — a meglévő webes misszió-tervező adatai importálhatók
 - KMZ export — DJI Pilot appban megnyitható
 - Akkumulátorcsere kezelés: 99 waypontnál nagyobb misszió auto-felosztás
@@ -62,8 +62,8 @@ A felhasználó:
       │
       ▼
 Státuszsáv (lebegő sziget, képernyő tetején):
-  Drón neve | RC: OK/nincs + akku% | SAT: N H | AKKU: N% | TAB: N%
-  2 másodpercenként frissül
+  Drón neve | RC: OK/nincs + akku% | SAT: N H | AKKU: N% | TAB: N% | MAG: N
+  2 másodpercenként frissül (MAG: 10 percenként, NOAA API)
       │
       ▼
 Térkép betöltése (OSMDroid, ESRI World Imagery műhold tiles)
@@ -197,7 +197,7 @@ Auto-generálás (autoGenerateIfReady):
 | "Mentés másként" megnyomva | showSaveProjectDialog() → új fájlnév dialog → saveProject() |
 | "Terv betöltése" megnyomva | listProjects() → kiválasztás → confirmLoadProject() → loadProject() + loadResumeState() |
 | Feltöltés (mentetlen terv) | doUpload() elején: auto-mentés auto_DÁTUM névvel → currentPlanFile beáll |
-| 2 mp státusz timer | updateStatusBar() → DJI telemetria + tablet akku frissítés |
+| 2 mp státusz timer | updateStatusBar() → DJI telemetria + tablet akku + Kp-index frissítés (utóbbi 10 percenként) |
 | **N2K / LGT / ZÓN gomb** megnyomva | toggleLayer() → betöltés jelzés (gomb szövege `N2K...` stb.) → háttérszálon API hívás → overlay hozzáadása / eltávolítása |
 | **▼ / ▲ (LGT magassági szűrő)** megnyomva | changeAltPreset(±1) → altPresetIndex léptetés → airspaceLayer.setAltitudeFilter() → drawOverlay újrarajzolás API hívás nélkül |
 

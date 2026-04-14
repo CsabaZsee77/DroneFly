@@ -19,8 +19,8 @@ import java.util.concurrent.Executors;
  * Endpoint: https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json
  * Frissítés: 3 óránként (NOAA mérési ciklus), az app 10 percenként kérdezi le.
  *
- * Válasz formátum (JSON tömb a tömben):
- *   [ ["time_tag", "kp_index"], ["2026-04-13 00:00:00", "2"], ... ]
+ * Válasz formátum (aktuális): [ {"time_tag":"...","Kp":0.33,...}, ... ]
+ * Régi formátum (visszafelé kompatibilis): [ ["time_tag","kp_index"], [...] ]
  *
  * Kp-index értelmezése (drónosok számára):
  *   0–2 : Nyugodt           → zöld  – nincs hatás
@@ -71,17 +71,22 @@ public class KpIndexProvider {
                 while ((line = r.readLine()) != null) sb.append(line);
             }
 
-            // Válasz: [ ["time_tag","Kp"], ["2026-04-13 00:00:00","2.00"], ... ]
-            // A NOAA float stringként adja vissza az értéket (pl. "2.00", "1.67"),
-            // ezért Double.parseDouble() → kerekítés, nem Integer.parseInt().
             JSONArray arr = new JSONArray(sb.toString());
-            if (arr.length() < 2) return -1;
-            JSONArray last = arr.getJSONArray(arr.length() - 1);
-            double kpFloat = Double.parseDouble(last.getString(1).trim());
+            if (arr.length() < 1) return -1;
+
+            double kpFloat;
+            Object last = arr.get(arr.length() - 1);
+            if (last instanceof org.json.JSONObject) {
+                // Új formátum: {"time_tag":"...","Kp":0.33,...}
+                kpFloat = ((org.json.JSONObject) last).getDouble("Kp");
+            } else {
+                // Régi formátum: ["time_tag", "2.00"]
+                kpFloat = Double.parseDouble(((JSONArray) last).getString(1).trim());
+            }
             return (int) Math.round(kpFloat);
 
         } catch (Throwable t) {
-            Log.d(TAG, "Kp lekérés sikertelen: " + t.getMessage());
+            Log.e(TAG, "Kp lekérés sikertelen: " + t.getMessage());
             return -1;
         } finally {
             if (conn != null) conn.disconnect();

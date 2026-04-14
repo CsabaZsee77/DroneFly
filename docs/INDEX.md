@@ -4,8 +4,8 @@
 **Céleszköz:** DJI Crystal Sky (Android 5.1)
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
-**Verzió:** v1.9.1
-**Utolsó frissítés:** 2026-04-13
+**Verzió:** v1.9.3
+**Utolsó frissítés:** 2026-04-14
 
 ---
 
@@ -17,6 +17,7 @@
 | [M02 Grid Engine](M02_GRID_ENGINE/) | GSD kalkulátor, rácsútvonal generátor (kígyózó minta) | ✅ Implementálva (v1.0.0) |
 | [M03 Export / Import](M03_EXPORT_IMPORT/) | Litchi CSV export, KMZ export, CSV import | ✅ Implementálva (v1.0.0) |
 | [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose, kézi felszállás utáni indítás | ✅ Implementálva — telemetria, kamera, misszió feltöltés/indítás, isFlying állapot |
+| Kp-index (státuszsáv) | NOAA geomágneses aktivitás lekérő, 10 percenként frissül, MAG: 0–9 színkódolva | ✅ Implementálva (v1.9.3) |
 
 ---
 
@@ -40,6 +41,7 @@ app/src/main/java/com/dronefly/app/
 │   ├── ProtectedAreasLayer.java      ← N2K réteg (Natura 2000, nemzeti parkok)
 │   ├── AirspaceLayer.java            ← LGT réteg (OpenAIP Core API, magassági szűrővel)
 │   └── LandUseLayer.java             ← ZÓN réteg (OSM landuse: lakó, ipari, katonai, repülőtér)
+├── KpIndexProvider.java              ← NOAA Kp-index lekérő (geomágneses aktivitás, státuszsáv)
 └── dji/
     ├── DJIHelper.java                ← M04 SDK init, telemetria (reflection)
     ├── DroneVideoWidget.java         ← M04 kamera feed PiP + tap-to-expose
