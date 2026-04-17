@@ -197,9 +197,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
         tileCache.mkdirs();
         Configuration.getInstance().setOsmdroidBasePath(osmBase);
         Configuration.getInstance().setOsmdroidTileCache(tileCache);
-        // Cache méret korlát: 100 MB (Crystal Sky védelmére)
-        Configuration.getInstance().setTileFileSystemCacheMaxBytes(100L * 1024L * 1024L);
-        Configuration.getInstance().setTileFileSystemCacheTrimBytes(80L * 1024L * 1024L);
+        // Cache méret korlát: 200 MB (Crystal Sky: bővítve a zoom miatti tile igény miatt)
+        Configuration.getInstance().setTileFileSystemCacheMaxBytes(200L * 1024L * 1024L);
+        Configuration.getInstance().setTileFileSystemCacheTrimBytes(160L * 1024L * 1024L);
         // Egyedi user agent – az OSM tile szerver megköveteli
         Configuration.getInstance().setUserAgentValue("DroneFlyApp/1.0 (Android dronefly.app)");
 
