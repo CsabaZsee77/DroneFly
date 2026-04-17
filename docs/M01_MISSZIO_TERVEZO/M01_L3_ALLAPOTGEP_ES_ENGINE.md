@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.9.3
+**Verzió:** v1.9.7
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-14
-**Státusz:** ✅ Implementálva (v1.9.3)
+**Utolsó módosítás:** 2026-04-17
+**Státusz:** ✅ Implementálva (v1.9.7)
 
 ---
 
@@ -113,7 +113,20 @@ Spinner  spinnerDrone;
 Button   btnSaveProject, btnLoadProject,
          btnUndoPoint, btnObstacle, btnClearObstacles, btnClear, btnGenerate,
          btnUpload, btnStart, btnImportCsv, btnExport, btnSetStart,
-         btnMyLocation, btnMapToggle, btnPauseMission, btnStopMission;
+         btnMyLocation, btnMapToggle, btnPauseMission, btnStopMission,
+         btnRec;                         // képernyőkép / videórögzítés
+
+// GPS pozíció cache (drón GPS preferált, tablet GPS fallback)
+double lastDroneLat = 0, lastDroneLon = 0;  // DJI FlightController StateCallback tárolja
+
+// Képernyőrögzítés (v1.9.7)
+MediaProjectionManager projectionManager;
+MediaProjection  mediaProjection;
+MediaRecorder    mediaRecorder;
+VirtualDisplay   virtualDisplay;
+boolean          isRecording = false;
+File             currentRecordingFile;
+Handler          recBlinkHandler;       // REC gomb villogtatás
 ```
 
 ---
@@ -148,6 +161,8 @@ onCreate()
   │    spinnerDrone (DroneProfiles.ALL)
   │    initCameraControls(), initTerrainControls(), initStatusBar()
   │    updateLabels()
+  │    projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE)
+  │    btnRec: click → takeScreenshot() | longClick → toggleRecording()
   │
   └─ showDisclaimerIfNeeded()
 
@@ -448,8 +463,19 @@ FrameLayout (rootLayout, full screen)
 │   ├─ org.osmdroid.views.MapView (id: mapView)
 │   └─ LinearLayout (vertical, top|start, margin 8dp)
 │       ├─ Button (id: btnMyLocation, 48×48dp, "GPS", #CC1a1a2e)
+│       │          click → jumpToCurrentPosition()
+│       │          drón GPS (lastDroneLat/Lon) preferált → tablet GPS (locationOverlay) fallback
+│       │          zoom 15, setZoom() + animateTo(), toast: forrás + pontosság
 │       ├─ Button (id: btnMapToggle, 48×48dp, "SAT"/"MAP", #CC1a1a2e)
+│       │          click → toggleMapSource()  |  longClick → downloadMapAreaForOffline()
+│       │          offline letöltés: zoom 14–17, /sdcard/osmdroid/ cache
 │       ├─ Button (id: btnCamToggle, 48×48dp, "CAM", #CC1a1a2e)
+│       ├─ Button (id: btnRec, 48×48dp, "REC"/"■", #CC1a1a2e / #CCCC0000)
+│       │          click → takeScreenshot() → PNG /sdcard/DroneFly/screenshot_*.png
+│       │          longClick → toggleRecording()
+│       │            start: MediaProjection engedélykérés → startScreenRecording()
+│       │            stop:  MediaRecorder.stop() → MP4 /sdcard/DroneFly/video_*.mp4
+│       │            felvétel közben: gomb pirosan villog (600 ms), szöveg "■"
 │       ├─ View (elválasztó, 32×1dp, #CC334466)
 │       ├─ Button (id: btnLayerProtected, 48×48dp, "N2K", #CC1a2e1a)
 │       ├─ Button (id: btnLayerAirspace, 48×48dp, "LGT", #CC2e1a1a)

@@ -4,8 +4,8 @@
 **Céleszköz:** DJI Crystal Sky (Android 5.1)
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
-**Verzió:** v1.9.4
-**Utolsó frissítés:** 2026-04-16
+**Verzió:** v1.9.7
+**Utolsó frissítés:** 2026-04-17
 
 ---
 
@@ -18,6 +18,9 @@
 | [M03 Export / Import](M03_EXPORT_IMPORT/) | Litchi CSV export, KMZ export, CSV import | ✅ Implementálva (v1.0.0) |
 | [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés | ✅ Implementálva — telemetria, kamera, misszió feltöltés/indítás, isFlying állapot, intervallum fotózás |
 | Kp-index (státuszsáv) | NOAA geomágneses aktivitás lekérő, 10 percenként frissül, MAG: 0–9 színkódolva | ✅ Implementálva (v1.9.3) |
+| Offline térkép | OSMDroid cache, automatikus offline mód WiFi nélkül, letöltés gomb (hosszú nyomás SAT/MAP gombon), réteg guard offline módban | ✅ Implementálva (v1.9.5) |
+| GPS gomb | Drón GPS (DJI telemetria) / tablet GPS prioritás, zoom 15 (~1 km), forrás toast | ✅ Implementálva (v1.9.6) |
+| REC gomb | Képernyőkép (rövid nyomás) + képernyővideó (hosszú nyomás, MediaProjection), /sdcard/DroneFly/ mentés | ✅ Implementálva (v1.9.7) |
 
 ---
 
@@ -44,6 +47,9 @@ app/src/main/java/com/dronefly/app/
 ├── KpIndexProvider.java              ← NOAA Kp-index lekérő (geomágneses aktivitás, státuszsáv)
 └── dji/
     ├── DJIHelper.java                ← M04 SDK init, telemetria (reflection)
+    │   takeScreenshot()              ← (MissionPlannerActivity) PNG → /sdcard/DroneFly/
+    │   startScreenRecording()        ← (MissionPlannerActivity) MediaProjection MP4 rögzítés
+    │   jumpToCurrentPosition()       ← (MissionPlannerActivity) drón/tablet GPS, zoom 15
     ├── DroneVideoWidget.java         ← M04 kamera feed PiP + tap-to-expose
     ├── MissionUploader.java          ← M04 feltöltés + vezérlés (stub)
     └── CameraConfigurator.java       ← M04 kamera beállítások

@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.9.4
+**Verzió:** v1.9.7
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-16
-**Státusz:** ✅ Implementálva — RC akku, drón akku, drón név, GPS, isFlying, kamera feed PiP, tap-to-expose (reflection); misszió feltöltés valódi MSDK; folyamatos repülés (CURVED); gimbal nadir; SD kártya ellenőrzés
+**Utolsó módosítás:** 2026-04-17
+**Státusz:** ✅ Implementálva — RC akku, drón akku, drón név, GPS, isFlying, kamera feed PiP, tap-to-expose (reflection); misszió feltöltés valódi MSDK; folyamatos repülés (CURVED); gimbal nadir; SD kártya ellenőrzés; képernyőkép/videó rögzítés (v1.9.7)
 
 ---
 

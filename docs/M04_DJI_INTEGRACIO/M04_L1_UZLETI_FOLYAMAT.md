@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.9.4
+**Verzió:** v1.9.7
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-16
-**Státusz:** ✅ Teljes MSDK v4 integráció — feltöltés, vezérlés, haladásjelző, misszió folytatás, szimuláció, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés
+**Utolsó módosítás:** 2026-04-17
+**Státusz:** ✅ Teljes MSDK v4 integráció — feltöltés, vezérlés, haladásjelző, misszió folytatás, szimuláció, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés; képernyőkép/videó rögzítés (v1.9.7)
 
 ---
 
