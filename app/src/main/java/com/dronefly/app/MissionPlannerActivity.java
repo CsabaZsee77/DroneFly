@@ -2667,24 +2667,27 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
             DisplayMetrics metrics = new DisplayMetrics();
             getWindowManager().getDefaultDisplay().getMetrics(metrics);
-            int width  = metrics.widthPixels;
-            int height = metrics.heightPixels;
-            int dpi    = metrics.densityDpi;
+            int dpi = metrics.densityDpi;
+
+            // Rögzített 1280×720 felbontás — Crystal Sky Android 5.1-en
+            // a natív felbontás (1920×1080) + H264 SURFACE encoder megbízhatatlan,
+            // 30 KB-os üres fájlt produkál. 720p kompatibilis minden eszközzel.
+            final int recWidth  = 1280;
+            final int recHeight = 720;
 
             mediaRecorder = new MediaRecorder();
-            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
             mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
-            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            mediaRecorder.setVideoSize(width, height);
-            mediaRecorder.setVideoFrameRate(30);
-            mediaRecorder.setVideoEncodingBitRate(4 * 1024 * 1024); // 4 Mbps
+            mediaRecorder.setVideoSize(recWidth, recHeight);
+            mediaRecorder.setVideoFrameRate(25);
+            mediaRecorder.setVideoEncodingBitRate(2 * 1024 * 1024); // 2 Mbps
             mediaRecorder.setOutputFile(currentRecordingFile.getAbsolutePath());
             mediaRecorder.prepare();
 
+            // VirtualDisplay: natív felbontáson gyűjt, de a VirtualDisplay skálázza 720p-re
             virtualDisplay = mediaProjection.createVirtualDisplay(
-                    "DroneFlyRec", width, height, dpi,
+                    "DroneFlyRec", recWidth, recHeight, dpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     mediaRecorder.getSurface(), null, null);
 
@@ -2694,7 +2697,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
             // Gomb pirosan villog felvétel közben
             btnRec.setText("■");
             startRecBlink();
-            Toast.makeText(this, "⏺ Videórögzítés elindult", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "⏺ Videórögzítés elindult (720p)", Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
             Toast.makeText(this, "Rögzítés hiba: " + e.getMessage(), Toast.LENGTH_LONG).show();
