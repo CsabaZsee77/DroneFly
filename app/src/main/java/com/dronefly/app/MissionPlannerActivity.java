@@ -101,6 +101,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private boolean  missionRunning = false;
     private boolean  missionPaused  = false;
     private int      lastSatCount   = 0;
+    /** Drón utolsó ismert GPS pozíciója (DJI telemetria alapján). 0/0 = nincs adat. */
+    private double   lastDroneLat   = 0;
+    private double   lastDroneLon   = 0;
 
     // Misszió folytatás (megszakadás utáni resume)
     private int resumeSegmentIndex   = -1;  // melyik szegmensnél szakadt meg
@@ -640,6 +643,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 sbGps.setText("SAT: " + sats + (homeSet ? " H" : ""));
                 sbGps.setTextColor(sats >= 10 ? 0xFF44FF88 : sats >= 6 ? 0xFFFFAA00 : 0xFFFF4444);
                 updateStartButtonState();
+                // Mindig tároljuk a drón pozícióját (GPS gomb használja)
+                if (lat != 0 && lon != 0) {
+                    lastDroneLat = lat;
+                    lastDroneLon = lon;
+                }
                 if (missionRunning && lat != 0 && lon != 0) {
                     updateDroneMarker(lat, lon);
                 }
@@ -1067,27 +1075,46 @@ public class MissionPlannerActivity extends AppCompatActivity {
             Toast.makeText(this, "Kattints a térképre a start/felszállási ponthoz", Toast.LENGTH_SHORT).show();
     }
 
+    /**
+     * Térkép ugrás az aktuális pozícióra.
+     *
+     * Forrás prioritás:
+     * 1. Drón GPS (DJI telemetria, ha csatlakoztatva és van fix)
+     * 2. Tablet saját GPS (Android LocationProvider)
+     * 3. Toast: nincs pozíció adat
+     *
+     * Zoom: 15 (~1–1.5 km sugarú nézet) — elegendő a közvetlen környezet áttekintéséhez.
+     * Animáció: zoom azonnal beáll (nincs köztes tile-betöltés), pan animálódik.
+     * Ez megakadályozza a gyors zoom miatti lefagyást.
+     */
     private void jumpToCurrentPosition() {
-        // 1. Ha drón csatlakoztatva: drón GPS pozíciója (valódi eszközön)
-        // 2. Fallback: készülék GPS (emulátor / kézi tesztelés)
         GeoPoint target = null;
+        String source = "";
 
-        // Drón pozíció (MSDK – valódi eszközön aktív)
-        // Ha a DJI stub le van cserélve valódi implementációra, itt jön a drón koordináta:
-        // Aircraft aircraft = DJIHelper.getInstance().getAircraft();
-        // if (aircraft != null) { ... aircraft.getFlightController().getState()... }
+        // 1. Drón GPS (DJI telemetria — pontosabb, a drón helye van)
+        if (lastDroneLat != 0 && lastDroneLon != 0) {
+            target = new GeoPoint(lastDroneLat, lastDroneLon);
+            source = "Drón GPS";
+        }
 
-        // Készülék GPS fallback
+        // 2. Tablet saját GPS
         if (target == null && locationOverlay != null) {
             Location loc = locationOverlay.getLastFix();
             if (loc != null) {
                 target = new GeoPoint(loc.getLatitude(), loc.getLongitude());
+                source = "Tablet GPS"
+                       + (loc.getAccuracy() > 0
+                           ? " (±" + Math.round(loc.getAccuracy()) + " m)"
+                           : "");
             }
         }
 
         if (target != null) {
+            // Zoom beállítása ELŐBB (instant, nincs animáció) → csak egyszer tölt tile-okat
+            mapView.getController().setZoom(15.0);
+            // Utána sima pan animáció a célpontra (zoom változás nélkül → nem tölt új tile-okat)
             mapView.getController().animateTo(target);
-            mapView.getController().setZoom(17.0);
+            Toast.makeText(this, source, Toast.LENGTH_SHORT).show();
         } else {
             Toast.makeText(this, "GPS pozíció még nem elérhető", Toast.LENGTH_SHORT).show();
         }
