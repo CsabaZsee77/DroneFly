@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.6.0
+**Verzió:** v1.9.4
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-13
-**Státusz:** ✅ Implementálva — RC akku, drón akku, drón név, GPS, isFlying, kamera feed PiP, tap-to-expose (reflection); misszió feltöltés valódi MSDK
+**Utolsó módosítás:** 2026-04-16
+**Státusz:** ✅ Implementálva — RC akku, drón akku, drón név, GPS, isFlying, kamera feed PiP, tap-to-expose (reflection); misszió feltöltés valódi MSDK; folyamatos repülés (CURVED); gimbal nadir; SD kártya ellenőrzés
 
 ---
 
@@ -15,7 +15,7 @@
 |------|-----------|-------------------|
 | `dji/DJIHelper.java` | SDK regisztráció, telemetria (reflection) | ✅ Crystal Sky-on működik |
 | `dji/DroneVideoWidget.java` | Kamera feed PiP, tap-to-expose | ✅ Crystal Sky-on működik |
-| `dji/MissionUploader.java` | Waypoint misszió feltöltés, vezérlés | 🔧 Stub (mindig hiba) |
+| `dji/MissionUploader.java` | Waypoint misszió feltöltés, vezérlés (CURVED mód) | ✅ Valódi MSDK v4 implementáció |
 | `dji/CameraConfigurator.java` | Kamera beállítások alkalmazása | ✅ Implementálva |
 | `App.java` | Application osztály, MultiDex | MultiDex only |
 
@@ -82,20 +82,17 @@ public class MissionUploader {
                    ? WaypointMissionFinishedAction.RETURN_TO_HOME
                    : WaypointMissionFinishedAction.NO_ACTION)
                .headingMode(WaypointMissionHeadingMode.AUTO)
-               .flightPathMode(WaypointMissionFlightPathMode.NORMAL)
+               .flightPathMode(WaypointMissionFlightPathMode.CURVED)
                .gotoFirstWaypointMode(WaypointMissionGotoWaypointMode.SAFELY)
                .exitMissionOnRCSignalLostEnabled(false);
 
         for (WaypointData wp : waypoints) {
-            Waypoint waypoint = new Waypoint((float) wp.lat,
-                                             (float) wp.lon,
-                                             (float) wp.altitudeM);
-            if (wp.shootPhoto) {
-                waypoint.addAction(new WaypointAction(
-                    WaypointActionType.START_TAKE_PHOTO, 0));
-            }
-            waypoint.addAction(new WaypointAction(
-                WaypointActionType.GIMBAL_PITCH, (int) wp.gimbalPitch));
+            // CURVED módban waypoint akciók figyelmen kívül maradnak —
+            // fotót a kamera intervallum triggereli, gimbalt setNadirPitch() kezeli
+            Waypoint waypoint = new Waypoint((float) wp.latitude,
+                                             (float) wp.longitude,
+                                             wp.altitudeM);
+            waypoint.cornerRadiusInMeters = 0.2f; // szoros kanyar sávváltásnál
             builder.addWaypoint(waypoint);
         }
 
@@ -370,6 +367,101 @@ public class DroneVideoWidget implements TextureView.SurfaceTextureListener {
 | `SettingsDefinitions$FocusMode` | `.AUTO` field |
 | `setFocusMode(FocusMode, CompletionCallback)` | dinamikus metóduskeresés |
 | `setFocusTarget(PointF, CompletionCallback)` | dinamikus metóduskeresés |
+
+---
+
+## CameraConfigurator — intervallum fotózás, gimbal nadir, SD ellenőrzés (v1.9.4)
+
+```java
+public class CameraConfigurator {
+
+    public interface ConfigCallback {
+        void onComplete(boolean success, String message);
+    }
+
+    // ── Kamera beállítások ────────────────────────────────────────────
+    // Sorrend: setMode(SHOOT_PHOTO) → setExposureMode → setISO →
+    //          setShutterSpeed → setWhiteBalance → setPhotoFileFormat →
+    //          setShootPhotoMode(SINGLE/INTERVAL)
+    public static void applySettings(CameraSettings settings, ConfigCallback callback) { ... }
+
+    // ── Gimbal nadir (-90°) survey fotózás előtt ──────────────────────
+    // A callback mindig true-val tér vissza — gimbal hiba NEM blokkolja a missziót.
+    public static void setNadirPitch(ConfigCallback callback) {
+        // product.getGimbal().rotate(
+        //   new Rotation.Builder().pitch(-90f)
+        //     .mode(RotationMode.ABSOLUTE_ANGLE).time(3.0).build(),
+        //   callback)
+    }
+
+    // ── SD kártya jelenlét ellenőrzése ────────────────────────────────
+    // callback(true)  = van kártya VAGY nem sikerült lekérdezni → folytatható
+    // callback(false) = biztosan NINCS kártya → UI figyelmeztetés szükséges
+    public static void checkSDCard(ConfigCallback callback) {
+        // camera.setSystemStateCallback(state -> {
+        //   camera.setSystemStateCallback(null);  // egyszeri lekérés
+        //   boolean inserted = (boolean) state.getClass()
+        //       .getMethod("isSDCardInserted").invoke(state);  // reflection
+        // });
+    }
+
+    // ── Intervallum fotózás indítása (survey repülés) ─────────────────
+    // intervalSec = max(2.0, photoDistM / speedMs)
+    // 1. setMode(SHOOT_PHOTO)
+    // 2. setShootPhotoMode(INTERVAL)
+    // 3. PhotoTimeIntervalSettings(captureCount=0, intervalSec) [reflection]
+    //    → Class.forName("dji.common.camera.PhotoTimeIntervalSettings")
+    //    → setPhotoTimeIntervalSettings(settings, callback) [reflection]
+    //    Fallback: reflection sikertelen → startShootPhoto() közvetlen hívás
+    // 4. startShootPhoto()
+    public static void startIntervalShooting(float photoDistM, float speedMs,
+                                              ConfigCallback callback) { ... }
+
+    // Helper: startShootPhoto + callback kezelés
+    private static void startShootPhotoInternal(Camera camera, float intervalSec,
+                                                  ConfigCallback callback) { ... }
+
+    // ── Intervallum fotózás leállítása ────────────────────────────────
+    // Camera.stopShootPhoto() — misszió vége / stop / setMissionRunning(false) után
+    public static void stopIntervalShooting() { ... }
+}
+```
+
+**Gimbal API (MSDK v4):**
+
+| Osztály | Csomag |
+|---------|--------|
+| `Gimbal` | `dji.sdk.gimbal.Gimbal` |
+| `Rotation.Builder` | `dji.common.gimbal.Rotation` |
+| `RotationMode.ABSOLUTE_ANGLE` | `dji.common.gimbal.RotationMode` |
+
+**PhotoTimeIntervalSettings — reflection szükséges:**
+
+Az osztály (`dji.common.camera.PhotoTimeIntervalSettings`) neve MSDK verzióktól függ — direkt import
+helyett reflection garantálja a kompatibilitást:
+
+```java
+Class<?> cls = Class.forName("dji.common.camera.PhotoTimeIntervalSettings");
+Object settings = cls.getConstructor(int.class, float.class)
+                     .newInstance(0, intervalSec); // captureCount=0 = végtelen
+```
+
+**SD kártya ellenőrzés — reflection + egyszeri callback:**
+
+```java
+camera.setSystemStateCallback(state -> {
+    camera.setSystemStateCallback(null);  // leiratkozás az első hívás után
+    boolean inserted = (boolean) state.getClass()
+            .getMethod("isSDCardInserted").invoke(state);
+});
+```
+
+**Misszió start szekvencia (MissionPlannerActivity.doLaunchMission):**
+
+```
+checkSDCard → (dialog ha nincs) → setNadirPitch → applySettings
+           → startIntervalShooting → MissionUploader.startMission
+```
 
 ---
 

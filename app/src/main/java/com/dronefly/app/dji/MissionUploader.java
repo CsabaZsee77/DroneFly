@@ -74,19 +74,16 @@ public class MissionUploader {
             return;
         }
 
-        // Waypoint lista összeállítása (waypointList() pattern)
+        // Waypoint lista összeállítása — csak sávvégpontok, fotót kamera intervallum triggereli
         List<Waypoint> wpList = new ArrayList<>();
         for (WaypointData wp : waypoints) {
             Waypoint waypoint = new Waypoint(
                     (float) wp.latitude,
                     (float) wp.longitude,
                     wp.altitudeM);
-            if (wp.shootPhoto) {
-                waypoint.addAction(new WaypointAction(
-                        WaypointActionType.START_TAKE_PHOTO, 0));
-            }
-            waypoint.addAction(new WaypointAction(
-                    WaypointActionType.GIMBAL_PITCH, (int) wp.gimbalPitch));
+            // CURVED módban a waypoint akciók figyelmen kívül maradnak —
+            // ne adjunk hozzá TAKE_PHOTO vagy GIMBAL_PITCH akciót
+            waypoint.cornerRadiusInMeters = 0.2f; // szoros kanyar sávváltásnál
             wpList.add(waypoint);
         }
 
@@ -99,7 +96,7 @@ public class MissionUploader {
                        ? WaypointMissionFinishedAction.GO_HOME
                        : WaypointMissionFinishedAction.NO_ACTION)
                .headingMode(WaypointMissionHeadingMode.AUTO)
-               .flightPathMode(WaypointMissionFlightPathMode.NORMAL)
+               .flightPathMode(WaypointMissionFlightPathMode.CURVED)
                .gotoFirstWaypointMode(WaypointMissionGotoWaypointMode.SAFELY);
 
         DJIError loadError = operator.loadMission(builder.build());

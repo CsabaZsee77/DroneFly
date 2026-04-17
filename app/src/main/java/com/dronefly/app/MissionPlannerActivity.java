@@ -1622,11 +1622,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
         double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
         StringBuilder sb = new StringBuilder();
         sb.append(String.format(
-            "Terulet: %.2f ha | %d pont (%d szegmens)\n" +
+            "Terulet: %.2f ha | ~%d foto (%d szegmens)\n" +
             "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
             "Sebesseg: %.0f m/s | Ido: ~%.0f perc",
             lastResult.areaM2 / 10000.0,
-            lastResult.totalWaypoints, lastResult.segments.size(),
+            lastResult.estimatedPhotoCount, lastResult.segments.size(),
             lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
             (double) config.speedMs, lastResult.estimatedMinutes));
         if (lastResult.skippedByObstacle > 0) {
@@ -1716,11 +1716,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
         double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
         StringBuilder sbStats = new StringBuilder();
         sbStats.append(String.format(
-            "Terulet: %.2f ha | %d pont (%d szegmens)\n" +
+            "Terulet: %.2f ha | ~%d foto (%d szegmens)\n" +
             "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
             "Sebesseg: %.0f m/s (ajanl: %.0f m/s) | Ido: ~%.0f perc",
             lastResult.areaM2 / 10000.0,
-            lastResult.totalWaypoints, lastResult.segments.size(),
+            lastResult.estimatedPhotoCount, lastResult.segments.size(),
             lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
             (double) config.speedMs, (double) recSpd, lastResult.estimatedMinutes));
         if (lastResult.skippedByObstacle > 0) {
@@ -1940,42 +1940,89 @@ public class MissionPlannerActivity extends AppCompatActivity {
             .setTitle("Repülés indítása")
             .setMessage(message)
             .setPositiveButton("START", (d, w) -> {
-                // Kamera beállítások alkalmazása, utána misszió indítás
-                Toast.makeText(this, "Kamera beállítása...", Toast.LENGTH_SHORT).show();
-                CameraSettings camSettings = buildCameraSettings();
-                CameraConfigurator.applySettings(camSettings, (success, msg) ->
-                    runOnUiThread(() -> {
-                        if (!success) {
-                            Toast.makeText(this,
-                                "Kamera hiba: " + msg + " – indítás folytatódik",
-                                Toast.LENGTH_SHORT).show();
-                        }
-                        uploader.startMission(new MissionUploader.UploadCallback() {
-                            @Override public void onSuccess() {
-                                runOnUiThread(() -> {
-                                    Toast.makeText(MissionPlannerActivity.this,
-                                        "Repülés elindítva!", Toast.LENGTH_LONG).show();
-                                    setMissionRunning(true);
-                                    startMissionListener();
-                                });
-                            }
-                            @Override public void onError(String errMsg) {
-                                runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
-                                    "Indítás hiba: " + errMsg, Toast.LENGTH_LONG).show());
-                            }
-                        });
-                    })
-                );
+                // 1. SD kártya ellenőrzése — ha nincs, figyelmeztetés + megerősítés
+                CameraConfigurator.checkSDCard((sdOk, sdMsg) -> runOnUiThread(() -> {
+                    if (!sdOk) {
+                        new AlertDialog.Builder(MissionPlannerActivity.this)
+                            .setTitle("⚠️ Nincs SD kártya!")
+                            .setMessage("A kamerában nem található memóriakártya.\n"
+                                    + "A fotók elveszhetnek!\n\n"
+                                    + "Helyezz be SD kártyát, vagy folytasd kártya nélkül.")
+                            .setPositiveButton("Folytatás kártya nélkül",
+                                    (d2, w2) -> doLaunchMission())
+                            .setNegativeButton("Mégse", null)
+                            .show();
+                    } else {
+                        doLaunchMission();
+                    }
+                }));
             })
             .setNegativeButton("Mégse", null)
             .show();
     }
 
+    /**
+     * Misszió indítási szekvencia (SD check után hívódik):
+     * gimbal nadir → kamera beállítás → intervallum fotózás → misszió start
+     */
+    private void doLaunchMission() {
+        // 2. Gimbal leforgatása -90°-ra
+        Toast.makeText(this, "Gimbal beállítása...", Toast.LENGTH_SHORT).show();
+        CameraConfigurator.setNadirPitch((gimbalOk, gimbalMsg) -> runOnUiThread(() -> {
+            if (!gimbalOk) {
+                Toast.makeText(this, "Gimbal hiba: " + gimbalMsg, Toast.LENGTH_SHORT).show();
+            }
+            // 3. Kamera beállítások alkalmazása
+            Toast.makeText(this, "Kamera beállítása...", Toast.LENGTH_SHORT).show();
+            CameraSettings camSettings = buildCameraSettings();
+            CameraConfigurator.applySettings(camSettings, (success, msg) ->
+                runOnUiThread(() -> {
+                    if (!success) {
+                        Toast.makeText(this,
+                            "Kamera hiba: " + msg + " – indítás folytatódik",
+                            Toast.LENGTH_SHORT).show();
+                    }
+                    // 4. Intervallum fotózás indítása (folyamatos survey repülés)
+                    float photoDistM = (lastResult != null)
+                            ? (float) lastResult.photoDistM : 16f;
+                    float speedMs = buildConfig().speedMs;
+                    CameraConfigurator.startIntervalShooting(photoDistM, speedMs,
+                        (camOk, camMsg) -> runOnUiThread(() -> {
+                            if (!camOk) {
+                                Toast.makeText(this,
+                                    "Fotózás beállítás hiba: " + camMsg + " – indítás folytatódik",
+                                    Toast.LENGTH_SHORT).show();
+                            }
+                            // 5. Misszió indítása
+                            uploader.startMission(new MissionUploader.UploadCallback() {
+                                @Override public void onSuccess() {
+                                    runOnUiThread(() -> {
+                                        Toast.makeText(MissionPlannerActivity.this,
+                                            "Repülés elindítva!", Toast.LENGTH_LONG).show();
+                                        setMissionRunning(true);
+                                        startMissionListener();
+                                    });
+                                }
+                                @Override public void onError(String errMsg) {
+                                    runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
+                                        "Indítás hiba: " + errMsg, Toast.LENGTH_LONG).show());
+                                }
+                            });
+                        })
+                    );
+                })
+            );
+        }));
+    }
+
     private void updateStartButtonState() {
-        // START csak ha: misszió feltöltve + elég GPS műhold (≥6) + misszió nem fut
-        boolean canStart = missionUploaded && lastSatCount >= 6 && !missionRunning;
+        // lastSatCount == 0 jelentheti: nincs adat (reflection hiba) vagy valóban 0 műhold.
+        // Ha nem tudjuk olvasni, az MSDK dönt — ne blokkoljuk app szinten.
+        // Csak akkor blokkol, ha biztosan tudjuk, hogy < 6 (1–5 közötti érték).
+        boolean gpsBad  = lastSatCount > 0 && lastSatCount < 6;
+        boolean canStart = missionUploaded && !gpsBad && !missionRunning;
         btnStart.setEnabled(canStart);
-        if (missionUploaded && lastSatCount < 6 && !missionRunning) {
+        if (missionUploaded && gpsBad && !missionRunning) {
             btnStart.setText("START (GPS!)");
         } else if (!missionRunning) {
             btnStart.setText("START");
@@ -1994,6 +2041,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnStart.setEnabled(false);
         if (!running) {
             uploader.stopListening();
+            CameraConfigurator.stopIntervalShooting(); // intervallum fotózás leállítása
             clearDroneMarker();
             clearCompletedOverlay();
             tvMissionProgress.setText("");

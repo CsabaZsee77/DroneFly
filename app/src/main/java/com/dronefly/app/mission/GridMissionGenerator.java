@@ -29,6 +29,7 @@ public class GridMissionGenerator {
     public static class GeneratorResult {
         public List<List<WaypointData>> segments = new ArrayList<>();
         public int totalWaypoints;
+        public int estimatedPhotoCount; // kamera intervallum alapján becsült fotószám
         public double areaM2;
         public double estimatedMinutes;
         public double altitudeM;
@@ -197,27 +198,25 @@ public class GridMissionGenerator {
                     double xEnter = reverse ? sub[1] : sub[0];
                     double xExit  = reverse ? sub[0] : sub[1];
 
-                    // Fotópontok generálása a részsáv mentén
-                    double dx = xExit - xEnter;
-                    double len = Math.abs(dx);
+                    double len = Math.abs(xExit - xEnter);
                     if (len < 0.5) continue; // 0.5 m-nél rövidebb részsáv kihagyva
-                    int photoCount = Math.max(1, (int) Math.ceil(len / photoDist));
-                    double step = dx / photoCount;
 
-                    for (int n = 0; n <= photoCount; n++) {
-                        double wx = xEnter + n * step;
-                        double wy = scanY;
+                    // Folyamatos repülés: csak sávvégpontok — a fotót kamera intervallum triggereli
+                    // Sáv kezdőpontja
+                    double lx1 = xEnter * cosB - scanY * sinB;
+                    double ly1 = xEnter * sinB + scanY * cosB;
+                    allWaypoints.add(new WaypointData(
+                            centLat + ly1 / mPerDegLat,
+                            centLon + lx1 / mPerDegLon,
+                            (float) altM, false));
 
-                        // Visszaforgatás
-                        double localX = wx * cosB - wy * sinB;
-                        double localY = wx * sinB + wy * cosB;
-
-                        // Lokális XY → GPS
-                        double lat = centLat + localY / mPerDegLat;
-                        double lon = centLon + localX / mPerDegLon;
-
-                        allWaypoints.add(new WaypointData(lat, lon, (float) altM, true));
-                    }
+                    // Sáv végpontja
+                    double lx2 = xExit * cosB - scanY * sinB;
+                    double ly2 = xExit * sinB + scanY * cosB;
+                    allWaypoints.add(new WaypointData(
+                            centLat + ly2 / mPerDegLat,
+                            centLon + lx2 / mPerDegLon,
+                            (float) altM, false));
                 }
             }
             stripIndex++;
@@ -229,6 +228,8 @@ public class GridMissionGenerator {
         }
 
         result.totalWaypoints = allWaypoints.size();
+        // Becsült fotószám: teljes sávhossz / fotótávolság
+        result.estimatedPhotoCount = (int)(result.areaM2 / stripSpacing / photoDist);
         result.estimatedMinutes = GsdCalculator.estimatedFlightMinutes(
                 result.areaM2, altM, config.sidelapPercent, config.speedMs, config.droneProfile);
 

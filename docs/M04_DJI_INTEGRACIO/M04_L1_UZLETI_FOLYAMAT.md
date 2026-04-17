@@ -2,10 +2,10 @@
 
 **Modul:** M04
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.7.0
+**Verzió:** v1.9.4
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-13
-**Státusz:** ✅ Teljes MSDK v4 integráció — feltöltés, vezérlés, haladásjelző, misszió folytatás, szimuláció, kézi felszállás utáni indítás
+**Utolsó módosítás:** 2026-04-16
+**Státusz:** ✅ Teljes MSDK v4 integráció — feltöltés, vezérlés, haladásjelző, misszió folytatás, szimuláció, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés
 
 ---
 
@@ -36,6 +36,9 @@ a DroneFly app:
 | Kézi felszállás utáni misszióindítás | ✅ isFlying() alapú állapotfelismerés; differenciált dialog |
 | Misszió pause / resume / stop | ✅ Valódi MSDK implementáció |
 | GPS ellenőrzés (START gomb) | ✅ START csak ≥6 műhold esetén engedélyezett; „START (GPS!)" felirat ha nincs elég |
+| Folyamatos repülés (CURVED mód) | ✅ CURVED flightPathMode — a drón nem áll meg waypointnál, intervallum kamera triggereli a fotókat |
+| Gimbal nadir automatikus beállítás | ✅ Mission start előtt -90°-ra forgatja a gimbalt (survey fotózás) |
+| SD kártya ellenőrzés | ✅ Mission start előtt ellenőrzi; ha nincs kártya: blokkoló figyelmeztetés |
 | Haladásjelző (drón marker + zöld vonal + WP számláló) | ✅ WaypointMissionOperatorListener alapú |
 | Misszió folytatása (resume dialog) | ✅ Utolsó elért WP−1 indexről, akkucsere után |
 | Szimuláció (10× gyorsított animáció) | ✅ Inkrementális polyline, rate-limited invalidate |
@@ -114,13 +117,15 @@ MissionUploader.uploadMission(waypoints, config, callback)
   │    .autoFlightSpeed(config.speedMs)
   │    .finishedAction(returnHome ? RETURN_TO_HOME : NO_ACTION)
   │    .headingMode(AUTO)
-  │    .flightPathMode(NORMAL)
+  │    .flightPathMode(CURVED)     ← folyamatos repülés, megállás nélkül
   │    .addWaypoints([...])
   │
-  ├─ Minden waypointhoz Waypoint objektum:
+  ├─ Minden waypointhoz Waypoint objektum (csak sávvégpontok!):
   │    new Waypoint(lat, lon, (float)altM)
-  │    + WaypointAction(START_TAKE_PHOTO, 0)  ha shootPhoto=true
-  │    + gimbalPitch beállítás
+  │    waypoint.cornerRadiusInMeters = 0.2f    ← szoros kanyar sávváltásnál
+  │    (nincs TAKE_PHOTO akció — CURVED módban figyelmen kívül maradna)
+  │    (nincs gimbalPitch akció — külön CameraConfigurator.setNadirPitch() kezeli)
+  │    builder.addWaypoint(waypoint)
   │
   ├─ WaypointMissionOperator.loadMission(mission)
   │    → DJIError? → callback.onError(message)
@@ -132,6 +137,48 @@ MissionUploader.uploadMission(waypoints, config, callback)
 MissionUploader.startMission(callback)
   └─ WaypointMissionOperator.startMission(callback)
        → onResult(DJIError) → error? → callback.onError() : callback.onSuccess()
+```
+
+---
+
+## 5b. Mission start szekvencia (doLaunchMission)
+
+```
+START gomb → megerősítő dialog → [START] megnyomva
+      │
+      ▼
+1. CameraConfigurator.checkSDCard(callback)
+      │
+      ├─ sdOk == false → AlertDialog: "⚠️ Nincs SD kártya!"
+      │    [Folytatás kártya nélkül] → doLaunchMission()
+      │    [Mégse] → visszalép
+      │
+      └─ sdOk == true → doLaunchMission()
+             │
+             ▼
+      2. CameraConfigurator.setNadirPitch(callback)
+             → Gimbal -90°-ra (nadir) — 3 mp alatt
+             │
+             ▼
+      3. CameraConfigurator.applySettings(camSettings, callback)
+             → Kamera mód, expo, ISO, záridő, WB, fájlformátum
+             │
+             ▼
+      4. CameraConfigurator.startIntervalShooting(photoDistM, speedMs, callback)
+             → intervalSec = max(2.0, photoDistM / speedMs)
+             → Camera.setMode(SHOOT_PHOTO)
+             → Camera.setShootPhotoMode(INTERVAL)
+             → PhotoTimeIntervalSettings(0, intervalSec) [reflection]
+             → Camera.startShootPhoto()
+             │
+             ▼
+      5. MissionUploader.startMission(callback)
+             → Drón elindul, CURVED módban repüli az útvonalat
+             → Kamera automatikusan fotóz intervallum szerint
+
+Misszió befejezésekor / leállításakor:
+      CameraConfigurator.stopIntervalShooting()
+      → Camera.stopShootPhoto()
 ```
 
 ---
