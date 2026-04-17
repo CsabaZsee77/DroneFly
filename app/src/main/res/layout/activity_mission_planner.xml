@@ -59,6 +59,19 @@
                 android:textStyle="bold"
                 android:padding="0dp"
                 android:backgroundTint="#CC1a1a2e"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- Képernyőkép / videórögzítés -->
+            <Button
+                android:id="@+id/btnRec"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="REC"
+                android:textSize="10sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:padding="0dp"
+                android:backgroundTint="#CC1a1a2e"
                 android:layout_marginBottom="8dp"/>
 
             <!-- Réteg gombok elválasztó -->

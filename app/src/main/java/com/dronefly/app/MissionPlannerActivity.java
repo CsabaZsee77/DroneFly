@@ -68,16 +68,42 @@ import org.osmdroid.views.overlay.gestures.RotationGestureOverlay;
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider;
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay;
 
+import android.content.res.ColorStateList;
+import android.graphics.Bitmap;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
+import android.media.MediaRecorder;
+import android.media.MediaScannerConnection;
+import android.os.Environment;
+import android.util.DisplayMetrics;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 public class MissionPlannerActivity extends AppCompatActivity {
 
-    private static final int PICK_CSV_REQUEST = 101;
+    private static final int PICK_CSV_REQUEST        = 101;
+    private static final int REQUEST_MEDIA_PROJECTION = 102;
+
+    // Képernyőrögzítés
+    private MediaProjectionManager projectionManager;
+    private MediaProjection         mediaProjection;
+    private MediaRecorder           mediaRecorder;
+    private VirtualDisplay          virtualDisplay;
+    private boolean                 isRecording = false;
+    private File                    currentRecordingFile;
+    private Button                  btnRec;
+    private final Handler           recBlinkHandler  = new Handler(Looper.getMainLooper());
+    private Runnable                recBlinkRunnable;
 
     // Térkép
     private MapView mapView;
@@ -338,6 +364,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnMapToggle = findViewById(R.id.btnMapToggle);
         btnMapToggle.setOnClickListener(v -> toggleMapSource());
         btnMapToggle.setOnLongClickListener(v -> { downloadMapAreaForOffline(); return true; });
+
+        projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        btnRec = findViewById(R.id.btnRec);
+        btnRec.setOnClickListener(v -> takeScreenshot());
+        btnRec.setOnLongClickListener(v -> { toggleRecording(); return true; });
 
         btnLayerProtected = findViewById(R.id.btnLayerProtected);
         btnLayerAirspace  = findViewById(R.id.btnLayerAirspace);
@@ -2468,6 +2499,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_MEDIA_PROJECTION) {
+            if (resultCode == RESULT_OK && data != null) {
+                mediaProjection = projectionManager.getMediaProjection(resultCode, data);
+                startScreenRecording();
+            } else {
+                Toast.makeText(this, "Képernyőrögzítés engedélye megtagadva", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
         if (requestCode == PICK_CSV_REQUEST && resultCode == RESULT_OK && data != null) {
             try (InputStream is = getContentResolver().openInputStream(data.getData())) {
                 CsvMissionParser.ParseResult parsed = CsvMissionParser.parse(is);
@@ -2569,9 +2609,137 @@ public class MissionPlannerActivity extends AppCompatActivity {
     }
     @Override protected void onDestroy() {
         super.onDestroy();
+        if (isRecording) stopRecording();
+        recBlinkHandler.removeCallbacksAndMessages(null);
         mapView.onDetach();
         statusHandler.removeCallbacks(statusRunnable);
         if (videoWidget != null) videoWidget.destroy();
+    }
+
+    // ── Képernyőkép és videórögzítés ──────────────────────────────────────
+
+    /** Rövid nyomás: azonnali képernyőkép mentése /sdcard/DroneFly/-ba */
+    private void takeScreenshot() {
+        try {
+            View rootView = getWindow().getDecorView().getRootView();
+            rootView.setDrawingCacheEnabled(true);
+            Bitmap bitmap = Bitmap.createBitmap(rootView.getDrawingCache());
+            rootView.setDrawingCacheEnabled(false);
+
+            File dir = getDroneFlyDir();
+            String filename = "screenshot_"
+                    + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date())
+                    + ".png";
+            File file = new File(dir, filename);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+            }
+            MediaScannerConnection.scanFile(this, new String[]{file.getAbsolutePath()}, null, null);
+            Toast.makeText(this, "📷 Mentve: " + filename, Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Képernyőkép hiba: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Hosszú nyomás: videórögzítés indítása / leállítása */
+    private void toggleRecording() {
+        if (isRecording) {
+            stopRecording();
+        } else {
+            // Engedélykérés a rendszertől (egyszer jelenik meg)
+            Intent captureIntent = projectionManager.createScreenCaptureIntent();
+            startActivityForResult(captureIntent, REQUEST_MEDIA_PROJECTION);
+        }
+    }
+
+    /** MediaProjection engedély megkaptuk → rögzítés indítása */
+    private void startScreenRecording() {
+        try {
+            File dir = getDroneFlyDir();
+            String filename = "video_"
+                    + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date())
+                    + ".mp4";
+            currentRecordingFile = new File(dir, filename);
+
+            DisplayMetrics metrics = new DisplayMetrics();
+            getWindowManager().getDefaultDisplay().getMetrics(metrics);
+            int width  = metrics.widthPixels;
+            int height = metrics.heightPixels;
+            int dpi    = metrics.densityDpi;
+
+            mediaRecorder = new MediaRecorder();
+            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
+            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            mediaRecorder.setVideoSize(width, height);
+            mediaRecorder.setVideoFrameRate(30);
+            mediaRecorder.setVideoEncodingBitRate(4 * 1024 * 1024); // 4 Mbps
+            mediaRecorder.setOutputFile(currentRecordingFile.getAbsolutePath());
+            mediaRecorder.prepare();
+
+            virtualDisplay = mediaProjection.createVirtualDisplay(
+                    "DroneFlyRec", width, height, dpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    mediaRecorder.getSurface(), null, null);
+
+            mediaRecorder.start();
+            isRecording = true;
+
+            // Gomb pirosan villog felvétel közben
+            btnRec.setText("■");
+            startRecBlink();
+            Toast.makeText(this, "⏺ Videórögzítés elindult", Toast.LENGTH_SHORT).show();
+
+        } catch (Exception e) {
+            Toast.makeText(this, "Rögzítés hiba: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (mediaProjection != null) { mediaProjection.stop(); mediaProjection = null; }
+        }
+    }
+
+    private void stopRecording() {
+        recBlinkHandler.removeCallbacksAndMessages(null);
+        try { if (mediaRecorder  != null) mediaRecorder.stop();  } catch (Exception ignored) {}
+        try { if (mediaRecorder  != null) mediaRecorder.release(); } catch (Exception ignored) {}
+        try { if (virtualDisplay != null) virtualDisplay.release(); } catch (Exception ignored) {}
+        try { if (mediaProjection!= null) mediaProjection.stop();  } catch (Exception ignored) {}
+        mediaRecorder   = null;
+        virtualDisplay  = null;
+        mediaProjection = null;
+        isRecording     = false;
+
+        btnRec.setText("REC");
+        btnRec.setBackgroundTintList(ColorStateList.valueOf(0xCC1a1a2e));
+
+        if (currentRecordingFile != null && currentRecordingFile.exists()) {
+            MediaScannerConnection.scanFile(this,
+                    new String[]{currentRecordingFile.getAbsolutePath()}, null, null);
+            Toast.makeText(this, "⏹ Mentve: " + currentRecordingFile.getName(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** REC gomb piros villogtatása felvétel közben */
+    private void startRecBlink() {
+        recBlinkRunnable = new Runnable() {
+            boolean red = true;
+            @Override public void run() {
+                if (!isRecording) return;
+                btnRec.setBackgroundTintList(ColorStateList.valueOf(
+                        red ? 0xCCCC0000 : 0xCC661111));
+                red = !red;
+                recBlinkHandler.postDelayed(this, 600);
+            }
+        };
+        recBlinkHandler.post(recBlinkRunnable);
+    }
+
+    /** /sdcard/DroneFly/ mappa, létrehozza ha nincs */
+    private File getDroneFlyDir() {
+        File dir = new File(Environment.getExternalStorageDirectory(), "DroneFly");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
     }
 
     private void updateDroneStatus() {
