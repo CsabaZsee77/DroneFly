@@ -2706,25 +2706,42 @@ public class MissionPlannerActivity extends AppCompatActivity {
     }
 
     private void stopRecording() {
+        // UI frissítés azonnal — főszálon
         recBlinkHandler.removeCallbacksAndMessages(null);
-        try { if (mediaRecorder  != null) mediaRecorder.stop();  } catch (Exception ignored) {}
-        try { if (mediaRecorder  != null) mediaRecorder.release(); } catch (Exception ignored) {}
-        try { if (virtualDisplay != null) virtualDisplay.release(); } catch (Exception ignored) {}
-        try { if (mediaProjection!= null) mediaProjection.stop();  } catch (Exception ignored) {}
+        isRecording = false;
+        btnRec.setText("REC");
+        btnRec.setBackgroundTintList(ColorStateList.valueOf(0xCCAA6600)); // narancssárga = mentés folyamatban
+        Toast.makeText(this, "⏹ Mentés...", Toast.LENGTH_SHORT).show();
+
+        // A stop/release/scanFile háttérszálon — ezek blokkolják a UI-t ha főszálon futnak
+        final MediaRecorder  recToStop  = mediaRecorder;
+        final VirtualDisplay dispToStop = virtualDisplay;
+        final MediaProjection projToStop = mediaProjection;
+        final File fileToScan = currentRecordingFile;
         mediaRecorder   = null;
         virtualDisplay  = null;
         mediaProjection = null;
-        isRecording     = false;
 
-        btnRec.setText("REC");
-        btnRec.setBackgroundTintList(ColorStateList.valueOf(0xCC1a1a2e));
+        new Thread(() -> {
+            try { if (recToStop  != null) recToStop.stop();    } catch (Exception ignored) {}
+            try { if (recToStop  != null) recToStop.release(); } catch (Exception ignored) {}
+            try { if (dispToStop != null) dispToStop.release();} catch (Exception ignored) {}
+            try { if (projToStop != null) projToStop.stop();   } catch (Exception ignored) {}
 
-        if (currentRecordingFile != null && currentRecordingFile.exists()) {
-            MediaScannerConnection.scanFile(this,
-                    new String[]{currentRecordingFile.getAbsolutePath()}, null, null);
-            Toast.makeText(this, "⏹ Mentve: " + currentRecordingFile.getName(),
-                    Toast.LENGTH_LONG).show();
-        }
+            if (fileToScan != null && fileToScan.exists()) {
+                MediaScannerConnection.scanFile(MissionPlannerActivity.this,
+                        new String[]{fileToScan.getAbsolutePath()}, null, null);
+            }
+
+            // UI visszajelzés a főszálon
+            runOnUiThread(() -> {
+                btnRec.setBackgroundTintList(ColorStateList.valueOf(0xCC1a1a2e));
+                String msg = (fileToScan != null && fileToScan.exists())
+                        ? "✔ Mentve: " + fileToScan.getName()
+                        : "Rögzítés leállítva";
+                Toast.makeText(MissionPlannerActivity.this, msg, Toast.LENGTH_LONG).show();
+            });
+        }, "RecStopThread").start();
     }
 
     /** REC gomb piros villogtatása felvétel közben */
