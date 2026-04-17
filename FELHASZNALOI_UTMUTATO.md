@@ -1,6 +1,6 @@
 # ✈️ DroneFly GCS – Felhasználói Útmutató
 
-**Verzió:** v1.9.7
+**Verzió:** v1.9.9
 **Utolsó frissítés:** 2026-04-17
 **Céleszköz:** DJI Crystal Sky tablet (Android 5.1)
 **Drón:** DJI Phantom 4 Pro v1 (és más DJI drónok)
@@ -1120,10 +1120,13 @@ A bal felső gombsorban a **`REC`** gomb (CAM alatt) az app képernyőjét rögz
 1. Nyomj **hosszan** a `REC` gombra
 2. Az Android engedélykérő ablak jelenik meg: _„DroneFly képernyőrögzítést szeretne megkezdeni"_ → **Engedélyezés**
    - Ez csak az első indításkor jelenik meg
-3. A `REC` gomb **pirosan villogni kezd** (600 ms), szövege `■` → felvétel folyamatban
+3. Toast: _„⏺ Videórögzítés elindult (720p)"_ — a `REC` gomb **pirosan villogni kezd**, szövege `■`
 4. A rögzítés leállításához nyomj ismét **hosszan** a gombra
-5. Toast jelenik meg: _„⏹ Mentve: video_20260417_143022.mp4"_
-6. A fájl helye: **`/sdcard/Pictures/DroneFly/`**
+5. Gomb **narancssárgára** vált: _„⏹ Mentés..."_ — a fájl véglegesítése háttérben zajlik (app nem fagy)
+6. Gomb visszaáll fehérre, toast: _„✔ Mentve: video_20260417_143022.mp4"_
+7. A fájl helye: **`/sdcard/Pictures/DroneFly/`**
+
+> ℹ️ **Videóminőség:** 720p, 25fps, H264 — ez a Crystal Sky Android 5.1 hardveres encoderének maximuma. Éles UI-tartalom (térkép, szöveg) H264-gyel mindig mutat némi tömörítési artefaktot; ez hardverkorlát, nem szoftverhibá. Jobb minőségért használd az ADB bat fájlt (`DroneFly_videofelvtel.bat`) laptopról indítva.
 
 ### Fájlok megkeresése a tableten
 
@@ -1131,9 +1134,12 @@ A bal felső gombsorban a **`REC`** gomb (CAM alatt) az app képernyőjét rögz
 - Nyisd meg a Crystal Sky beépített fájlkezelőjét (ha van)
 - Navigálj: `Belső tároló → Pictures → DroneFly`
 
-**ADB-vel (USB kábel csatlakoztatva a laptophoz):**
+**ADB bat fájllal (asztali parancsikon):**
+- Futtasd a `DroneFly_atvitel.bat`-ot az asztalról → automatikusan átmásolja a `Desktop\DroneFly_felvetelek\` mappába
+
+**Kézzel:**
 ```
-adb.exe pull /sdcard/Pictures/DroneFly/ C:\Users\zsigm\Desktop\DroneFly_felvetelek\
+adb.exe pull /sdcard/Pictures/DroneFly/ C:\Users\zsigm\Desktop\DroneFly_felvetelek
 ```
 
 **Galéria appból:**

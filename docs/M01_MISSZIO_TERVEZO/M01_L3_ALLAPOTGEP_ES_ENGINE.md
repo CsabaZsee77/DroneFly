@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.9.7
+**Verzió:** v1.9.9
 **Létrehozva:** 2026-04-02
 **Utolsó módosítás:** 2026-04-17
-**Státusz:** ✅ Implementálva (v1.9.7)
+**Státusz:** ✅ Implementálva (v1.9.9)
 
 ---
 
@@ -470,12 +470,19 @@ FrameLayout (rootLayout, full screen)
 │       │          click → toggleMapSource()  |  longClick → downloadMapAreaForOffline()
 │       │          offline letöltés: zoom 14–17, /sdcard/osmdroid/ cache
 │       ├─ Button (id: btnCamToggle, 48×48dp, "CAM", #CC1a1a2e)
-│       ├─ Button (id: btnRec, 48×48dp, "REC"/"■", #CC1a1a2e / #CCCC0000)
-│       │          click → takeScreenshot() → PNG /sdcard/DroneFly/screenshot_*.png
+│       ├─ Button (id: btnRec, 48×48dp, "REC"/"■", #CC1a1a2e / #CCCC0000 / #CCAA6600)
+│       │          click → takeScreenshot() → PNG /sdcard/Pictures/DroneFly/screenshot_*.png
+│       │            gomb 400 ms zöld villanás (#CC228822) visszajelzésként
 │       │          longClick → toggleRecording()
 │       │            start: MediaProjection engedélykérés → startScreenRecording()
-│       │            stop:  MediaRecorder.stop() → MP4 /sdcard/DroneFly/video_*.mp4
-│       │            felvétel közben: gomb pirosan villog (600 ms), szöveg "■"
+│       │              720p, 25fps, 2 Mbps H264 (Crystal Sky Android 5.1 encoder limit)
+│       │              → MP4 /sdcard/Pictures/DroneFly/video_*.mp4
+│       │              felvétel közben: gomb pirosan villog (600 ms), szöveg "■"
+│       │            stop: stopRecording() — UI azonnal visszaáll (főszál)
+│       │              gomb narancssárga (#CCAA6600) = mentés folyamatban (háttérszál)
+│       │              MediaRecorder.stop() + release() + VirtualDisplay.release()
+│       │              + MediaProjection.stop() + MediaScannerConnection → háttérszál
+│       │              kész: gomb visszaáll (#CC1a1a2e), toast: "✔ Mentve: video_*.mp4"
 │       ├─ View (elválasztó, 32×1dp, #CC334466)
 │       ├─ Button (id: btnLayerProtected, 48×48dp, "N2K", #CC1a2e1a)
 │       ├─ Button (id: btnLayerAirspace, 48×48dp, "LGT", #CC2e1a1a)

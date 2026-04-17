@@ -4,7 +4,7 @@
 **Céleszköz:** DJI Crystal Sky (Android 5.1)
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
-**Verzió:** v1.9.7
+**Verzió:** v1.9.9
 **Utolsó frissítés:** 2026-04-17
 
 ---
@@ -20,7 +20,7 @@
 | Kp-index (státuszsáv) | NOAA geomágneses aktivitás lekérő, 10 percenként frissül, MAG: 0–9 színkódolva | ✅ Implementálva (v1.9.3) |
 | Offline térkép | OSMDroid cache, automatikus offline mód WiFi nélkül, letöltés gomb (hosszú nyomás SAT/MAP gombon), réteg guard offline módban | ✅ Implementálva (v1.9.5) |
 | GPS gomb | Drón GPS (DJI telemetria) / tablet GPS prioritás, zoom 15 (~1 km), forrás toast | ✅ Implementálva (v1.9.6) |
-| REC gomb | Képernyőkép (rövid nyomás) + képernyővideó (hosszú nyomás, MediaProjection), /sdcard/DroneFly/ mentés | ✅ Implementálva (v1.9.7) |
+| REC gomb | Képernyőkép (rövid nyomás, zöld villanás visszajelzés) + képernyővideó 720p (hosszú nyomás, MediaProjection), /sdcard/Pictures/DroneFly/ mentés; stopRecording háttérszálon (UI nem fagy) | ✅ Implementálva (v1.9.9) |
 
 ---
 
