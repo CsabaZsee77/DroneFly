@@ -152,6 +152,7 @@ app/src/main/res/
 ## Kapcsolódó dokumentumok
 
 - [CLAUDE.md](CLAUDE.md) — munkamódszer szabályok
+- [FEJLESZTESI_OTLETEK.md](FEJLESZTESI_OTLETEK.md) — felmerült fejlesztési ötletek, nyitott/elvetett javaslatok
 - [M01 L1 Üzleti folyamat](M01_MISSZIO_TERVEZO/M01_L1_UZLETI_FOLYAMAT.md)
 - [M02 L1 Grid Engine folyamat](M02_GRID_ENGINE/M02_L1_UZLETI_FOLYAMAT.md)
 - [M03 L1 Export/Import folyamat](M03_EXPORT_IMPORT/M03_L1_UZLETI_FOLYAMAT.md)
