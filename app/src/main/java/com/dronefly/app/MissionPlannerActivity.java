@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.location.Location;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Bundle;
@@ -332,6 +334,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         btnMapToggle = findViewById(R.id.btnMapToggle);
         btnMapToggle.setOnClickListener(v -> toggleMapSource());
+        btnMapToggle.setOnLongClickListener(v -> { downloadMapAreaForOffline(); return true; });
 
         btnLayerProtected = findViewById(R.id.btnLayerProtected);
         btnLayerAirspace  = findViewById(R.id.btnLayerAirspace);
@@ -842,6 +845,87 @@ public class MissionPlannerActivity extends AppCompatActivity {
         return DroneProfiles.ALL.get(pos);
     }
 
+    // ── Hálózat és offline térkép ──────────────────────────────────────
+
+    /** Visszaadja, hogy van-e aktív internet-kapcsolat. */
+    private boolean isNetworkAvailable() {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * Online/offline mód beállítása a térkép csempe letöltőnek.
+     * Ha nincs internet: setUseDataConnection(false) → csak a helyi cache-ből tölt,
+     * nem indít HTTP kéréseket → nincs timeout miatti látszólagos lefagyás.
+     * Hívódik: onResume(), toggleMapSource() után.
+     */
+    private void updateMapDataConnection() {
+        boolean online = isNetworkAvailable();
+        mapView.setUseDataConnection(online);
+        if (!online) {
+            android.util.Log.i("MapOffline",
+                    "Nincs internet — térkép csak cache-ből tölt");
+        }
+    }
+
+    /**
+     * Jelenlegi térképnézet előre letöltése offline használatra.
+     * Zoom szintek 10–18, ESRI satellite és OSM tile-ok egyaránt.
+     * Hosszú nyomással aktiválható a SAT/MAP gombon.
+     */
+    private void downloadMapAreaForOffline() {
+        if (!isNetworkAvailable()) {
+            Toast.makeText(this,
+                    "Offline térkép letöltéséhez WiFi kapcsolat szükséges!",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        org.osmdroid.util.BoundingBox bbox = mapView.getBoundingBox();
+        org.osmdroid.tileprovider.cachemanager.CacheManager cacheManager =
+                new org.osmdroid.tileprovider.cachemanager.CacheManager(mapView);
+        int minZoom = 10, maxZoom = 18;
+        int tileCount = cacheManager.possibleTilesInArea(bbox, minZoom, maxZoom);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Térkép letöltése offline-ra")
+            .setMessage("A jelenlegi nézet letöltése " + minZoom + "–" + maxZoom
+                    + " zoom szinteken.\n~" + tileCount + " csempe.\n\n"
+                    + "WiFi-n ajánlott. Repülési terv otthon való elkészítésekor "
+                    + "a megnyitott területek automatikusan cache-elődnek.")
+            .setPositiveButton("Letöltés", (d, w) -> {
+                Toast.makeText(this, "Letöltés folyamatban...",
+                        Toast.LENGTH_SHORT).show();
+                cacheManager.downloadAreaAsync(this, bbox, minZoom, maxZoom,
+                    new org.osmdroid.tileprovider.cachemanager.CacheManager
+                            .CacheManagerCallback() {
+                        @Override public void onTaskComplete() {
+                            runOnUiThread(() -> Toast.makeText(
+                                    MissionPlannerActivity.this,
+                                    "✓ Offline térkép letöltve!", Toast.LENGTH_LONG).show());
+                        }
+                        @Override public void onTaskFailed(int errors) {
+                            runOnUiThread(() -> Toast.makeText(
+                                    MissionPlannerActivity.this,
+                                    "Letöltési hibák: " + errors + " csempe sikertelen",
+                                    Toast.LENGTH_LONG).show());
+                        }
+                        @Override public void updateProgress(int progress, int currentZoom,
+                                                              int zoomMin, int zoomMax) {}
+                        @Override public void downloadStarted() {}
+                        @Override public void setPossibleTilesInArea(int total) {}
+                    });
+            })
+            .setNegativeButton("Mégse", null)
+            .show();
+    }
+
     private org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase buildSatelliteTileSource() {
         // ESRI World Imagery – ingyenes, API kulcs nélkül, Crystal Sky-on is működik
         return new org.osmdroid.tileprovider.tilesource.XYTileSource(
@@ -874,6 +958,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
     }
 
     private void toggleLayer(final String layerId) {
+        // Réteg betöltés internet nélkül nem lehetséges — barátságos figyelmeztetés
+        if (!isNetworkAvailable()) {
+            Toast.makeText(this,
+                "Nincs internet-kapcsolat — a térkép rétegek nem tölthetők be",
+                Toast.LENGTH_LONG).show();
+            return;
+        }
         org.osmdroid.util.BoundingBox bbox = mapView.getBoundingBox();
         if ("N2K".equals(layerId)) {
             if (!btnLayerProtected.isEnabled()) return; // betöltés közben ne fogadjon újabb kattintást
@@ -2440,6 +2531,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         updateDroneStatus();
         statusHandler.removeCallbacks(statusRunnable);
         statusHandler.post(statusRunnable);
+        updateMapDataConnection();
     }
 
     @Override protected void onPause() {
