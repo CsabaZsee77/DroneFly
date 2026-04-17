@@ -2618,7 +2618,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     // ── Képernyőkép és videórögzítés ──────────────────────────────────────
 
-    /** Rövid nyomás: azonnali képernyőkép mentése /sdcard/DroneFly/-ba */
+    /** Rövid nyomás: azonnali képernyőkép mentése /sdcard/Pictures/DroneFly/-ba */
     private void takeScreenshot() {
         try {
             View rootView = getWindow().getDecorView().getRootView();
@@ -2635,7 +2635,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
             }
             MediaScannerConnection.scanFile(this, new String[]{file.getAbsolutePath()}, null, null);
-            Toast.makeText(this, "📷 Mentve: " + filename, Toast.LENGTH_SHORT).show();
+            // Vizuális visszajelzés: REC gomb rövid zöld villanás
+            btnRec.setBackgroundTintList(ColorStateList.valueOf(0xCC228822));
+            recBlinkHandler.postDelayed(() ->
+                btnRec.setBackgroundTintList(ColorStateList.valueOf(0xCC1a1a2e)), 400);
+            Toast.makeText(this, "📷 " + filename, Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Toast.makeText(this, "Képernyőkép hiba: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -2735,9 +2739,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
         recBlinkHandler.post(recBlinkRunnable);
     }
 
-    /** /sdcard/DroneFly/ mappa, létrehozza ha nincs */
+    /** /sdcard/Pictures/DroneFly/ mappa — galéria által indexelhető, létrehozza ha nincs */
     private File getDroneFlyDir() {
-        File dir = new File(Environment.getExternalStorageDirectory(), "DroneFly");
+        File dir = new File(Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_PICTURES), "DroneFly");
         if (!dir.exists()) dir.mkdirs();
         return dir;
     }
