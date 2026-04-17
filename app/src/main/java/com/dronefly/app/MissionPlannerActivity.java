@@ -898,7 +898,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         org.osmdroid.util.BoundingBox bbox = mapView.getBoundingBox();
         org.osmdroid.tileprovider.cachemanager.CacheManager cacheManager =
                 new org.osmdroid.tileprovider.cachemanager.CacheManager(mapView);
-        int minZoom = 10, maxZoom = 18;
+        int minZoom = 14, maxZoom = 17;
         int tileCount = cacheManager.possibleTilesInArea(bbox, minZoom, maxZoom);
 
         new AlertDialog.Builder(this)
