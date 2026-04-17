@@ -6,6 +6,62 @@
 
 ---
 
+## 🚁 Drón kompatibilitás — hosszú távú kép
+
+### Jelenlegi állapot
+Az app DJI MSDK v4.18-ra épül, Crystal Sky + Phantom 4 Pro v1 kombóra optimalizálva.
+
+### MSDK v4 kompatibilis drónok (jelenleg is működhetne)
+
+| Drón | Megjegyzés |
+|------|------------|
+| Phantom 4 Pro v1/v2 | ✅ Referencia eszköz, tesztelve |
+| Phantom 4 (alap, Advanced) | ✅ |
+| Mavic 2 Pro / Mavic 2 Zoom | ✅ |
+| Mavic Air 2 | ✅ (részleges MSDK v4) |
+| Inspire 1 / Inspire 2 | ✅ |
+
+### MSDK v5-re igénylő drónok (jövőbeli fejlesztés)
+
+| Drón | Miért érdekes |
+|------|--------------|
+| Mini 3 Pro | EU A1 kategória — lakott terület felett is repülhető |
+| Mini 4 Pro | EU A1 + legjobb képminőség a Mini kategóriában |
+| Air 2S | 1"-es szenzor, kiváló survey képminőség |
+| Mavic 3 Classic / Enterprise | Nagy szenzor, professzionális segment |
+| Matrice 300/350 | Enterprise, multispektrális kamerák, OSDK is |
+
+> **MSDK v5 korlát:** min. Android 6, Kotlin-alapú API, teljesen új osztálystruktúra.
+> A DroneFly Java + Android 5.1 alapjai miatt v5 támogatáshoz a backend réteget
+> (MissionUploader, DJIHelper, DroneVideoWidget) újra kell írni.
+> A grid engine, térkép, UI réteg változatlan maradhat.
+
+### RC kompatibilitás
+
+| RC típus | Android eszköz csatlakoztatható? | Megjegyzés |
+|----------|----------------------------------|------------|
+| RC-N1 (Mini/Mavic/Air sorozat) | ✅ USB-C kábellel | DroneFly futhat a csatlakoztatott telefonon/tableten |
+| RC-N2 | ✅ USB-C kábellel | RC-N1 utódja |
+| RC 2 (beépített kijelző) | ❌ | Zárt Android, csak DJI Fly |
+| RC Pro (Matrice) | ✅ (Android, nyílt) | Sideload engedélyezett |
+| Crystal Sky | ✅ | Jelenlegi céleszköz |
+
+### Hosszú távú stratégia — kockázatok és lehetőségek
+
+**DJI-ra épülő irány (ajánlott rövid-közép távon):**
+- Az MSDK-t a DJI aktívan fejleszti (v5 kiadva 2022, folyamatosan frissül)
+- Enterprise drónok nyílt platformon maradnak (vállalati igény)
+- Az EU U-Space szabályozás ösztönzi a harmadik féltől való GCS szoftvereket
+- Kockázat: USA NDAA lista miatti DJI-ellenes szabályozás bizonytalanságot okoz
+
+**MAVLink / ArduPilot irány (hardverfüggetlen, hosszú távú):**
+- Nyílt protokoll, bármely ArduPilot-os drónt kezelné
+- A DroneFly grid engine + térkép réteg változatlan maradhat
+- Csak a MissionUploader backend cserélendő
+- Lassabb fejlesztés, de DJI-tól független
+
+---
+
 ## ✅ Megvalósított (ebben a fejlesztési körben)
 
 | Funkció | Verzió | Megjegyzés |
@@ -73,6 +129,86 @@
 **Korlát:** OSMDroid 6.1.17-ben nincs `setHttpConnectionTimeout` vagy `setTileRetryDelay` API — nem tudjuk lassítani a tile fetch-et.  
 **Lehetséges javítás:** Zoom léptetés korlátozása (pl. egyszerre max 3 zoom szint ugrás), vagy tile source HTTP timeout csökkentése egyéni `OkHttpClient`-tel.  
 **Prioritás:** Alacsony — elfogadott korlát Crystal Sky hardveren.
+
+---
+
+### 8. OSM közigazgatási határok + repülési kategória overlay
+
+**Felmerülés:** OpenStreetMap térképen megjeleníteni a közigazgatási határokat (A1/A2/A3 kategóriák szerinti légtérzónák monitorozásához). A felhasználó a tervezett terület felett láthatná, hogy milyen EU Open kategóriában repül.
+
+**Technikai megvalósítás:**
+- OSM Overpass API lekérdezés: `admin_level=8` (városok/községek) határvonalak
+- OSMDroid overlay rétegként megjeleníteni (Polyline/Polygon)
+- Színkódolás: A1 zöld / A2 sárga / A3 narancs
+- Offline esetben: előre letöltött GeoJSON/Shapefile a belső tárhelyen
+
+**Korábban halasztva:** Ez a funkció felmerült, de a kamera feed PiP és tap-to-expose prioritást kapott.
+
+**Prioritás:** Közepes — szabályozási szempontból értékes funkció EU-ban.
+
+---
+
+### 9. Fotó készítés a kamera feed ablakból
+
+**Felmerülés:** A CAM gomb bekapcsolt kamera feed mellett lehetővé tenni egyszeri fotó készítést közvetlenül az appból (nem waypoint alapú, hanem operátor által kért).
+
+**Technikai megvalósítás:** `Camera.startShootPhoto()` MSDK v4 reflection-alapú hívás, hasonlóan a tapToFocus megközelítéshez.
+
+**Használati eset:** Repülés közben érdekesnek tűnő terület gyors dokumentálása.
+
+**Prioritás:** Alacsony-közepes.
+
+---
+
+### 10. Misszió feltöltés timeout kezelés
+
+**Felmerülés:** Az MSDK v4 nem garantál timeout-ot a `uploadMission()` hívásra. Ha a feltöltés nem fejeződik be (RC jel elvesztés, SDK belső hiba), a callback soha nem hívódik meg, az UI "befagyott" állapotban marad.
+
+**Javaslat:** 30 másodperces Handler timeout: ha nem érkezik callback, `callback.onError("Feltöltési timeout")`.
+
+**Megjegyzés:** Az M04_L4 dokumentációban már le van írva, implementáció még hiányzik.
+
+**Prioritás:** Közepes — megbízhatóság szempontjából fontos.
+
+---
+
+### 11. MSDK v5 backend (Mini 3 Pro / Mini 4 Pro / Air 2S / Mavic 3 támogatás)
+
+**Felmerülés:** Az MSDK v4 csak régebbi drónokat támogat teljes mértékben. A Mini 4 Pro, Mini 3 Pro, Air 2S és Mavic 3 Classic már csak MSDK v5-tel érhető el.
+
+**Ami kell hozzá:**
+- `MissionUploader` MSDK v5 implementáció (Kotlin vagy Java-kompatibilis wrapper)
+- `DJIHelper` v5 verziója
+- `DroneVideoWidget` v5 video feed API-val
+- `minSdk` emelése legalább 24-re (Android 7) — Crystal Sky csak v4-et kap
+- Build variant: `flavorDimensions "sdk"`, `productFlavors { msdk4 { ... } msdk5 { ... } }`
+
+**Megjegyzés:** A grid engine (M02), export (M03), térkép UI (M01) teljesen változatlan maradna. Csak az M04 réteg cserélendő.
+
+**Prioritás:** Magas — piaci elérhetőség szempontjából fontos (Mini sorozat a legelterjedtebb EU-ban).
+
+---
+
+### 12. Multi-spektrális kamera profil (P4 Multispectral)
+
+**Felmerülés:** A Phantom 4 Multispectral ugyanolyan testű, mint a P4P v1, de 6 kamerával (RGB + 5 spektrális sáv: G/R/RE/NIR + panchro). Precíziós mezőgazdaságban (NDVI, növényegészség) ezt használják.
+
+**Ami kell hozzá:**
+- Új drón profil: `P4 Multispectral` a `DroneProfiles.java`-ban (szenzor: 4.8 × 3.6 mm, 2.08 MP / sáv, f/2.2, 5.74 mm)
+- GSD számítás az RGB kamara alapján (a spektrális sávok azonos GSD-n repülnek)
+- Esetleg: spektrális sávonkénti névjegy az exportált CSV-ben
+
+**Prioritás:** Közepes — precíziós agro szegmens.
+
+---
+
+### 13. Területi misszió-jelentés (exportálható PDF/CSV)
+
+**Felmerülés:** Repülés után a megrendelőnek átadható dokumentum: terület (ha), waypontok száma, becsült képszám, repülési idő, GSD, drón típus, dátum.
+
+**Megvalósítás:** Android `PdfDocument` API vagy egyszerű HTML → WebView → print.
+
+**Prioritás:** Alacsony — üzleti értéke van, de nem operációs funkció.
 
 ---
 
