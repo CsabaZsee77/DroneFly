@@ -770,10 +770,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
         tvTerrainInfo = findViewById(R.id.tvTerrainInfo);
 
         switchTerrain.setOnCheckedChangeListener((btn, isChecked) -> {
-            tvTerrainInfo.setText(isChecked
-                ? "Aktiv: waypointok magassaga DEM alapjan korrigalva"
-                : "Magassag korrekció DEM (SRTM) domborzati modell alapjan");
-            tvTerrainInfo.setTextColor(isChecked ? 0xFF44FF44 : 0xFF888888);
+            if (isChecked) {
+                tvTerrainInfo.setText("Domborzatkövetés bekapcsolva — nyomj Generálást az adatok letöltéséhez");
+                tvTerrainInfo.setTextColor(0xFFFFAA00);
+            } else {
+                tvTerrainInfo.setText("Magasság korrekció DEM (SRTM) domborzati modell alapján");
+                tvTerrainInfo.setTextColor(0xFF888888);
+            }
         });
     }
 
