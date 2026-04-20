@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v1.9.3
+**Verzió:** v2.2.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-14
-**Státusz:** ✅ Implementálva (v1.9.3)
+**Utolsó módosítás:** 2026-04-20
+**Státusz:** ✅ Implementálva (v2.2.0)
 
 ---
 
@@ -90,7 +90,8 @@ Paraméterek beállítása (jobb oldali csúsztatható panel):
   - Sebesség (m/s): 3–15 m/s, default: auto (GSD-ből számított)
   - Repülési irány (°): 0–179°, default: 0° (É–D irány)
   - Offset (m): 0–30 m, default: 0 (túlrepülési határ)
-  → Minden változás után az auto-generálás lefut, ha ≥3 pont van
+  → Csúszka **elengedésekor** (`onStopTrackingTouch`) autoGenerateIfReady() fut, ha ≥3 pont van
+  → Húzás közben (`onProgressChanged`) csak a felirat frissül — generálás nem fut
       │
       ▼
 (Opcionális) Akadályjelölés:
@@ -176,8 +177,8 @@ Auto-generálás (autoGenerateIfReady):
 | Térkép érintés (normál mód) | Csúcspont lerakás + autoGenerateIfReady() |
 | Csúcspont húzás | Valós idejű polygon frissítés; drag végén autoGenerateIfReady() |
 | Csúcspont kattintás | Törlés dialog |
-| Bármely SeekBar módosítva | updateLabels() — label frissítés (auto-generálás NEM fut) |
-| GSD SeekBar módosítva | + javasolt sebesség újraszámítása |
+| Bármely SeekBar húzás közben | updateLabels() — label frissítés, GSD esetén javasolt sebesség is |
+| Bármely SeekBar **elengedve** | autoGenerateIfReady() — sraffozás azonnal frissül (terrain nélkül) |
 | "Újragenerálás" megnyomva | generateMission() + terrain following ha aktív |
 | "+ Akadály jelölése" megnyomva | obstacle mód be/ki (gomb szín + szöveg változik) |
 | Térkép érintés (obstacle mód) | Akadály dialog (sugár + magasság) → addObstacle() |

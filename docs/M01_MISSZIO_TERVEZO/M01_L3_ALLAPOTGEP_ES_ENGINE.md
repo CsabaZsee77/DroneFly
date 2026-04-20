@@ -2,10 +2,10 @@
 
 **Modul:** M01
 **Szint:** L3 – Állapotgép és Engine
-**Verzió:** v1.9.9
+**Verzió:** v2.2.0
 **Létrehozva:** 2026-04-02
-**Utolsó módosítás:** 2026-04-17
-**Státusz:** ✅ Implementálva (v1.9.9)
+**Utolsó módosítás:** 2026-04-20
+**Státusz:** ✅ Implementálva (v2.2.0)
 
 ---
 
@@ -242,6 +242,7 @@ onDestroy()
 Bármely állapotban:
   - Csúcspont drag/törlés/hozzáadás → autoGenerateIfReady()
   - Akadály hozzáadás/törlés → autoGenerateIfReady()
+  - **SeekBar elengedésekor** (GSD/sidelap/frontlap/sebesség/szög/offset) → autoGenerateIfReady()
   - MISSION_RUNNING állapotban polygon szerkesztés nem lehetséges
 ```
 

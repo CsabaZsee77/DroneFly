@@ -362,7 +362,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 }
             }
             @Override public void onStartTrackingTouch(SeekBar sb) {}
-            @Override public void onStopTrackingTouch(SeekBar sb) {}
+            @Override public void onStopTrackingTouch(SeekBar sb) {
+                autoGenerateIfReady();
+            }
         };
         sbGsd.setOnSeekBarChangeListener(listener);
         sbSidelap.setOnSeekBarChangeListener(listener);
