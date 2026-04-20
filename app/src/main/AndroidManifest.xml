@@ -64,7 +64,8 @@
 
         <activity
             android:name=".MissionPlannerActivity"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="stateHidden|adjustResize" />
 
         <!-- Fájlmegosztás exporthoz -->
         <provider
