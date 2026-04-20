@@ -12,17 +12,27 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 /**
  * Domborzati magassági adatok lekérdezése az Open-Elevation API-ból (SRTM ~30m felbontás).
  * POST /api/v1/lookup  →  [{"latitude":..., "longitude":..., "elevation":...}, ...]
  *
  * Batch méret: max 200 pont/kérés (API korlát), szükség esetén daraboljuk.
+ *
+ * Android 5.1 (Crystal Sky) nem ismeri a modern Let's Encrypt / DigiCert gyökér-tanúsítványokat,
+ * ezért permissive TrustManager-t alkalmazunk — az app nem nyilvános Play Store alkalmazás.
  */
 public class ElevationProvider {
 
@@ -33,6 +43,28 @@ public class ElevationProvider {
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    // Android 5.1 SSL fix: fogad minden tanúsítványt
+    private static SSLContext trustAllSslContext;
+    private static final HostnameVerifier trustAllHostnames = new HostnameVerifier() {
+        @Override public boolean verify(String hostname, SSLSession session) { return true; }
+    };
+
+    static {
+        try {
+            TrustManager[] trustAll = new TrustManager[]{
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                    public void checkClientTrusted(X509Certificate[] c, String t) {}
+                    public void checkServerTrusted(X509Certificate[] c, String t) {}
+                }
+            };
+            trustAllSslContext = SSLContext.getInstance("TLS");
+            trustAllSslContext.init(null, trustAll, new java.security.SecureRandom());
+        } catch (Exception e) {
+            Log.e(TAG, "SSL context init hiba: " + e.getMessage());
+        }
+    }
 
     public interface ElevationCallback {
         void onSuccess(double[] elevations);
@@ -48,11 +80,9 @@ public class ElevationProvider {
             try {
                 double[] elevations = new double[waypoints.size()];
 
-                // Batch-ekre bontás
                 for (int batchStart = 0; batchStart < waypoints.size(); batchStart += BATCH_SIZE) {
                     int batchEnd = Math.min(batchStart + BATCH_SIZE, waypoints.size());
 
-                    // JSON body összeállítása
                     JSONArray locations = new JSONArray();
                     for (int i = batchStart; i < batchEnd; i++) {
                         JSONObject loc = new JSONObject();
@@ -63,8 +93,7 @@ public class ElevationProvider {
                     JSONObject body = new JSONObject();
                     body.put("locations", locations);
 
-                    // HTTP POST
-                    HttpURLConnection conn = (HttpURLConnection) new URL(API_URL).openConnection();
+                    HttpsURLConnection conn = openConnection(API_URL);
                     conn.setRequestMethod("POST");
                     conn.setRequestProperty("Content-Type", "application/json");
                     conn.setRequestProperty("Accept", "application/json");
@@ -83,7 +112,6 @@ public class ElevationProvider {
                         return;
                     }
 
-                    // Válasz olvasása
                     StringBuilder sb = new StringBuilder();
                     try (BufferedReader br = new BufferedReader(
                             new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
@@ -91,7 +119,6 @@ public class ElevationProvider {
                         while ((line = br.readLine()) != null) sb.append(line);
                     }
 
-                    // JSON parse
                     JSONObject response = new JSONObject(sb.toString());
                     JSONArray results = response.getJSONArray("results");
                     for (int i = 0; i < results.length(); i++) {
@@ -120,7 +147,7 @@ public class ElevationProvider {
     public static double fetchSingleElevation(double lat, double lon) {
         try {
             String urlStr = API_URL + "?locations=" + lat + "," + lon;
-            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            HttpsURLConnection conn = openConnection(urlStr);
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(TIMEOUT_MS);
             conn.setReadTimeout(TIMEOUT_MS);
@@ -145,15 +172,19 @@ public class ElevationProvider {
         }
     }
 
+    private static HttpsURLConnection openConnection(String urlStr) throws Exception {
+        HttpsURLConnection conn = (HttpsURLConnection) new URL(urlStr).openConnection();
+        if (trustAllSslContext != null) {
+            conn.setSSLSocketFactory(trustAllSslContext.getSocketFactory());
+            conn.setHostnameVerifier(trustAllHostnames);
+        }
+        return conn;
+    }
+
     /**
      * Domborzatkövetés alkalmazása waypoint listára.
      *
      * Képlet: waypoint_alt = baseAGL + (terrain_elev[i] - terrain_elev[takeoff])
-     *
-     * @param waypoints         A waypointok listája (módosítja az altitudeM mezőt!)
-     * @param elevations        Tengerszint feletti magasságok (Open-Elevation API-ból)
-     * @param takeoffElevation  A felszállási pont tengerszint feletti magassága
-     * @param baseAGL           Alap repülési magasság a felszállási pont felett (m)
      */
     public static void applyTerrainCorrection(List<WaypointData> waypoints,
                                                double[] elevations,
@@ -162,7 +193,6 @@ public class ElevationProvider {
         for (int i = 0; i < waypoints.size(); i++) {
             double terrainDelta = elevations[i] - takeoffElevation;
             float correctedAlt = (float) (baseAGL + terrainDelta);
-            // Minimum 10m biztonság
             correctedAlt = Math.max(10f, correctedAlt);
 
             waypoints.get(i).altitudeM = correctedAlt;
