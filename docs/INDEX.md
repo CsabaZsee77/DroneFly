@@ -4,8 +4,8 @@
 **Céleszköz:** DJI Crystal Sky (Android 5.1)
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
-**Verzió:** v1.9.9
-**Utolsó frissítés:** 2026-04-17
+**Verzió:** v2.0.0
+**Utolsó frissítés:** 2026-04-20
 
 ---
 
@@ -21,6 +21,8 @@
 | Offline térkép | OSMDroid cache, automatikus offline mód WiFi nélkül, letöltés gomb (hosszú nyomás SAT/MAP gombon), réteg guard offline módban | ✅ Implementálva (v1.9.5) |
 | GPS gomb | Drón GPS (DJI telemetria) / tablet GPS prioritás, zoom 15 (~1 km), forrás toast | ✅ Implementálva (v1.9.6) |
 | REC gomb | Képernyőkép (rövid nyomás, zöld villanás visszajelzés) + képernyővideó 720p (hosszú nyomás, MediaProjection), /sdcard/Pictures/DroneFly/ mentés; stopRecording háttérszálon (UI nem fagy) | ✅ Implementálva (v1.9.9) |
+| Térképi pozíció jelzők | Tablet helyzete: kék emberke ikon (MyLocationNewOverlay, egyéni ic_person_marker); drón helyzete: sárga drón ikon (ic_drone_marker), mindig látható ha csatlakoztatva van (nem csak misszió alatt) | ✅ Implementálva (v2.0.0) |
+| Domborzatkövetés — referenciapont | Terep-korrekcióhoz a drón aktuális GPS-pozíciója az elsődleges referencia; ha nincs csatlakoztatva: startPoint → első waypoint fallback | ✅ Implementálva (v2.0.0) |
 
 ---
 
@@ -61,6 +63,8 @@ app/src/main/res/
 ├── drawable/
 │   ├── focus_ring.xml                ← Tap-to-expose fókuszgyűrű
 │   ├── ic_launcher.xml
+│   ├── ic_drone_marker.xml           ← Drón pozíció marker (sárga/narancs/fehér quadcopter)
+│   ├── ic_person_marker.xml          ← Tablet/kezelő pozíció marker (kék emberke)
 │   └── status_bar_bg.xml
 ├── xml/
 │   ├── device_filter.xml             ← DJI USB filter

@@ -70,6 +70,7 @@ import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay;
 
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
@@ -266,6 +267,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
         locationOverlay = new MyLocationNewOverlay(
                 new GpsMyLocationProvider(this), mapView);
         locationOverlay.enableMyLocation();
+        android.graphics.drawable.Drawable personDrawable =
+                getResources().getDrawable(R.drawable.ic_person_marker);
+        int pw = personDrawable.getIntrinsicWidth();
+        int ph = personDrawable.getIntrinsicHeight();
+        Bitmap personBitmap = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888);
+        personDrawable.setBounds(0, 0, pw, ph);
+        personDrawable.draw(new Canvas(personBitmap));
+        locationOverlay.setPersonIcon(personBitmap);
+        locationOverlay.setDirectionArrow(personBitmap, personBitmap);
         mapView.getOverlays().add(locationOverlay);
 
         // Érintésfigyelő
@@ -679,7 +689,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     lastDroneLat = lat;
                     lastDroneLon = lon;
                 }
-                if (missionRunning && lat != 0 && lon != 0) {
+                if (lat != 0 && lon != 0) {
                     updateDroneMarker(lat, lon);
                 }
             }));
@@ -793,11 +803,19 @@ public class MissionPlannerActivity extends AppCompatActivity {
         tvTerrainInfo.setTextColor(0xFFFFAA00);
         btnUpload.setEnabled(false);
 
-        // A felszállási pont: startPoint vagy az első waypoint
-        final double takeoffLat = startPoint != null ? startPoint.getLatitude()
-                : allWaypoints.get(0).latitude;
-        final double takeoffLon = startPoint != null ? startPoint.getLongitude()
-                : allWaypoints.get(0).longitude;
+        // Felszállási referencia: drón GPS → startPoint → első waypoint
+        final double takeoffLat;
+        final double takeoffLon;
+        if (lastDroneLat != 0 && lastDroneLon != 0) {
+            takeoffLat = lastDroneLat;
+            takeoffLon = lastDroneLon;
+        } else if (startPoint != null) {
+            takeoffLat = startPoint.getLatitude();
+            takeoffLon = startPoint.getLongitude();
+        } else {
+            takeoffLat = allWaypoints.get(0).latitude;
+            takeoffLon = allWaypoints.get(0).longitude;
+        }
 
         // Hozzáadjuk a felszállási pontot is a lekérdezéshez (utolsó elem)
         WaypointData takeoffWp = new WaypointData(takeoffLat, takeoffLon, 0f);
@@ -2191,7 +2209,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
         if (!running) {
             uploader.stopListening();
             CameraConfigurator.stopIntervalShooting(); // intervallum fotózás leállítása
-            clearDroneMarker();
             clearCompletedOverlay();
             tvMissionProgress.setText("");
             pbMissionProgress.setVisibility(android.view.View.GONE);

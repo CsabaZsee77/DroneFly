@@ -1,0 +1,37 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Fej -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M24,6 A6,6 0 1,1 24,18 A6,6 0 1,1 24,6 Z" />
+
+    <!-- Test -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M16,20 Q16,18 24,18 Q32,18 32,20 L30,34 L26,34 L24,28 L22,34 L18,34 Z" />
+
+    <!-- Bal lab -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M18,34 L16,44 L20,44 L22,36 Z" />
+
+    <!-- Jobb lab -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M30,34 L32,44 L28,44 L26,36 Z" />
+
+    <!-- Bal kar -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M16,20 L10,28 L13,30 L18,24 Z" />
+
+    <!-- Jobb kar -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M32,20 L38,28 L35,30 L30,24 Z" />
+
+</vector>
