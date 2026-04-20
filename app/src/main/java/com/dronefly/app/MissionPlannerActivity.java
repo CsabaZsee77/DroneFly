@@ -771,8 +771,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         switchTerrain.setOnCheckedChangeListener((btn, isChecked) -> {
             if (isChecked) {
-                tvTerrainInfo.setText("Domborzatkövetés bekapcsolva — nyomj Generálást az adatok letöltéséhez");
-                tvTerrainInfo.setTextColor(0xFFFFAA00);
+                if (lastResult != null) {
+                    // Waypointok már vannak → azonnal indul az SRTM letöltés
+                    applyTerrainFollowing(lastResult, lastResult.altitudeM);
+                } else {
+                    tvTerrainInfo.setText("Generálj először útvonalat a domborzati adatok letöltéséhez");
+                    tvTerrainInfo.setTextColor(0xFFFFAA00);
+                }
             } else {
                 tvTerrainInfo.setText("Magasság korrekció DEM (SRTM) domborzati modell alapján");
                 tvTerrainInfo.setTextColor(0xFF888888);
