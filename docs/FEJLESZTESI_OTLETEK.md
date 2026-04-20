@@ -1,7 +1,7 @@
 # DroneFly — Fejlesztési Ötletek és Javaslatok
 
 **Projekt:** DroneFly Android App
-**Utolsó frissítés:** 2026-04-17
+**Utolsó frissítés:** 2026-04-19
 **Státusz:** Élő dokumentum — ide kerülnek a felmerülő ötletek, függetlenül attól, hogy megvalósíthatók-e
 
 ---
@@ -77,7 +77,71 @@ Az app DJI MSDK v4.18-ra épül, Crystal Sky + Phantom 4 Pro v1 kombóra optimal
 
 ---
 
+## ⭐ Kiemelt prioritású fejlesztések — mezőgazdasági operatív szükséglet
+
+### A. Terület (ha) folyamatos megjelenítése polygon rajzoláskor
+
+**Felmerülés:** A pilóta polygon rajzolás közben azonnal tudni akarja, mekkora a tábla — a misszió tervezéséhez (akkumulátor, repülési idő) ez alapinformáció.
+
+**Megvalósítás:**
+- Minden `MapEventsReceiver.longPressHelper()` / polygon pont hozzáadás után újraszámolni a területet
+- `SphericalUtil.computeArea()` (Google Maps SDK) vagy saját Shoelace-formula a koordinátákból
+- Megjelenítés: a polygon belső részén lebegő szöveg (`MapOverlay`) vagy a státuszsávban: `Terület: 4.73 ha`
+- Frissítés valós időben minden pont hozzáadásakor/mozgatásakor
+
+**Prioritás:** **MAGAS** — agro pilóta alapigénye; más survey appaknál (DroneDeploy, Pix4D) mindig látható
+
+---
+
+### B. Átfedési arány vizuális visszajelző (képszám + repülési idő becslés)
+
+**Felmerülés:** A frontlap (80%) és sidelap (70%) beállítása után a pilóta nem tudja, hány képet fog készíteni és mennyi ideig tart a repülés — ezek kritikusak az akkumulátor tervezéshez és megrendelői árajánlathoz.
+
+**Megvalósítás:**
+- A `GridMissionGenerator` már számolja a waypointokat és a sávok hosszát
+- Képszám becslés: `képszám = (sávhossz_összesen / (GSD_m * (1 - frontlap))) * sávok_száma`
+- Repülési idő: `idő = összes_útvonal_hossz / repülési_sebesség + képenként_N_mp_kamera_delay`
+- P4P v1-nél: repülési sebesség CURVED módban kb. 8–10 m/s, kamera interval 2 mp
+- Megjelenítés: a misszió paraméter panelen: `~240 fotó | ~18 perc | 2.1 akkumulátor`
+- Frissítés: bármely paraméter (magasság, overlap, terület) változásakor azonnal
+
+**Prioritás:** **MAGAS** — bérmunkánál árajánlat alapja; akkumulátor-tervezés alapja
+
+---
+
+### C. Traktor nyomvonal import → grid orientáció igazítás
+
+**Felmerülés:** Ha ismert a vetési sorok iránya (traktor GPS track), a drón sávjait ezzel párhuzamosan kell tervezni → jobb NDVI eredmény, kevesebb mozgási artifakt.
+
+**Importálható formátumok:** KML, GPX, GeoJSON (ISOXML közvetett úton, GIS szoftverből exportálva)
+
+**Megvalósítás:**
+- Fájl betöltés → track pontokból domináns bearing kiszámítása (átlagos irány)
+- `GridMissionGenerator.gridAngle` automatikus beállítása erre az értékre
+- Vizuális overlay: a traktornyomvonal halvány réteggé a térképen
+- Manuális korrekció lehetősége (±5° csúszka)
+
+**Prioritás:** **MAGAS** — precíziós agro differenciáló funkció; más GCS appban ritka
+
+---
+
 ## 🔲 Nyitott ötletek — megvalósítható, de még nem priorizált
+
+### 0. Indítóállás manuális magassági korrekció (SRTM-eltérés kompenzáció)
+
+**Felmerülés:** Az SRTM domborzatkövetés a drón GPS-pozíciójának SRTM-magasságát veszi referenciaként. Ha a drón fizikailag magasabban van a talajtól (pl. autó tető +1,5 m, magas patakpart, platform), a barométer onnan nullázódik, de az SRTM nem tudja ezt. Az eredmény: minden waypoint szisztematikusan X méterrel alacsonyabban lesz, mint tervezett.
+
+**Konkrét példa:** 18 m-es repülési magasságnál (+0,5 cm GSD) az autó tető 1,5 m-es eltérése 8%-os GSD hibát okoz.
+
+**SRTM korlát:** A ~30 m felbontású SRTM modell kis kiterjedésű szintváltásokat (meredek patakpart, töltés, 1-2 m-es ugrás pár méteren) nem tartalmaz — ezek sem korrigálhatók SRTM alapon.
+
+**Javasolt megoldás:** Egy `±X méter` beviteli mező az UI-ban ("indítóállás korrekció"), amelyet a pilóta ad meg becsléssel (pl. `-1.5` ha autótetőről indul). A képlet kiegészülne: `correctedAlt[wp] = baseAGL + (SRTM[wp] - SRTM[drón]) - indítóKorrekció`
+
+**Miért nem implementáltuk most:** A pilótának kell ezt tudatosan kezelnie — a felszállási pont megválasztása a repüléstervezés része. A korrekció bevezetése UI komplexitást ad hozzá, és a becslési hiba nagyobb lehet, mint maga az eltérés.
+
+**Prioritás:** Alacsony — tudatos felhasználói felelősség; RTK drón ezt automatikusan megoldja.
+
+---
 
 ### 1. REC gomb — csak videóra egyszerűsítés
 **Felmerülés:** A tablet főmenüjéből készített rendszer képernyőkép gyorsabb (azonnali) az in-app screenshotnál (1–2 mp késés, mert `getDrawingCache()` újrarajzol).  
@@ -209,6 +273,187 @@ Az app DJI MSDK v4.18-ra épül, Crystal Sky + Phantom 4 Pro v1 kombóra optimal
 **Megvalósítás:** Android `PdfDocument` API vagy egyszerű HTML → WebView → print.
 
 **Prioritás:** Alacsony — üzleti értéke van, de nem operációs funkció.
+
+---
+
+---
+
+## 🔵 Dronelink / Litchi elemzésből azonosított új funkciók
+
+> Forrás: 2026. április stratégiai elemzés.  
+> Részletes elemzés: [`DRONELINK_OSSZEHASONLITAS.md`](DRONELINK_OSSZEHASONLITAS.md), [`LITCHI_OSSZEHASONLITAS.md`](LITCHI_OSSZEHASONLITAS.md)
+
+### D. Terrain Follow — AGL magasság korrekció
+
+**Felmerülés:** Dombos táblákon a fix magasságon repülő drón eltérő GSD-t produkál a domb tetején és a völgyben — az ortofotó nem egyenletes. Dronelink ezt AGL (Above Ground Level) módban kezeli: digitális domborzatmodell alapján waypointonként korrigálja a magasságot.
+
+**Megvalósítás:**
+- Az `ElevationProvider.java` (176 sor) infrastruktúra már megvan
+- SRTM adatforrás (NASA, ingyenes, 30m felbontás) — offline csempékkel is működik
+- A `GridMissionGenerator` minden waypointhoz az `ElevationProvider`-től kér magasságot
+- UI: "Terep követés" toggle a misszió paramétereknél + magasságprofil diagram
+
+**Prioritás:** Közepes–magas — dombos terepen kritikus, síkvidéken opcionális
+
+---
+
+### E. Multi-battery misszió tervezés + automatikus resume
+
+**Felmerülés:** P4P v1 ~25 perc repülési idő. 20 ha felett 2+ akkumulátor szükséges. Ha a folytatás nem az utolsó befejezett sávtól indul, képhézag keletkezik az ortofotóban. Litchi v5.0.0 (2024 december) vezette be a battery recovery funkciót.
+
+**Megvalósítás:**
+- A misszió becslő (B pont) kiszámolja a becsült repülési időt → ha > 22 perc: figyelmeztetés
+- `MissionUploader` `onWaypointReached` callback: mindig menteni az aktuális waypoint indexet
+- "Folytatás" opció induláskor: ha van mentett index → a misszió onnan generálódik újra
+
+**Prioritás:** Magas — nagy területen kötelező, hiánya képhézagot okoz
+
+---
+
+### F. KML / KMZ import táblahatárhoz
+
+**Felmerülés:** MePAR (Magyar Parcella Azonosító Rendszer) és QGIS KML/KMZ formátumban exportál. Ha a gazda vagy az agronómus rendelkezik a tábla határával, ne kelljen újrarajzolni.
+
+**Megvalósítás:**
+- `KmlMissionParser.java` a `CsvMissionParser` mellé
+- KML `<Placemark><Polygon>` tag olvasása → polygon koordináták betöltése a térképre
+- A betöltött polygon azonnal misszió-határként használható
+
+**Prioritás:** Magas — agro, MePAR integráció, Litchi Hub is tud KML-t importálni
+
+---
+
+### G. Crosshatch (kettős irányú grid) opció
+
+**Felmerülés:** A szokásos egyirányú grid mellett 90°-ban elforgatott második ráfutás jobb 3D modellt és fotogrammetriai eredményt ad (WebODM, Agisoft feldolgozáshoz). Dronelink és Litchi Hub is támogatja.
+
+**Megvalósítás:**
+- `GridMissionGenerator`-ban `crosshatch: boolean` paraméter
+- Ha bekapcsolt: a generált waypoint lista után hozzáfűzi ugyanazt 90°-ban elforgatva
+- UI: "Keresztirányú ráfutás (3D modellhez)" toggle
+
+**Prioritás:** Közepes — precíziós fotogrammetriához hasznos, sík NDVI survey-nél felesleges
+
+---
+
+### H. Image Asset Manifest (geotag napló)
+
+**Felmerülés:** Repülés után a feldolgozó szoftvernek (WebODM, Agisoft) szüksége van a képek GPS koordinátáira. Dronelink automatikusan generál JSON asset manifest-et minden képhez.
+
+**Megvalósítás:**
+- A `Camera.setMediaFileCallback` (fotószámláló, 4. pont) kibővítve
+- Minden képnél: időbélyeg + drón GPS (lat/lon/alt) + gimbal pitch → CSV vagy JSON fájlba
+- Összevonható a waypoint-szintű telemetria naplózással (5. pont)
+
+**Prioritás:** Közepes — fotogrammetria pipeline-hoz értékes
+
+---
+
+### I. Georektifikáció / Misszió eltolás terepi korrekció
+
+**Felmerülés:** Ha a tábla sarokpontjai nem egyeznek a térképpel (GPS drift, elavult műholdfotó), a teljes misszió eltolható egy referenciapont alapján — Dronelink "Drone Offsets" funkcióként ismeri.
+
+**Megvalósítás:**
+- "Misszió igazítás" gomb → a pilóta a térképen megad egy referencia-nyilat (Δlat, Δlon)
+- A teljes waypoint lista eltolódik — matematikailag egyszerű vektoros művelet
+
+**Prioritás:** Alacsony–közepes — precíziós RTK nélküli repülésnél hasznos
+
+---
+
+### J. Korlátozási zóna rajzolás (No-Fly Zone overlay)
+
+**Felmerülés:** A pilóta a térképen manuálisan jelöl tiltott területet (épület, fa, oszlop, légvezeték) — a misszió generáláskor a grid ezeket kihagyja. Dronelink "Restriction Zones" funkcióként ismeri.
+
+**Megvalósítás:**
+- A meglévő polygon-rajzoló logika újrahasználható: második polygon típus "tiltott zóna" jelöléssel
+- A `GridMissionGenerator` obstacle logikája már részben kezeli a kivágást (sáv clipping)
+- UI: a polygon rajzolóba "tiltott zóna" mód kapcsoló
+
+**Prioritás:** Közepes — terepi akadályok kezelése, safety szempontból is értékes
+
+---
+
+### K. Per-waypoint gimbal UI + interpoláció szerkesztő
+
+**Felmerülés:** A CURVED waypoint mód be van kapcsolva, de a gimbal szög waypointonként UI-ból nem állítható. Litchi ezt lineáris interpolációval, Dronelink görbe alapú ease-in/ease-out interpolációval kezeli.
+
+**Megvalósítás:**
+- Waypoint szerkesztőben gimbal pitch slider (pl. -90°-tól 0°-ig)
+- "Interpolálás" toggle: lineáris vs. smooth görbe a szögátmenethez
+- Elsősorban a Cine modulhoz szükséges — Agro modulban a nadir rögzített (-90°)
+
+**Prioritás:** Közepes (Cine) / Alacsony (Agro)
+
+---
+
+### L. POI Orbit + Focus mód
+
+**Felmerülés:** Megadott pont körül kör/félkör/ív pályán repül, a kamera folyamatosan a POI-ra néz. Litchi egyik legerősebb funkciója — agro-ban épület/fa dokumentáláshoz, Cine-ban alapfunkció.
+
+**Megvalósítás:** MSDK v4 `HotpointMission` API — megvan az SDK-ban, UI hiányzik.
+
+**Prioritás:** Magas (Cine modul) / Alacsony (Agro modul)
+
+---
+
+### M. Panoráma mód
+
+**Felmerülés:** A drón adott pont felett megáll és szisztematikusan lefotózza a 360°-os képet (vízszintes sávokban). Litchi, Dronelink egyaránt támogatja.
+
+**Megvalósítás:**
+- Panoráma waypoint szekvencia generátor: egy koordinátánál megálló drón + gimbal szögek + forgatások sorozata
+- `CameraConfigurator` + waypoint szekvencia kombinálva
+
+**Prioritás:** Közepes (Cine) / Alacsony (Agro)
+
+---
+
+### N. DroneFly Cine modul — koncepció
+
+**Felmerülés:** A filmes/content creator szegmens sokkal nagyobb piac mint az agro survey. A Litchi-nél jobb cine UX lehetséges — timeline-alapú, keyframe szerkesztővel.
+
+**Ami más lenne mint a Litchi:**
+- Timeline nézet (mint egy videóeditorban): X tengely = repülési idő, Y = gimbal szög, sebesség
+- Ease-in/ease-out görbe szerkesztő a szögátmenetekhez
+- POI Orbit + gimbal interpoláció kombinálva
+- Mission Hub közösségi megosztás (látnivalók, ingatlan reveal sablonok)
+
+**Fejlesztési feltétel:** A Cine modul külön APK vagy product flavor — az Agro UI nem terhelődik Cine funkciókkal.
+
+**Prioritás:** Hosszú távú — 3. fázis (lásd STRATEGIA.md)
+
+---
+
+### O. On-the-fly misszió generálás
+
+**Felmerülés:** A drón aktuális pozíciója alapján azonnal generál egy grid missziót — térkép-rajzolás nélkül, terepi gyors döntésnél. Dronelink egyik egyedi funkciója.
+
+**Megvalósítás:**
+- "Gyors misszió" gomb: a drón GPS pozíciója körül N×M méteres területre azonnal generál egy alapgridet
+- A terület mérete és a magasság slider-rel állítható
+
+**Prioritás:** Alacsony — hasznos, de nem alapfunkció
+
+---
+
+### P. Webes repüléstervező + Mission Hub
+
+**Felmerülés:** A terepi pilóta nem mindig Crystal Sky-on tervez — böngészőből is kényelmes lenne. A Mission Hub a közösségi megosztás és az előfizetéses bevétel alapja.
+
+**Architektúra:**
+```
+Web app (React + Leaflet) → FastAPI backend → DroneFly Android app (letölti a missziót)
+```
+
+**Mission Hub funkciók:**
+- Misszió tárolás, szinkronizálás
+- Közösségi megosztás (Litchi Mission Hub modell)
+- Agro analytics: telemetria naplók, területi riportok PDF-ben
+- Sablon könyvtár (régió + drón típus szerint)
+
+**Bevételi modell:** Freemium — alapfunkciók ingyenes, prémium $6–20/hó  
+**Prioritás:** 3. fázis (lásd STRATEGIA.md)
 
 ---
 

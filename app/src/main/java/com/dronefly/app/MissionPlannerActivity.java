@@ -117,6 +117,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
     // Beállítások widgetek
     private TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvOffset, tvStats;
     private SeekBar  sbGsd, sbSidelap, sbFrontlap, sbSpeed, sbAngle, sbOffset;
+    private EditText etAltitude;
+    private Button   btnAltMinus, btnAltPlus;
+    private boolean  updatingAlt = false; // rekurzív frissítés gátoló flag
     private Spinner  spinnerDrone;
     private Button   btnUndoPoint, btnClear, btnGenerate, btnUpload, btnStart,
                      btnImportCsv, btnExport, btnMyLocation,
@@ -344,6 +347,23 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbSpeed.setOnSeekBarChangeListener(listener);
         sbAngle.setOnSeekBarChangeListener(listener);
         sbOffset.setOnSeekBarChangeListener(listener);
+
+        // Magasság közvetlen bevitel — GSD csúszkával kölcsönösen frissíti egymást
+        etAltitude  = findViewById(R.id.etAltitude);
+        btnAltMinus = findViewById(R.id.btnAltMinus);
+        btnAltPlus  = findViewById(R.id.btnAltPlus);
+
+        btnAltMinus.setOnClickListener(v -> adjustAltitude(-1));
+        btnAltPlus.setOnClickListener(v  -> adjustAltitude(+1));
+
+        etAltitude.setOnFocusChangeListener((v, hasFocus) -> {
+            if (!hasFocus) applyAltitudeInput();
+        });
+        etAltitude.setOnEditorActionListener((v, actionId, event) -> {
+            applyAltitudeInput();
+            etAltitude.clearFocus();
+            return false;
+        });
 
         btnNewPlan        = findViewById(R.id.btnNewPlan);
         btnSaveProject    = findViewById(R.id.btnSaveProject);
@@ -1137,8 +1157,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
         int    angle  = getAngle();
         float  recSpd = GsdCalculator.recommendedSpeedMs(gsd, drone);
 
-        tvGsd.setText(String.format("GSD: %.1f cm/px  →  magassag: %.0f m  (ajanl. v: %.1f m/s)",
-                gsd, alt, recSpd));
+        tvGsd.setText(String.format("GSD: %.2f cm/px  (ajánl. v: %.1f m/s)", gsd, recSpd));
+
+        // Magasság mező szinkronizálása ha a GSD csúszka húzta
+        if (!updatingAlt && etAltitude != null) {
+            updatingAlt = true;
+            etAltitude.setText(String.valueOf((int) Math.round(alt)));
+            updatingAlt = false;
+        }
         tvSidelap.setText(String.format("Oldalsó átfedes: %.0f%%", side));
         tvFrontlap.setText(String.format("Menetirany átfedes: %.0f%%", front));
         tvSpeed.setText(String.format("Sebesseg: %.0f m/s", speed));
@@ -2597,6 +2623,40 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private float  getSpeed()    { return 3.0f + sbSpeed.getProgress(); }
     private int    getAngle()    { return sbAngle.getProgress(); }
     private int    getOffset()   { return sbOffset != null ? sbOffset.getProgress() : 0; }
+
+    // ── Magasság közvetlen bevitel ────────────────────────────────────────────
+
+    private void adjustAltitude(int deltaM) {
+        if (etAltitude == null) return;
+        int current = parseAltitudeField();
+        setAltitudeAndSyncGsd(current + deltaM);
+    }
+
+    private void applyAltitudeInput() {
+        if (updatingAlt) return;
+        setAltitudeAndSyncGsd(parseAltitudeField());
+    }
+
+    private int parseAltitudeField() {
+        try { return Integer.parseInt(etAltitude.getText().toString().trim()); }
+        catch (NumberFormatException e) { return 10; }
+    }
+
+    private void setAltitudeAndSyncGsd(int altM) {
+        altM = Math.max(10, Math.min(120, altM));
+        updatingAlt = true;
+        etAltitude.setText(String.valueOf(altM));
+
+        // GSD csúszka szinkronizálása: progress = round((gsd - 0.5) / 0.1)
+        DroneProfile drone = getSelectedDrone();
+        double gsd = GsdCalculator.gsdFromAltitude(altM, drone);
+        int prog = (int) Math.round((gsd - 0.5) / 0.1);
+        sbGsd.setProgress(Math.max(0, Math.min(sbGsd.getMax(), prog)));
+        // updateLabels() a SeekBar listener-en keresztül lefut, de ne írja felül az EditText-et
+        // (updatingAlt=true véd ettől)
+        updateLabels();
+        updatingAlt = false;
+    }
 
     @Override
     protected void onResume() {
