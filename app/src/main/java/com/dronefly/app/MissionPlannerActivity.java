@@ -781,85 +781,134 @@ public class MissionPlannerActivity extends AppCompatActivity {
     }
 
     /**
-     * Domborzatkövetés alkalmazása a generált waypointokra.
-     * Open-Elevation API-ból lekéri a tengerszint feletti magasságokat,
-     * majd korrigálja az egyes waypoint magasságokat a felszállási pont
-     * (start pont vagy első waypoint) terepszintjéhez képest.
+     * Domborzatkövetés — két fázis:
+     *
+     * 1. fázis (drón GPS nincs): SRTM terepprofil letöltése a területre.
+     *    Waypoint magasságok NEM változnak. Feltöltés blokkolva.
+     *    Üzenet: narancssárga — "SRTM betöltve, csatlakoztasd a drónt"
+     *
+     * 2. fázis (drón GPS elérhető): SRTM + drón pozíció → korrekció alkalmazva.
+     *    Waypoint magasságok korrigálva a felszállási referenciához képest.
+     *    Üzenet: zöld — "Korrigálva ✓"
      */
     private void applyTerrainFollowing(GridMissionGenerator.GeneratorResult result,
                                         double baseAGL) {
-        // Összegyűjtjük az összes waypointot
         List<WaypointData> allWaypoints = new ArrayList<>();
         for (List<WaypointData> seg : result.segments) allWaypoints.addAll(seg);
-
         if (allWaypoints.isEmpty()) return;
 
-        tvTerrainInfo.setText("Domborzati adatok letoltese...");
+        tvTerrainInfo.setText("SRTM domborzati adatok letöltése...");
         tvTerrainInfo.setTextColor(0xFFFFAA00);
         btnUpload.setEnabled(false);
 
-        // Felszállási referencia: drón GPS → első waypoint
-        final double takeoffLat = (lastDroneLat != 0) ? lastDroneLat : allWaypoints.get(0).latitude;
-        final double takeoffLon = (lastDroneLon != 0) ? lastDroneLon : allWaypoints.get(0).longitude;
+        boolean droneGpsAvailable = lastDroneLat != 0 && lastDroneLon != 0;
 
-        // Hozzáadjuk a felszállási pontot is a lekérdezéshez (utolsó elem)
-        WaypointData takeoffWp = new WaypointData(takeoffLat, takeoffLon, 0f);
-        List<WaypointData> queryList = new ArrayList<>(allWaypoints);
-        queryList.add(takeoffWp);
+        if (droneGpsAvailable) {
+            // ── 2. fázis: korrekció a drón GPS-pozíciójához képest ───────────
+            List<WaypointData> queryList = new ArrayList<>(allWaypoints);
+            queryList.add(new WaypointData(lastDroneLat, lastDroneLon, 0f)); // utolsó = drón
 
-        ElevationProvider.fetchElevations(queryList, new ElevationProvider.ElevationCallback() {
-            @Override
-            public void onSuccess(double[] elevations) {
-                double takeoffElev = elevations[elevations.length - 1]; // utolsó = felszállási pont
+            ElevationProvider.fetchElevations(queryList, new ElevationProvider.ElevationCallback() {
+                @Override
+                public void onSuccess(double[] elevations) {
+                    double takeoffElev = elevations[elevations.length - 1];
 
-                // Korrekció alkalmazása az eredeti waypointokra
-                int idx = 0;
-                float minAlt = Float.MAX_VALUE, maxAlt = Float.MIN_VALUE;
-                for (List<WaypointData> seg : result.segments) {
-                    for (WaypointData wp : seg) {
-                        double terrainDelta = elevations[idx] - takeoffElev;
-                        float correctedAlt = (float) (baseAGL + terrainDelta);
-                        correctedAlt = Math.max(10f, correctedAlt); // minimum 10m
-                        wp.altitudeM = correctedAlt;
-                        wp.terrainElevation = elevations[idx];
-                        wp.hasTerrainCorrection = true;
-                        if (correctedAlt < minAlt) minAlt = correctedAlt;
-                        if (correctedAlt > maxAlt) maxAlt = correctedAlt;
-                        idx++;
+                    int idx = 0;
+                    float minAlt = Float.MAX_VALUE, maxAlt = Float.MIN_VALUE;
+                    for (List<WaypointData> seg : result.segments) {
+                        for (WaypointData wp : seg) {
+                            double delta = elevations[idx] - takeoffElev;
+                            float correctedAlt = Math.max(10f, (float) (baseAGL + delta));
+                            wp.altitudeM = correctedAlt;
+                            wp.terrainElevation = elevations[idx];
+                            wp.hasTerrainCorrection = true;
+                            if (correctedAlt < minAlt) minAlt = correctedAlt;
+                            if (correctedAlt > maxAlt) maxAlt = correctedAlt;
+                            idx++;
+                        }
                     }
+                    result.terrainCorrected = true;
+                    result.terrainMinAlt = minAlt;
+                    result.terrainMaxAlt = maxAlt;
+
+                    final float fMin = minAlt, fMax = maxAlt;
+                    final double fTakeoff = takeoffElev;
+                    runOnUiThread(() -> {
+                        tvTerrainInfo.setText(String.format(
+                            "Domborzatkövetés alkalmazva ✓  %.0f–%.0f m  (felszállás: %.0f m tszf)",
+                            fMin, fMax, fTakeoff));
+                        tvTerrainInfo.setTextColor(0xFF44FF44);
+                        boolean tc = false;
+                        try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t2) { }
+                        btnUpload.setEnabled(tc && !missionRunning);
+                        btnExport.setEnabled(true);
+                        if (btnSimulate != null) btnSimulate.setEnabled(true);
+                        updateStatsWithTerrain(result);
+                    });
                 }
 
-                result.terrainCorrected = true;
-                result.terrainMinAlt = minAlt;
-                result.terrainMaxAlt = maxAlt;
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        tvTerrainInfo.setText("Domborzat hiba: " + message);
+                        tvTerrainInfo.setTextColor(0xFFFF4444);
+                        boolean tc = false;
+                        try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t2) { }
+                        btnUpload.setEnabled(tc && !missionRunning);
+                        btnExport.setEnabled(true);
+                        if (btnSimulate != null) btnSimulate.setEnabled(true);
+                        Toast.makeText(MissionPlannerActivity.this,
+                            "Domborzati adat nem érhető el: " + message, Toast.LENGTH_LONG).show();
+                    });
+                }
+            });
 
-                tvTerrainInfo.setText(String.format(
-                    "Domborzat korrigalva: %.0fm - %.0fm (takeoff: %.0fm tszf)",
-                    minAlt, maxAlt, takeoffElev));
-                tvTerrainInfo.setTextColor(0xFF44FF44);
-                boolean tc = false;
-                try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
-                btnUpload.setEnabled(tc && !missionRunning);
-                btnExport.setEnabled(true);
-        if (btnSimulate != null) btnSimulate.setEnabled(true);
+        } else {
+            // ── 1. fázis: csak terepprofil, nincs korrekció ──────────────────
+            ElevationProvider.fetchElevations(allWaypoints, new ElevationProvider.ElevationCallback() {
+                @Override
+                public void onSuccess(double[] elevations) {
+                    double minElev = Double.MAX_VALUE, maxElev = -Double.MAX_VALUE;
+                    int idx = 0;
+                    for (List<WaypointData> seg : result.segments) {
+                        for (WaypointData wp : seg) {
+                            wp.terrainElevation = elevations[idx];
+                            if (elevations[idx] < minElev) minElev = elevations[idx];
+                            if (elevations[idx] > maxElev) maxElev = elevations[idx];
+                            idx++;
+                        }
+                    }
+                    // Waypoint magasságok NEM változnak — nincs referenciapont
 
-                // Stats frissítés
-                updateStatsWithTerrain(result);
-            }
+                    final double fMinElev = minElev, fMaxElev = maxElev;
+                    runOnUiThread(() -> {
+                        tvTerrainInfo.setText(String.format(
+                            "SRTM betöltve: terep %.0f–%.0f m tszf — csatlakoztasd a drónt és generálj újra a korrekcióhoz",
+                            fMinElev, fMaxElev));
+                        tvTerrainInfo.setTextColor(0xFFFFAA00);
+                        // Feltöltés tiltva: korrekció nélkül domborzatkövetés nem értelmes
+                        btnUpload.setEnabled(false);
+                        btnExport.setEnabled(true);
+                        if (btnSimulate != null) btnSimulate.setEnabled(true);
+                    });
+                }
 
-            @Override
-            public void onError(String message) {
-                tvTerrainInfo.setText("Domborzat hiba: " + message);
-                tvTerrainInfo.setTextColor(0xFFFF4444);
-                boolean tc = false;
-                try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t) { }
-                btnUpload.setEnabled(tc && !missionRunning);
-                btnExport.setEnabled(true);
-        if (btnSimulate != null) btnSimulate.setEnabled(true);
-                Toast.makeText(MissionPlannerActivity.this,
-                    "Domborzati adat nem elerheto: " + message, Toast.LENGTH_LONG).show();
-            }
-        });
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        tvTerrainInfo.setText("Domborzat hiba: " + message);
+                        tvTerrainInfo.setTextColor(0xFFFF4444);
+                        boolean tc = false;
+                        try { tc = DJIHelper.getInstance().isConnected(); } catch (Throwable t2) { }
+                        btnUpload.setEnabled(tc && !missionRunning);
+                        btnExport.setEnabled(true);
+                        if (btnSimulate != null) btnSimulate.setEnabled(true);
+                        Toast.makeText(MissionPlannerActivity.this,
+                            "Domborzati adat nem érhető el: " + message, Toast.LENGTH_LONG).show();
+                    });
+                }
+            });
+        }
     }
 
     private void updateStatsWithTerrain(GridMissionGenerator.GeneratorResult result) {
