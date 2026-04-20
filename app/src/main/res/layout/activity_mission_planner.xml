@@ -717,15 +717,7 @@
                     android:backgroundTint="#006600"
                     android:layout_marginBottom="6dp"/>
 
-                <Button android:id="@+id/btnSetStart"
-                    android:text="Start/Home pont"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:textSize="13sp"
-                    android:backgroundTint="#005566"
-                    android:layout_marginBottom="6dp"/>
-
-                <Button android:id="@+id/btnImportCsv"
+<Button android:id="@+id/btnImportCsv"
                     android:text="CSV importalasa"
                     android:layout_width="match_parent"
                     android:layout_height="44dp"

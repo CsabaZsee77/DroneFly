@@ -113,16 +113,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private final List<Marker>   polygonMarkers = new ArrayList<>(); // külön nyilvántartás, removeIf kiváltása
     private Polygon  polygonOverlay;
     private Polyline missionOverlay;
-    private Marker   startMarker;
-    private GeoPoint startPoint = null;
-    private boolean  startPointMode = false;
 
     // Beállítások widgetek
     private TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvOffset, tvStats;
     private SeekBar  sbGsd, sbSidelap, sbFrontlap, sbSpeed, sbAngle, sbOffset;
     private Spinner  spinnerDrone;
     private Button   btnUndoPoint, btnClear, btnGenerate, btnUpload, btnStart,
-                     btnImportCsv, btnExport, btnSetStart, btnMyLocation,
+                     btnImportCsv, btnExport, btnMyLocation,
                      btnMapToggle, btnPauseMission, btnStopMission;
     private boolean  missionUploaded = false;
     private boolean  missionRunning = false;
@@ -283,9 +280,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 new org.osmdroid.events.MapEventsReceiver() {
             @Override
             public boolean singleTapConfirmedHelper(GeoPoint p) {
-                if (startPointMode) {
-                    setStartPoint(p);
-                } else if (obstacleMode) {
+                if (obstacleMode) {
                     showAddObstacleDialog(p);
                 } else if (!missionRunning) {
                     // Mindig aktív pontlerakás (kivéve ha misszió fut)
@@ -364,8 +359,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnStart          = findViewById(R.id.btnStart);
         btnImportCsv = findViewById(R.id.btnImportCsv);
         btnExport    = findViewById(R.id.btnExport);
-        btnSetStart  = findViewById(R.id.btnSetStart);
-
         tvDroneStatus = findViewById(R.id.tvDroneStatus);
 
         btnMyLocation = findViewById(R.id.btnMyLocation);
@@ -464,7 +457,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnStart.setOnClickListener(v -> startMission());
         btnImportCsv.setOnClickListener(v -> pickCsvFile());
         btnExport.setOnClickListener(v -> showExportDialog());
-        btnSetStart.setOnClickListener(v -> toggleStartPointMode());
 
         btnUpload.setEnabled(false);
         btnStart.setEnabled(false);
@@ -803,19 +795,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
         tvTerrainInfo.setTextColor(0xFFFFAA00);
         btnUpload.setEnabled(false);
 
-        // Felszállási referencia: drón GPS → startPoint → első waypoint
-        final double takeoffLat;
-        final double takeoffLon;
-        if (lastDroneLat != 0 && lastDroneLon != 0) {
-            takeoffLat = lastDroneLat;
-            takeoffLon = lastDroneLon;
-        } else if (startPoint != null) {
-            takeoffLat = startPoint.getLatitude();
-            takeoffLon = startPoint.getLongitude();
-        } else {
-            takeoffLat = allWaypoints.get(0).latitude;
-            takeoffLon = allWaypoints.get(0).longitude;
-        }
+        // Felszállási referencia: drón GPS → első waypoint
+        final double takeoffLat = (lastDroneLat != 0) ? lastDroneLat : allWaypoints.get(0).latitude;
+        final double takeoffLon = (lastDroneLon != 0) ? lastDroneLon : allWaypoints.get(0).longitude;
 
         // Hozzáadjuk a felszállási pontot is a lekérdezéshez (utolsó elem)
         WaypointData takeoffWp = new WaypointData(takeoffLat, takeoffLon, 0f);
@@ -1117,13 +1099,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     // ── Polygon rajzolás ───────────────────────────────────────────────────
 
-    private void toggleStartPointMode() {
-        startPointMode = !startPointMode;
-        btnSetStart.setText(startPointMode ? "Kattints a start pontra..." : "Start/Home pont");
-        if (startPointMode)
-            Toast.makeText(this, "Kattints a térképre a start/felszállási ponthoz", Toast.LENGTH_SHORT).show();
-    }
-
     /**
      * Térkép ugrás az aktuális pozícióra.
      *
@@ -1167,23 +1142,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
         } else {
             Toast.makeText(this, "GPS pozíció még nem elérhető", Toast.LENGTH_SHORT).show();
         }
-    }
-
-    private void setStartPoint(GeoPoint p) {
-        startPoint = p;
-        startPointMode = false;
-        btnSetStart.setText("Start/Home pont ✓");
-        btnSetStart.setAlpha(1.0f);
-
-        if (startMarker != null) mapView.getOverlays().remove(startMarker);
-        startMarker = new Marker(mapView);
-        startMarker.setPosition(p);
-        startMarker.setTitle("Start / Home");
-        startMarker.setSnippet(String.format("%.6f, %.6f", p.getLatitude(), p.getLongitude()));
-        startMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
-        mapView.getOverlays().add(startMarker);
-        mapView.invalidate();
-        Toast.makeText(this, "Start pont beállítva", Toast.LENGTH_SHORT).show();
     }
 
     private void addPolygonPoint(GeoPoint p) {
@@ -1314,7 +1272,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 String name = currentPlanFile.getName()
                     .replace(ProjectManager.FILE_EXT, "").replace('_', ' ');
                 ProjectManager.saveProjectToFile(
-                    this, currentPlanFile, name, polygonPoints, startPoint, buildConfig());
+                    this, currentPlanFile, name, polygonPoints, null, buildConfig());
                 updatePlanNameLabel();
                 Toast.makeText(this, "Mentve: " + currentPlanFile.getName(), Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
@@ -1377,7 +1335,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         try {
             MissionConfig config = buildConfig();
             File saved = ProjectManager.saveProject(
-                this, name, polygonPoints, startPoint, config);
+                this, name, polygonPoints, null, config);
             currentPlanFile = saved;
             updatePlanNameLabel();
             Toast.makeText(this,
@@ -1463,11 +1421,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
             // ── Polygon visszaállítása ────────────────────────────────────
             for (GeoPoint p : data.polygon) {
                 addPolygonPoint(p);
-            }
-
-            // ── Start pont visszaállítása ─────────────────────────────────
-            if (data.startPoint != null) {
-                setStartPoint(data.startPoint);
             }
 
             // ── Beállítások visszaállítása a SeekBar-okra ─────────────────
@@ -1826,9 +1779,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
         polygonPoints.clear();
         if (polygonOverlay != null) mapView.getOverlays().remove(polygonOverlay);
         if (missionOverlay != null) mapView.getOverlays().remove(missionOverlay);
-        if (startMarker != null)    mapView.getOverlays().remove(startMarker);
-        startMarker = null;
-        startPoint  = null;
         // Sarokpont jelölők törlése – removeIf nem elérhető API 22-n!
         for (Marker m : polygonMarkers) {
             mapView.getOverlays().remove(m);
@@ -1845,7 +1795,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnUpload.setEnabled(false);
         btnStart.setEnabled(false);
         btnExport.setEnabled(false);
-        btnSetStart.setText("Start/Home pont");
         tvStats.setText("");
         mapView.invalidate();
     }
@@ -1910,11 +1859,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private void drawMissionPath(List<List<WaypointData>> segments) {
         if (missionOverlay != null) mapView.getOverlays().remove(missionOverlay);
         List<GeoPoint> path = new ArrayList<>();
-        if (startPoint != null) path.add(startPoint);
         for (List<WaypointData> seg : segments)
             for (WaypointData wp : seg)
                 path.add(new GeoPoint(wp.latitude, wp.longitude));
-        if (startPoint != null) path.add(startPoint); // visszatérés
 
         missionOverlay = new Polyline();
         missionOverlay.setPoints(path);
@@ -2048,7 +1995,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 String autoName = "auto_" + new java.text.SimpleDateFormat(
                     "yyyy-MM-dd_HH-mm", java.util.Locale.getDefault()).format(new java.util.Date());
                 File saved = ProjectManager.saveProject(
-                    this, autoName, polygonPoints, startPoint, buildConfig());
+                    this, autoName, polygonPoints, null, buildConfig());
                 currentPlanFile = saved;
                 updatePlanNameLabel();
             } catch (Exception ignored) {}
