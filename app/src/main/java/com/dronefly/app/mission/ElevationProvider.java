@@ -38,8 +38,10 @@ public class ElevationProvider {
 
     private static final String TAG = "ElevationProvider";
     private static final String API_URL = "https://api.open-elevation.com/api/v1/lookup";
-    private static final int BATCH_SIZE = 200;
-    private static final int TIMEOUT_MS = 15000;
+    private static final int BATCH_SIZE  = 100;   // kisebb batch = megbízhatóbb API válasz
+    private static final int TIMEOUT_MS  = 60000; // 60 mp / kérés (nagy terület esetén lassú API)
+    private static final int MAX_RETRIES = 3;     // újrapróbálkozás timeout/hiba esetén
+    private static final int RETRY_DELAY_MS = 2000;
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -79,9 +81,11 @@ public class ElevationProvider {
         executor.execute(() -> {
             try {
                 double[] elevations = new double[waypoints.size()];
+                int totalBatches = (int) Math.ceil((double) waypoints.size() / BATCH_SIZE);
 
                 for (int batchStart = 0; batchStart < waypoints.size(); batchStart += BATCH_SIZE) {
                     int batchEnd = Math.min(batchStart + BATCH_SIZE, waypoints.size());
+                    int batchIdx = batchStart / BATCH_SIZE + 1;
 
                     JSONArray locations = new JSONArray();
                     for (int i = batchStart; i < batchEnd; i++) {
@@ -92,42 +96,67 @@ public class ElevationProvider {
                     }
                     JSONObject body = new JSONObject();
                     body.put("locations", locations);
+                    byte[] bodyBytes = body.toString().getBytes("UTF-8");
 
-                    HttpsURLConnection conn = openConnection(API_URL);
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Content-Type", "application/json");
-                    conn.setRequestProperty("Accept", "application/json");
-                    conn.setDoOutput(true);
-                    conn.setConnectTimeout(TIMEOUT_MS);
-                    conn.setReadTimeout(TIMEOUT_MS);
+                    // Retry logika: MAX_RETRIES próbálkozás batch-enként
+                    boolean batchOk = false;
+                    String lastError = "ismeretlen hiba";
+                    for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                        try {
+                            HttpsURLConnection conn = openConnection(API_URL);
+                            conn.setRequestMethod("POST");
+                            conn.setRequestProperty("Content-Type", "application/json");
+                            conn.setRequestProperty("Accept", "application/json");
+                            conn.setDoOutput(true);
+                            conn.setConnectTimeout(TIMEOUT_MS);
+                            conn.setReadTimeout(TIMEOUT_MS);
 
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(body.toString().getBytes("UTF-8"));
+                            try (OutputStream os = conn.getOutputStream()) {
+                                os.write(bodyBytes);
+                            }
+
+                            int responseCode = conn.getResponseCode();
+                            if (responseCode != 200) {
+                                lastError = "HTTP " + responseCode;
+                                conn.disconnect();
+                                if (attempt < MAX_RETRIES) Thread.sleep(RETRY_DELAY_MS);
+                                continue;
+                            }
+
+                            StringBuilder sb = new StringBuilder();
+                            try (BufferedReader br = new BufferedReader(
+                                    new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
+                                String line;
+                                while ((line = br.readLine()) != null) sb.append(line);
+                            }
+
+                            JSONObject response = new JSONObject(sb.toString());
+                            JSONArray results = response.getJSONArray("results");
+                            for (int i = 0; i < results.length(); i++) {
+                                elevations[batchStart + i] =
+                                    results.getJSONObject(i).getDouble("elevation");
+                            }
+
+                            conn.disconnect();
+                            Log.d(TAG, "Batch " + batchIdx + "/" + totalBatches
+                                + " kész (" + (batchEnd - batchStart) + " pont)");
+                            batchOk = true;
+                            break;
+
+                        } catch (Throwable t) {
+                            lastError = t.getMessage();
+                            Log.w(TAG, "Batch " + batchIdx + " próba " + attempt
+                                + "/" + MAX_RETRIES + " hiba: " + lastError);
+                            if (attempt < MAX_RETRIES) Thread.sleep(RETRY_DELAY_MS);
+                        }
                     }
 
-                    int responseCode = conn.getResponseCode();
-                    if (responseCode != 200) {
-                        final String msg = "API hiba: HTTP " + responseCode;
+                    if (!batchOk) {
+                        final String msg = "SRTM letöltési hiba (batch " + batchIdx
+                            + "/" + totalBatches + "): " + lastError;
                         mainHandler.post(() -> callback.onError(msg));
                         return;
                     }
-
-                    StringBuilder sb = new StringBuilder();
-                    try (BufferedReader br = new BufferedReader(
-                            new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
-                        String line;
-                        while ((line = br.readLine()) != null) sb.append(line);
-                    }
-
-                    JSONObject response = new JSONObject(sb.toString());
-                    JSONArray results = response.getJSONArray("results");
-                    for (int i = 0; i < results.length(); i++) {
-                        elevations[batchStart + i] = results.getJSONObject(i).getDouble("elevation");
-                    }
-
-                    conn.disconnect();
-                    Log.d(TAG, "Batch lekérdezve: " + batchStart + "-" + batchEnd
-                            + " (" + results.length() + " pont)");
                 }
 
                 mainHandler.post(() -> callback.onSuccess(elevations));
