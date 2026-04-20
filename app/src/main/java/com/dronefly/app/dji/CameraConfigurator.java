@@ -71,6 +71,22 @@ public class CameraConfigurator {
 
         camera.setExposureMode(mode, error -> {
             if (error != null) Log.w(TAG, "Expozíció mód hiba: " + error.getDescription());
+            applyAperture(camera, settings, callback);
+        });
+    }
+
+    // ── Rekesz ────────────────────────────────────────────────────────
+
+    private static void applyAperture(Camera camera, CameraSettings settings,
+                                       ConfigCallback callback) {
+        SettingsDefinitions.Aperture ap;
+        switch (settings.aperture) {
+            case F_5_6: ap = SettingsDefinitions.Aperture.F_5_DOT_6; break;
+            case F_11:  ap = SettingsDefinitions.Aperture.F_11;      break;
+            default:    ap = SettingsDefinitions.Aperture.F_8;       break;
+        }
+        camera.setAperture(ap, error -> {
+            if (error != null) Log.w(TAG, "Rekesz hiba: " + error.getDescription());
             applyIso(camera, settings, callback);
         });
     }
@@ -110,13 +126,17 @@ public class CameraConfigurator {
 
         SettingsDefinitions.ShutterSpeed djiShutter;
         switch (settings.shutterSpeed) {
-            case S_1_100:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_100; break;
-            case S_1_200:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_200; break;
-            case S_1_400:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_400; break;
-            case S_1_800:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_800; break;
+            case S_1_100:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_100;  break;
+            case S_1_200:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_200;  break;
+            case S_1_400:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_400;  break;
+            case S_1_500:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_500;  break;
+            case S_1_640:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_640;  break;
+            case S_1_800:  djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_800;  break;
             case S_1_1000: djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_1000; break;
+            case S_1_1250: djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_1250; break;
             case S_1_1600: djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_1600; break;
-            default:       djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_400; break;
+            case S_1_2000: djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_2000; break;
+            default:       djiShutter = SettingsDefinitions.ShutterSpeed.SHUTTER_SPEED_1_400;  break;
         }
 
         camera.setShutterSpeed(djiShutter, error -> {
@@ -141,6 +161,10 @@ public class CameraConfigurator {
                 break;
             case CLOUDY:
                 wb = new WhiteBalance(SettingsDefinitions.WhiteBalancePreset.CLOUDY);
+                break;
+            case CUSTOM:
+                int ct = Math.max(20, Math.min(100, settings.whiteBalanceKelvin / 100));
+                wb = new WhiteBalance(SettingsDefinitions.WhiteBalancePreset.CUSTOM, ct);
                 break;
             default:
                 wb = new WhiteBalance(SettingsDefinitions.WhiteBalancePreset.AUTO);
@@ -348,6 +372,294 @@ public class CameraConfigurator {
             });
         } catch (Throwable t) {
             Log.w(TAG, "stopShootPhoto hiba: " + t.getMessage());
+        }
+    }
+
+    // ── Auto expozíciós mód ───────────────────────────────────────────
+
+    /** Kamera visszakapcsolása PROGRAM (auto) módba. */
+    public static void setAutoExposureMode(ConfigCallback callback) {
+        Camera camera = getCamera();
+        if (camera == null) {
+            if (callback != null) callback.onComplete(false, "Kamera nem elérhető");
+            return;
+        }
+        camera.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, e ->
+            camera.setExposureMode(SettingsDefinitions.ExposureMode.PROGRAM, e2 -> {
+                boolean ok = e2 == null;
+                if (callback != null) callback.onComplete(ok,
+                        ok ? "AUTO mód aktív" : e2.getDescription());
+            })
+        );
+    }
+
+    /**
+     * Auto Lock: az auto mód aktuális értékeit visszaolvassuk, majd manuálisra váltunk.
+     * A callback visszaad egy CameraSettings objektumot a kiolvasott értékekkel.
+     */
+    public interface ReadbackCallback {
+        void onReadback(boolean success, CameraSettings settings, String message);
+    }
+
+    public static void lockAutoToManual(ReadbackCallback callback) {
+        Camera camera = getCamera();
+        if (camera == null) {
+            if (callback != null) callback.onReadback(false, null, "Kamera nem elérhető");
+            return;
+        }
+        try {
+            camera.getClass()
+                  .getMethod("setCurrentExposureValuesCallback", Object.class)
+                  .invoke(camera, (Object) null); // reset first
+        } catch (Throwable ignored) {}
+
+        try {
+            // Callback interfész keresése futásidőben
+            java.lang.reflect.Method setter = null;
+            Class<?> cbIface = null;
+            for (java.lang.reflect.Method m : camera.getClass().getMethods()) {
+                if (m.getName().contains("xposure") && m.getName().contains("allback")
+                        && m.getParameterTypes().length == 1) {
+                    setter = m;
+                    cbIface = m.getParameterTypes()[0];
+                    break;
+                }
+            }
+            if (setter == null || cbIface == null || !cbIface.isInterface()) {
+                // Fallback: olvasás nélkül visszaadjuk a default survey értékeket
+                if (callback != null)
+                    callback.onReadback(false, null, "Értékek nem olvashatók vissza — manuális beállítás szükséges");
+                return;
+            }
+            final java.lang.reflect.Method finalSetter = setter;
+            final Class<?> finalIface = cbIface;
+            Object proxy = java.lang.reflect.Proxy.newProxyInstance(
+                    finalIface.getClassLoader(), new Class[]{finalIface},
+                    (p, method, args) -> {
+                        if (args == null || args.length == 0) return null;
+                        Object params = args[0];
+                        if (params == null) return null;
+                        CameraSettings s = new CameraSettings();
+                        s.autoMode = false;
+                        // ISO
+                        try {
+                            Object iso = params.getClass().getMethod("getISO").invoke(params);
+                            s.iso = mapDjiIso(iso.toString());
+                        } catch (Throwable ignored) {}
+                        // Shutter
+                        try {
+                            Object ss = params.getClass().getMethod("getShutterSpeed").invoke(params);
+                            s.shutterSpeed = mapDjiShutter(ss.toString());
+                        } catch (Throwable ignored) {}
+                        // Aperture
+                        try {
+                            Object ap = params.getClass().getMethod("getAperture").invoke(params);
+                            s.aperture = mapDjiAperture(ap.toString());
+                        } catch (Throwable ignored) {}
+                        // Callback regisztrációt töröljük
+                        try { finalSetter.invoke(camera, (Object) null); } catch (Throwable ignored2) {}
+                        if (callback != null) callback.onReadback(true, s, "Értékek visszaolvasva");
+                        return null;
+                    });
+            setter.invoke(camera, proxy);
+        } catch (Throwable t) {
+            Log.w(TAG, "Auto lock readback hiba: " + t.getMessage());
+            if (callback != null) callback.onReadback(false, null, t.getMessage());
+        }
+    }
+
+    private static com.dronefly.app.model.CameraSettings.IsoValue mapDjiIso(String name) {
+        if (name.contains("100")) return com.dronefly.app.model.CameraSettings.IsoValue.ISO_100;
+        if (name.contains("200")) return com.dronefly.app.model.CameraSettings.IsoValue.ISO_200;
+        if (name.contains("400")) return com.dronefly.app.model.CameraSettings.IsoValue.ISO_400;
+        return com.dronefly.app.model.CameraSettings.IsoValue.ISO_800;
+    }
+
+    private static com.dronefly.app.model.CameraSettings.ShutterSpeed mapDjiShutter(String name) {
+        if (name.contains("2000")) return com.dronefly.app.model.CameraSettings.ShutterSpeed.S_1_2000;
+        if (name.contains("1600")) return com.dronefly.app.model.CameraSettings.ShutterSpeed.S_1_1600;
+        if (name.contains("1250")) return com.dronefly.app.model.CameraSettings.ShutterSpeed.S_1_1250;
+        if (name.contains("1000")) return com.dronefly.app.model.CameraSettings.ShutterSpeed.S_1_1000;
+        if (name.contains("640"))  return com.dronefly.app.model.CameraSettings.ShutterSpeed.S_1_640;
+        if (name.contains("500"))  return com.dronefly.app.model.CameraSettings.ShutterSpeed.S_1_500;
+        return com.dronefly.app.model.CameraSettings.ShutterSpeed.S_1_800;
+    }
+
+    private static com.dronefly.app.model.CameraSettings.ApertureValue mapDjiAperture(String name) {
+        if (name.contains("5"))  return com.dronefly.app.model.CameraSettings.ApertureValue.F_5_6;
+        if (name.contains("11")) return com.dronefly.app.model.CameraSettings.ApertureValue.F_11;
+        return com.dronefly.app.model.CameraSettings.ApertureValue.F_8;
+    }
+
+    // ── Hisztogram ────────────────────────────────────────────────────
+
+    public interface HistogramListener {
+        void onUpdate(int[] data256);
+    }
+
+    /**
+     * Diagnosztikai szöveg — a panel státusz mezőjébe írjuk, nem logcatba.
+     * Megmutatja: kamera null-e, milyen histogram metódusokat talált.
+     */
+    public static String getHistogramDiagnostic() {
+        Camera camera = getCamera();
+        if (camera == null) return "Kamera: null (drón nincs csatlakoztatva?)";
+        StringBuilder sb = new StringBuilder("Kamera: " + camera.getClass().getSimpleName() + " | ");
+        int found = 0;
+        for (java.lang.reflect.Method m : camera.getClass().getMethods()) {
+            if (m.getName().toLowerCase().contains("histogram")) {
+                sb.append(m.getName()).append("(").append(m.getParameterTypes().length).append(") ");
+                found++;
+            }
+        }
+        if (found == 0) sb.append("NEM talált histogram metódust!");
+        return sb.toString();
+    }
+
+    public static void startHistogram(HistogramListener listener) {
+        Camera camera = getCamera();
+        if (camera == null) { Log.w(TAG, "Histogram: kamera null"); return; }
+
+        // 1. CALLBACK beállítása ELŐSZÖR — az enable előtt kell, hogy ne maradjon ki adat
+        boolean callbackSet = false;
+        for (java.lang.reflect.Method setter : camera.getClass().getMethods()) {
+            String sn = setter.getName().toLowerCase();
+            if (!sn.contains("histogram") || !sn.contains("callback")
+                    || setter.getParameterCount() != 1) continue;
+
+            Class<?> cbType = setter.getParameterTypes()[0];
+            if (cbType == null || cbType.isPrimitive()) continue;
+
+            if (!cbType.isInterface()) {
+                Log.w(TAG, "Histogram cb nem interface: " + cbType.getSimpleName() + " — skip");
+                continue;
+            }
+
+            // Rugalmas metódus keresés: int[] paraméter VAGY bármilyen egyetlen paraméter
+            java.lang.reflect.Method cbMethod = null;
+            for (java.lang.reflect.Method cm : cbType.getMethods()) {
+                if (cm.getParameterCount() == 1 && cm.getParameterTypes()[0] == int[].class) {
+                    cbMethod = cm;
+                    break;
+                }
+            }
+            if (cbMethod == null) {
+                // Fallback: első nem-Object metódus elfogadva
+                for (java.lang.reflect.Method cm : cbType.getMethods()) {
+                    if (cm.getParameterCount() == 1
+                            && cm.getDeclaringClass() != Object.class) {
+                        cbMethod = cm;
+                        Log.w(TAG, "Histogram: int[] nem talált, fallback: "
+                                + cm.getName() + "(" + cm.getParameterTypes()[0].getSimpleName() + ")");
+                        break;
+                    }
+                }
+            }
+            if (cbMethod == null) {
+                Log.w(TAG, "Histogram cbMethod nem található: " + cbType.getSimpleName());
+                continue;
+            }
+
+            final java.lang.reflect.Method finalCb = cbMethod;
+            final boolean isIntArray = cbMethod.getParameterTypes()[0] == int[].class;
+            try {
+                Object proxy = java.lang.reflect.Proxy.newProxyInstance(
+                        cbType.getClassLoader(), new Class[]{cbType},
+                        (p, method, args) -> {
+                            if (method.getName().equals(finalCb.getName())
+                                    && args != null && args.length == 1) {
+                                if (isIntArray && args[0] instanceof int[]) {
+                                    listener.onUpdate((int[]) args[0]);
+                                } else if (!isIntArray) {
+                                    Log.w(TAG, "Histogram: váratlan típus "
+                                            + (args[0] != null ? args[0].getClass().getSimpleName() : "null"));
+                                }
+                            }
+                            return null;
+                        });
+                setter.invoke(camera, proxy);
+                callbackSet = true;
+                Log.i(TAG, "Histogram callback beállítva: " + setter.getName() + "/" + cbMethod.getName());
+                break;
+            } catch (Throwable t) {
+                Log.w(TAG, "Histogram proxy hiba: " + t);
+            }
+        }
+        if (!callbackSet) Log.w(TAG, "Histogram: callback NEM beállítva");
+
+        // 2. ENABLE — a callback után; CompletionCallback-ot logoljuk
+        for (java.lang.reflect.Method m : camera.getClass().getMethods()) {
+            String n = m.getName().toLowerCase();
+            if (!n.contains("histogram") || !n.contains("enable")) continue;
+            Class<?>[] params = m.getParameterTypes();
+            if (params.length < 1 || params[0] != boolean.class) continue;
+
+            try {
+                if (params.length == 1) {
+                    m.invoke(camera, true);
+                    Log.i(TAG, "Histogram enable(1) OK");
+                } else {
+                    // 2. param: CompletionCallback — proxy-zuk, hogy lássuk az eredményt
+                    Class<?> compCbType = params[1];
+                    if (compCbType != null && compCbType.isInterface()) {
+                        java.lang.reflect.Method compMethod = null;
+                        for (java.lang.reflect.Method cm : compCbType.getMethods()) {
+                            if (cm.getParameterCount() == 1
+                                    && cm.getDeclaringClass() != Object.class) {
+                                compMethod = cm;
+                                break;
+                            }
+                        }
+                        if (compMethod != null) {
+                            final java.lang.reflect.Method finalComp = compMethod;
+                            Object compProxy = java.lang.reflect.Proxy.newProxyInstance(
+                                    compCbType.getClassLoader(), new Class[]{compCbType},
+                                    (p2, method2, args2) -> {
+                                        if (method2.getName().equals(finalComp.getName())) {
+                                            Object err = (args2 != null && args2.length > 0) ? args2[0] : null;
+                                            Log.i(TAG, "Histogram enable eredmény: "
+                                                    + (err == null ? "OK" : err.toString()));
+                                        }
+                                        return null;
+                                    });
+                            m.invoke(camera, true, compProxy);
+                            Log.i(TAG, "Histogram enable(2) hívva");
+                            break;
+                        }
+                    }
+                    m.invoke(camera, true, (Object) null);
+                    Log.i(TAG, "Histogram enable(2) null-callback-kal hívva");
+                }
+                break;
+            } catch (Throwable t) {
+                Log.w(TAG, "Histogram enable hiba: " + t);
+            }
+        }
+    }
+
+    public static void stopHistogram() {
+        Camera camera = getCamera();
+        if (camera == null) return;
+        try {
+            for (java.lang.reflect.Method setter : camera.getClass().getMethods()) {
+                String sn = setter.getName();
+                if (sn.contains("istogram") && sn.contains("allback")
+                        && setter.getParameterTypes().length == 1) {
+                    try { setter.invoke(camera, (Object) null); } catch (Throwable ignore) {}
+                    break;
+                }
+            }
+            for (java.lang.reflect.Method m : camera.getClass().getMethods()) {
+                String n = m.getName();
+                if (n.contains("istogram") && n.contains("nable")
+                        && m.getParameterTypes().length == 2
+                        && m.getParameterTypes()[0] == boolean.class) {
+                    try { m.invoke(camera, false, null); } catch (Throwable ignore) {}
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Histogram stop hiba: " + t.getMessage());
         }
     }
 

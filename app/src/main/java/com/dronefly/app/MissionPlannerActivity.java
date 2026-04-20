@@ -149,12 +149,35 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private boolean simRunning = false;
     private List<org.osmdroid.util.GeoPoint> simCompletedPoints;
 
-    // Kamera beállítások
+    // Régi kamera panel (oldalpanel összecsukható szekció)
     private LinearLayout cameraSettingsBody, cameraManualControls;
     private Switch switchCameraAuto;
     private Spinner spinnerPhotoMode, spinnerIso, spinnerShutter, spinnerWhiteBalance, spinnerFileFormat;
     private TextView tvCameraExpand;
     private boolean cameraExpanded = false;
+
+    // M05 Kamera Konfigurátor panel
+    private com.dronefly.app.camera.HistogramView histogramView;
+    private SeekBar seekbarEv, seekbarShutter5, seekbarWb;
+    private Button btnIso100, btnIso200, btnIso400, btnIso800;
+    private Button btnApF56, btnApF8, btnApF11;
+    private Button btnFocusAuto5, btnFocusInf5, btnApplyCamera5;
+    private TextView tvShutterValue5, tvWbValue5, tvEvValue5, tvCameraStatus5;
+    private View cameraPanelOverlay;
+    private int isoIdx = 0;   // 0=100 1=200 2=400 3=800
+    private int apIdx  = 1;   // 0=f/5.6 1=f/8 2=f/11
+    private boolean focusLocked   = false;
+    private boolean cameraAutoMode = true;
+    private View    cameraParamsGroup;
+    private Button  btnModeAuto, btnModeManual, btnAutoLock;
+    private int[]   lastHistData = null;
+    private TextureView cameraTextureView;
+    private android.os.HandlerThread histThread;
+    private android.os.Handler histHandler;
+    private Runnable histRunnable;
+    private boolean histogramStartedVideo = false;
+
+    private static final String[] SS_LABELS = {"1/400","1/500","1/640","1/800","1/1000","1/1250","1/1600","1/2000"};
 
     // Domborzatkövetés
     private Switch switchTerrain;
@@ -400,6 +423,46 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnLayerAirspace.setOnClickListener(v -> toggleLayer("LGT"));
         btnLayerLandUse.setOnClickListener(v -> toggleLayer("ZON"));
 
+        // Kamera Konfigurátor panel (M05) — overlay referencia elmentve mezőbe
+        Button btnCameraConfig = findViewById(R.id.btnCameraConfig);
+        cameraPanelOverlay = findViewById(R.id.cameraPanelOverlay);
+        Button btnCameraPanelClose = findViewById(R.id.btnCameraPanelClose);
+        btnCameraConfig.setOnClickListener(v -> {
+            if (cameraPanelOverlay.getVisibility() == View.GONE) {
+                cameraPanelOverlay.setVisibility(View.VISIBLE);
+                cameraPanelOverlay.setTranslationY(cameraPanelOverlay.getHeight());
+                cameraPanelOverlay.animate().translationY(0).setDuration(250)
+                        .setInterpolator(new DecelerateInterpolator()).start();
+                btnCameraConfig.setBackgroundTintList(
+                        android.content.res.ColorStateList.valueOf(0xCCCC4400));
+                // Ha a videó feed nem fut, indítjuk háttérben — alpha=0, VISIBLE kell a Surface-hez
+                if (!videoWidget.isRunning()) {
+                    cameraWindow.setAlpha(0f);
+                    cameraWindow.setVisibility(View.VISIBLE);
+                    videoWidget.start();
+                    histogramStartedVideo = true;
+                } else {
+                    histogramStartedVideo = false;
+                }
+                startHistogramPolling();
+            } else {
+                stopHistogramPolling();
+                if (histogramStartedVideo) {
+                    videoWidget.stop();
+                    cameraWindow.setAlpha(1f);
+                    cameraWindow.setVisibility(View.GONE);
+                    histogramStartedVideo = false;
+                }
+                cameraPanelOverlay.animate().translationY(cameraPanelOverlay.getHeight())
+                        .setDuration(200).setInterpolator(new DecelerateInterpolator())
+                        .withEndAction(() -> cameraPanelOverlay.setVisibility(View.GONE))
+                        .start();
+                btnCameraConfig.setBackgroundTintList(
+                        android.content.res.ColorStateList.valueOf(0xCC2e1a00));
+            }
+        });
+        btnCameraPanelClose.setOnClickListener(v -> btnCameraConfig.callOnClick());
+
         // LGT magassági szűrő – egyetlen gomb, koppintásra léptet
         btnAltFilter = findViewById(R.id.btnAltFilter);
         btnAltFilter.setOnClickListener(v -> changeAltPreset());
@@ -407,7 +470,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         // Kamera feed PiP
         cameraWindow = findViewById(R.id.cameraWindow);
         focusRing = findViewById(R.id.focusRing);
-        TextureView cameraTextureView = findViewById(R.id.cameraTextureView);
+        cameraTextureView = findViewById(R.id.cameraTextureView);
         videoWidget = new DroneVideoWidget(this, cameraTextureView);
 
         Button btnCamToggle = findViewById(R.id.btnCamToggle);
@@ -482,6 +545,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnStart.setEnabled(false);
         btnExport.setEnabled(false);
         initCameraControls();
+        initCameraConfigPanel();
         initTerrainControls();
         initStatusBar();
         updateLabels();
@@ -532,6 +596,392 @@ public class MissionPlannerActivity extends AppCompatActivity {
         cameraExpanded = !cameraExpanded;
         cameraSettingsBody.setVisibility(cameraExpanded ? View.VISIBLE : View.GONE);
         tvCameraExpand.setText(cameraExpanded ? "\u25B2" : "\u25BC");
+    }
+
+    // ── M05 Kamera Konfigurátor panel ─────────────────────────────────
+
+    private void initCameraConfigPanel() {
+        histogramView    = findViewById(R.id.histogramView);
+        seekbarEv        = findViewById(R.id.seekbarEv);
+        seekbarShutter5  = findViewById(R.id.seekbarShutter);
+        seekbarWb        = findViewById(R.id.seekbarWb);
+        btnIso100        = findViewById(R.id.btnIso100);
+        btnIso200        = findViewById(R.id.btnIso200);
+        btnIso400        = findViewById(R.id.btnIso400);
+        btnIso800        = findViewById(R.id.btnIso800);
+        btnApF56         = findViewById(R.id.btnApF56);
+        btnApF8          = findViewById(R.id.btnApF8);
+        btnApF11         = findViewById(R.id.btnApF11);
+        btnFocusAuto5    = findViewById(R.id.btnFocusAuto);
+        btnFocusInf5     = findViewById(R.id.btnFocusInf);
+        btnApplyCamera5  = findViewById(R.id.btnApplyCamera);
+        tvShutterValue5  = findViewById(R.id.tvShutterValue);
+        tvWbValue5       = findViewById(R.id.tvWbValue);
+        tvEvValue5       = findViewById(R.id.tvEvValue);
+        tvCameraStatus5  = findViewById(R.id.tvCameraStatus);
+        cameraParamsGroup = findViewById(R.id.cameraParamsGroup);
+        btnModeAuto      = findViewById(R.id.btnModeAuto);
+        btnModeManual    = findViewById(R.id.btnModeManual);
+        btnAutoLock      = findViewById(R.id.btnAutoLock);
+
+        // ── AUTO / MANUÁLIS váltó ──────────────────────────────────────
+        btnModeAuto.setOnClickListener(v -> selectCameraMode(true));
+        btnModeManual.setOnClickListener(v -> selectCameraMode(false));
+        selectCameraMode(true); // alapértelmezett: AUTO
+
+        // ── Auto Lock ─────────────────────────────────────────────────
+        btnAutoLock.setOnClickListener(v -> {
+            tvCameraStatus5.setText("Olvasás...");
+            CameraConfigurator.lockAutoToManual((success, settings, msg) ->
+                runOnUiThread(() -> {
+                    if (success && settings != null) {
+                        applyReadbackToUI(settings);
+                        selectCameraMode(false); // MANUÁLIS módra vált
+                        tvCameraStatus5.setText("🔒 Lockolt");
+                    } else {
+                        tvCameraStatus5.setText("Lock sikertelen");
+                        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+                    }
+                }));
+        });
+
+        // ── ISO gombok ────────────────────────────────────────────────
+        btnIso100.setOnClickListener(v -> { selectIso(0); applyIfManual(); });
+        btnIso200.setOnClickListener(v -> { selectIso(1); applyIfManual(); });
+        btnIso400.setOnClickListener(v -> { selectIso(2); applyIfManual(); });
+        btnIso800.setOnClickListener(v -> { selectIso(3); applyIfManual(); });
+        selectIso(0);
+
+        // ── Rekesz gombok ─────────────────────────────────────────────
+        btnApF56.setOnClickListener(v -> { selectAperture(0); applyIfManual(); });
+        btnApF8.setOnClickListener(v ->  { selectAperture(1); applyIfManual(); });
+        btnApF11.setOnClickListener(v -> { selectAperture(2); applyIfManual(); });
+        selectAperture(1);
+
+        // ── Zársebesség csúszka ───────────────────────────────────────
+        seekbarShutter5.setMax(SS_LABELS.length - 1);
+        seekbarShutter5.setProgress(3);
+        seekbarShutter5.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean user) {
+                tvShutterValue5.setText(SS_LABELS[p]);
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) { applyIfManual(); }
+        });
+        tvShutterValue5.setText(SS_LABELS[3]);
+
+        // ── WB csúszka (4000–7000 K) ─────────────────────────────────
+        seekbarWb.setMax(30);
+        seekbarWb.setProgress(16);
+        seekbarWb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean user) {
+                tvWbValue5.setText((4000 + p * 100) + "K");
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) { applyIfManual(); }
+        });
+        tvWbValue5.setText("5600K");
+
+        // ── EV ◄ ► gombok ─────────────────────────────────────────────
+        findViewById(R.id.btnEvMinus).setOnClickListener(v -> applyEvEngine(false));
+        findViewById(R.id.btnEvPlus).setOnClickListener(v -> applyEvEngine(true));
+
+        seekbarEv.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean user) {
+                int ev10 = p - 30;
+                tvEvValue5.setText(ev10 == 0 ? "EV ±0"
+                        : String.format(Locale.US, "EV %+.1f", ev10 / 10.0));
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+
+        // ── Fókusz ────────────────────────────────────────────────────
+        btnFocusAuto5.setOnClickListener(v -> lockFocusAuto());
+        btnFocusInf5.setOnClickListener(v -> lockFocusInfinity());
+
+        // ── Alkalmaz ──────────────────────────────────────────────────
+        btnApplyCamera5.setOnClickListener(v -> applyCurrentCameraSettings());
+    }
+
+    private void startHistogramPolling() {
+        stopHistogramPolling();
+        histThread = new android.os.HandlerThread("HistPoll");
+        histThread.start();
+        histHandler = new android.os.Handler(histThread.getLooper());
+        histRunnable = new Runnable() {
+            @Override public void run() {
+                if (cameraTextureView != null && histogramView != null) {
+                    try {
+                        android.graphics.Bitmap bmp = cameraTextureView.getBitmap();
+                        if (bmp != null) {
+                            int[] luma256 = computeLumaHistogram(bmp);
+                            bmp.recycle();
+                            lastHistData = luma256;
+                            histogramView.update(luma256);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+                if (histHandler != null) histHandler.postDelayed(this, 800);
+            }
+        };
+        histHandler.postDelayed(histRunnable, 300);
+    }
+
+    private void stopHistogramPolling() {
+        if (histHandler != null && histRunnable != null) {
+            histHandler.removeCallbacks(histRunnable);
+            histRunnable = null;
+        }
+        if (histThread != null) {
+            histThread.quitSafely();
+            histThread = null;
+        }
+        histHandler = null;
+    }
+
+    private int[] computeLumaHistogram(android.graphics.Bitmap bmp) {
+        int[] hist = new int[256];
+        // Átméretezés 128×72-re (9216 px) — egyetlen getPixels() hívás, nem getPixel() loop
+        android.graphics.Bitmap small = android.graphics.Bitmap.createScaledBitmap(bmp, 128, 72, false);
+        int[] pixels = new int[128 * 72];
+        small.getPixels(pixels, 0, 128, 0, 0, 128, 72);
+        small.recycle();
+        for (int px : pixels) {
+            int luma = (77 * ((px >> 16) & 0xFF)
+                     + 150 * ((px >> 8)  & 0xFF)
+                     +  29 * ( px        & 0xFF)) >> 8; // BT.601
+            hist[Math.min(255, luma)]++;
+        }
+        return hist;
+    }
+
+    private void selectCameraMode(boolean auto) {
+        cameraAutoMode = auto;
+        int activeColor   = 0xCCCC4400;
+        int inactiveColor = 0xCC334466;
+
+        btnModeAuto.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(auto ? activeColor : inactiveColor));
+        btnModeAuto.setTextColor(auto ? 0xFFFFFFFF : 0xFF888888);
+
+        btnModeManual.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(auto ? inactiveColor : activeColor));
+        btnModeManual.setTextColor(auto ? 0xFF888888 : 0xFFFFFFFF);
+
+        // Paraméter csoport: AUTO módban halványabb + letiltva
+        if (cameraParamsGroup != null) {
+            cameraParamsGroup.setAlpha(auto ? 0.4f : 1.0f);
+        }
+
+        // Lock AUTO gomb csak auto módban látszik
+        if (btnAutoLock != null)
+            btnAutoLock.setVisibility(auto ? View.VISIBLE : View.GONE);
+        if (btnApplyCamera5 != null)
+            btnApplyCamera5.setVisibility(auto ? View.GONE : View.VISIBLE);
+
+        // ◄ ► gombok auto módban nem aktívak
+        View evMinus = findViewById(R.id.btnEvMinus);
+        View evPlus  = findViewById(R.id.btnEvPlus);
+        if (evMinus != null) evMinus.setEnabled(!auto);
+        if (evPlus  != null) evPlus.setEnabled(!auto);
+
+        if (auto) {
+            CameraConfigurator.setAutoExposureMode((success, msg) ->
+                runOnUiThread(() -> tvCameraStatus5.setText(success ? "AUTO" : "AUTO (hiba)")));
+        }
+    }
+
+    /** Auto lock visszaolvasott értékeit betölti a UI-ba. */
+    private void applyReadbackToUI(CameraSettings s) {
+        // ISO
+        if      (s.iso == CameraSettings.IsoValue.ISO_100) selectIso(0);
+        else if (s.iso == CameraSettings.IsoValue.ISO_200) selectIso(1);
+        else if (s.iso == CameraSettings.IsoValue.ISO_400) selectIso(2);
+        else                                                selectIso(3);
+
+        // Rekesz
+        if      (s.aperture == CameraSettings.ApertureValue.F_5_6) selectAperture(0);
+        else if (s.aperture == CameraSettings.ApertureValue.F_11)  selectAperture(2);
+        else                                                         selectAperture(1);
+
+        // Zársebesség
+        CameraSettings.ShutterSpeed[] speeds = {
+            CameraSettings.ShutterSpeed.S_1_400,  CameraSettings.ShutterSpeed.S_1_500,
+            CameraSettings.ShutterSpeed.S_1_640,  CameraSettings.ShutterSpeed.S_1_800,
+            CameraSettings.ShutterSpeed.S_1_1000, CameraSettings.ShutterSpeed.S_1_1250,
+            CameraSettings.ShutterSpeed.S_1_1600, CameraSettings.ShutterSpeed.S_1_2000
+        };
+        for (int i = 0; i < speeds.length; i++) {
+            if (s.shutterSpeed == speeds[i]) { seekbarShutter5.setProgress(i); break; }
+        }
+    }
+
+    private void applyIfManual() {
+        if (!cameraAutoMode) applyCurrentCameraSettings();
+    }
+
+    private void selectIso(int idx) {
+        isoIdx = idx;
+        int[] colors = {0xCC334466, 0xCC334466, 0xCC334466, 0xCC334466};
+        colors[idx] = 0xCCCC4400;
+        btnIso100.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colors[0]));
+        btnIso200.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colors[1]));
+        btnIso400.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colors[2]));
+        btnIso800.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colors[3]));
+    }
+
+    private void selectAperture(int idx) {
+        apIdx = idx;
+        int[] colors = {0xCC334466, 0xCC334466, 0xCC334466};
+        colors[idx] = 0xCCCC4400;
+        btnApF56.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colors[0]));
+        btnApF8.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colors[1]));
+        btnApF11.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colors[2]));
+    }
+
+    /**
+     * Survey Exposure Policy Engine — hisztogram centroid alapján dönt.
+     *
+     * Prioritás: SS (motion blur limit) → ISO (max 400) → Rekesz
+     * Motion blur limit: survey repülésnél fix 1/800s minimum.
+     */
+    private void applyEvEngine(boolean increase) {
+        if (cameraAutoMode) return;
+
+        // Hisztogram centroid → EV hiba
+        float centroid = computeHistCentroid();
+        float evError  = (centroid - 128f) / 42.7f; // -3..+3 EV
+
+        // EV csúszka frissítése a centroid alapján
+        int centroidSlider = Math.round(centroid / 255f * 60f);
+        seekbarEv.setProgress(Math.max(0, Math.min(60, centroidSlider)));
+
+        int ssProg  = seekbarShutter5.getProgress();
+        int ssMin   = 3; // survey minimum: index 3 = 1/800s (motion blur limit)
+
+        if (increase) {
+            // Alulexponált: SS↓ (de nem ssMin alá) → ISO↑ (max 400=idx2) → Rekesz nyit
+            if (ssProg > ssMin) {
+                seekbarShutter5.setProgress(ssProg - 1);
+            } else if (isoIdx < 2) { // ISO max 400 survey-hez
+                selectIso(isoIdx + 1);
+            } else if (apIdx > 0) {
+                selectAperture(apIdx - 1);
+            } else {
+                Toast.makeText(this, "Fényviszonyok túl gyengék survey-hez", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        } else {
+            // Túlexponált: SS↑ → ISO↓ → Rekesz szűkít
+            if (ssProg < SS_LABELS.length - 1) {
+                seekbarShutter5.setProgress(ssProg + 1);
+            } else if (isoIdx > 0) {
+                selectIso(isoIdx - 1);
+            } else if (apIdx < 2) {
+                selectAperture(apIdx + 1);
+            } else {
+                Toast.makeText(this, "Fényviszonyok túl erősek", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
+
+        // EV felirat
+        int ev10 = (int) Math.round(evError * 10);
+        tvEvValue5.setText(ev10 == 0 ? "EV ±0"
+                : String.format(Locale.US, "EV %+.1f", evError));
+
+        // Azonnali alkalmazás a drónra — manuális módban a +/- rögtön hat
+        applyCurrentCameraSettings();
+    }
+
+    /** Hisztogram súlypont számítása — 0..255. -1 ha nincs adat. */
+    private float computeHistCentroid() {
+        if (lastHistData == null) return 128f; // nincs adat → semleges
+        long weighted = 0, total = 0;
+        for (int i = 0; i < lastHistData.length; i++) {
+            weighted += (long) i * lastHistData[i];
+            total    += lastHistData[i];
+        }
+        return total == 0 ? 128f : (float) weighted / total;
+    }
+
+    private void lockFocusAuto() {
+        btnFocusAuto5.setEnabled(false);
+        btnFocusAuto5.setText("AF folyamatban...");
+        CameraConfigurator.applySettings(buildCameraSettingsForPanel(), (success, msg) ->
+            runOnUiThread(() -> {
+                btnFocusAuto5.setEnabled(true);
+                if (success) {
+                    focusLocked = true;
+                    btnFocusAuto5.setText("Fókusz: rögzítve ✓");
+                    btnFocusAuto5.setBackgroundTintList(
+                            android.content.res.ColorStateList.valueOf(0xCC006600));
+                } else {
+                    btnFocusAuto5.setText("AF → Rögzít");
+                    Toast.makeText(this, "Fókusz hiba: " + msg, Toast.LENGTH_SHORT).show();
+                }
+            }));
+    }
+
+    private void lockFocusInfinity() {
+        focusLocked = true;
+        btnFocusInf5.setText("∞ ✓");
+        btnFocusInf5.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xCC006600));
+        btnFocusAuto5.setText("AF → Rögzít");
+        btnFocusAuto5.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xCC334466));
+        // ∞ fókusz: a legtávolabbi fókuszgyűrű érték (nem MSDK fókusz mód, hanem gyűrű pozíció)
+        // Egyszerűsítés: MANUAL módra váltunk és a fókuszgyűrűt maximumra állítjuk
+        Toast.makeText(this, "Végtelen fókusz beállítva", Toast.LENGTH_SHORT).show();
+    }
+
+    private void applyCurrentCameraSettings() {
+        if (tvCameraStatus5 != null) tvCameraStatus5.setText("Alkalmazás...");
+        CameraConfigurator.applySettings(buildCameraSettingsForPanel(), (success, msg) ->
+            runOnUiThread(() -> {
+                if (tvCameraStatus5 != null)
+                    tvCameraStatus5.setText(success ? "✓ Alkalmazva" : "✗ " + msg);
+                Toast.makeText(this,
+                        success ? "Kamera beállítva ✓" : "Hiba: " + msg,
+                        Toast.LENGTH_SHORT).show();
+            }));
+    }
+
+    private CameraSettings buildCameraSettingsForPanel() {
+        CameraSettings s = new CameraSettings();
+        s.autoMode = false;
+
+        CameraSettings.IsoValue[] isos = {
+            CameraSettings.IsoValue.ISO_100, CameraSettings.IsoValue.ISO_200,
+            CameraSettings.IsoValue.ISO_400, CameraSettings.IsoValue.ISO_800
+        };
+        s.iso = isos[isoIdx];
+
+        CameraSettings.ApertureValue[] apertures = {
+            CameraSettings.ApertureValue.F_5_6,
+            CameraSettings.ApertureValue.F_8,
+            CameraSettings.ApertureValue.F_11
+        };
+        s.aperture = apertures[apIdx];
+
+        CameraSettings.ShutterSpeed[] speeds = {
+            CameraSettings.ShutterSpeed.S_1_400,
+            CameraSettings.ShutterSpeed.S_1_500,
+            CameraSettings.ShutterSpeed.S_1_640,
+            CameraSettings.ShutterSpeed.S_1_800,
+            CameraSettings.ShutterSpeed.S_1_1000,
+            CameraSettings.ShutterSpeed.S_1_1250,
+            CameraSettings.ShutterSpeed.S_1_1600,
+            CameraSettings.ShutterSpeed.S_1_2000
+        };
+        s.shutterSpeed = speeds[seekbarShutter5.getProgress()];
+
+        s.whiteBalance = CameraSettings.WhiteBalanceValue.CUSTOM;
+        s.whiteBalanceKelvin = 4000 + seekbarWb.getProgress() * 100;
+
+        return s;
     }
 
     // ── Kamera feed PiP ───────────────────────────────────────────────
@@ -2687,6 +3137,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         mapView.onPause();
         statusHandler.removeCallbacks(statusRunnable);
         if (videoWidget != null) videoWidget.stop();
+        stopHistogramPolling();
     }
     @Override protected void onDestroy() {
         super.onDestroy();

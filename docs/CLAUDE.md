@@ -33,6 +33,7 @@ Az L1–L4 az egyetlen forrása az implementációs specifikációnak.
 - **M02** — Grid Engine (GsdCalculator, GridMissionGenerator)
 - **M03** — Export / Import (MissionExporter, CsvMissionParser)
 - **M04** — DJI Integráció (MissionUploader, DJIHelper)
+- **M05** — Kamera Konfigurátor (HistogramView, CameraConfigurator, panel_camera_config.xml)
 
 ## Platformspecifikus megjegyzések
 
