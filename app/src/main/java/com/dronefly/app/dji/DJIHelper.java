@@ -101,6 +101,16 @@ public class DJIHelper {
 
     public boolean isRegistered() { return registered; }
 
+    public void reconnect() {
+        if (!registered) return;
+        try {
+            DJISDKManager.getInstance().startConnectionToProduct();
+            Log.i(TAG, "startConnectionToProduct újra meghívva");
+        } catch (Throwable t) {
+            Log.e(TAG, "reconnect hiba: " + t.getMessage());
+        }
+    }
+
     // ── Telemetria segédek (reflexión keresztül – Aircraft API nincs a provided stubban) ──
 
     /** RC csatlakoztatva van-e (reflexió az Aircraft-ból) */

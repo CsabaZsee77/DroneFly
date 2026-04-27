@@ -46,6 +46,9 @@ import com.dronefly.app.layers.LandUseLayer;
 import com.dronefly.app.layers.AirspaceLayer;
 import com.dronefly.app.layers.ProtectedAreasLayer;
 import com.dronefly.app.mission.CsvMissionParser;
+import com.dronefly.app.sync.AuthManager;
+import com.dronefly.app.sync.NetworkMonitor;
+import com.dronefly.app.sync.SyncManager;
 import com.dronefly.app.mission.ElevationProvider;
 import com.dronefly.app.mission.GridMissionGenerator;
 import com.dronefly.app.mission.GsdCalculator;
@@ -58,6 +61,9 @@ import com.dronefly.app.model.ObstacleData;
 import com.dronefly.app.model.WaypointData;
 
 import org.osmdroid.config.Configuration;
+import org.osmdroid.tileprovider.MapTileProviderBasic;
+import org.osmdroid.tileprovider.modules.IFilesystemCache;
+import org.osmdroid.tileprovider.tilesource.ITileSource;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
@@ -89,6 +95,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MissionPlannerActivity extends AppCompatActivity {
 
@@ -183,6 +191,16 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private Switch switchTerrain;
     private TextView tvTerrainInfo;
 
+    // Crosshatch (keresztrács) mód
+    private Switch   switchCrosshatch;
+    private SeekBar  sbCrosshatchAngle;
+    private TextView tvCrosshatchAngle;
+
+    // Szinkronizáció UI
+    private Button   btnSync, btnLogin;
+    private TextView tvSyncStatus;
+    private final NetworkMonitor.Listener networkListener = state -> updateSyncStatus();
+
     // Panel csúsztatás
     private android.widget.LinearLayout sidePanelContainer;
     private ScrollView sidePanel;
@@ -216,6 +234,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private TextView sbDrone, sbRc, sbRcBatt, sbGps, sbDroneBatt, sbTabletBatt, sbKp;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private static final int STATUS_INTERVAL_MS = 2000;
+    private final ExecutorService djiExecutor = Executors.newSingleThreadExecutor();
     private long lastKpFetchMs = 0;
     private static final long KP_FETCH_INTERVAL_MS = 10 * 60 * 1000L; // 10 perc
 
@@ -253,6 +272,12 @@ public class MissionPlannerActivity extends AppCompatActivity {
         // Cache méret korlát: 200 MB (Crystal Sky: bővítve a zoom miatti tile igény miatt)
         Configuration.getInstance().setTileFileSystemCacheMaxBytes(200L * 1024L * 1024L);
         Configuration.getInstance().setTileFileSystemCacheTrimBytes(160L * 1024L * 1024L);
+        // In-memory tile limit: 6 tile = ~1.5MB — Crystal Sky heap nyomás ellen
+        Configuration.getInstance().setCacheMapTileCount((short) 6);
+        // 1 letöltési szál: kevesebb párhuzamos bitmap allokáció → kevesebb GC
+        Configuration.getInstance().setTileDownloadThreads((short) 1);
+        // Letöltési sor limit: 10 — gyors zoom se torlassza fel a sort
+        Configuration.getInstance().setTileDownloadMaxQueueSize((short) 10);
         // Egyedi user agent – az OSM tile szerver megköveteli
         Configuration.getInstance().setUserAgentValue("DroneFlyApp/1.0 (Android dronefly.app)");
 
@@ -266,12 +291,38 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     private void initMap() {
         mapView = findViewById(R.id.mapView);
-        // Próbáljuk HTTPS tile source-szal (néhány emulátor a HTTP-t blokkolja)
-        // Google Satellite — megbízható, API kulcs nélkül
-        mapView.setTileSource(buildSatelliteTileSource());
+
+        // TileWriter (fájlalapú) helyett SqlTileWriter-t használnánk normálisan API 10+ esetén,
+        // de a SqlTileWriter → MapTileSqlCacheProvider → "sqlcache" HandlerThread ART 5.1-en
+        // SIGSEGV-t okoz GC közbeni SQLite cursor felszabadításkor.
+        // TileWriter átadásával a MapTileProviderBasic MapTileFilesystemProvider-t választ
+        // (fájlalapú, "filesystem" szál, nincs SQLite → nincs crash).
+        MapTileProviderBasic provider = new MapTileProviderBasic(this, buildSatelliteTileSource(),
+                new org.osmdroid.tileprovider.modules.TileWriter());
+        mapView.setTileProvider(provider);
+
         mapView.setMultiTouchControls(true);
         mapView.setUseDataConnection(true);
         mapView.setBuiltInZoomControls(false);
+        mapView.setMaxZoomLevel(20.0);
+
+        // Zoom gesztus alatt szüneteltetjük a tile letöltést — OOM védelme
+        mapView.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_POINTER_DOWN: // 2. ujj = pinch-zoom kezdete
+                    mapView.setUseDataConnection(false);
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_POINTER_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    // 300ms késleltetés: a zoom animáció lecsengése után
+                    mapView.postDelayed(() -> {
+                        if (isWifiConnected()) mapView.setUseDataConnection(true);
+                    }, 300);
+                    break;
+            }
+            return false; // osmdroid továbbra is kezeli az eseményt
+        });
 
         // Magyarország közép + jó zoom szint
         mapView.getController().setZoom(11.0);  // Pest megye / Budapest térség
@@ -549,6 +600,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         initCameraControls();
         initCameraConfigPanel();
         initTerrainControls();
+        initCrosshatchControls();
+        initSyncControls();
         initStatusBar();
         updateLabels();
     }
@@ -1091,31 +1144,30 @@ public class MissionPlannerActivity extends AppCompatActivity {
             }
         }
 
-        // ── DJI telemetria ──
-        try {
-            DJIHelper dji = DJIHelper.getInstance();
-
-            // RC állapotát a dróntól FÜGGETLENÜL mutatjuk —
-            // az RC önállóan is érzékelhető, még mielőtt a drón csatlakozna
-            boolean rcOk = dji.isRcConnected();
-            sbRc.setText("RC: " + (rcOk ? "OK" : "nincs"));
-            sbRc.setTextColor(rcOk ? 0xFF44FF88 : 0xFFFF4444);
-            if (!rcOk) { sbRcBatt.setText("--"); sbRcBatt.setTextColor(0xFF888888); }
-
-            if (!dji.isConnected()) {
-                sbDrone.setText("DRON: nincs");
-                sbDrone.setTextColor(0xFFFF4444);
-                sbGps.setText("SAT: --"); sbGps.setTextColor(0xFF888888);
-                sbDroneBatt.setText("AKKU: --"); sbDroneBatt.setTextColor(0xFF888888);
-                lastSatCount = 0;
-                updateStartButtonState();
-                return;
-            }
-
-            // Drón neve
-            String name = dji.getConnectedProductName();
-            sbDrone.setText(name != null ? name : "Dron");
-            sbDrone.setTextColor(0xFF44FF88);
+        // ── DJI telemetria – háttérszálon, hogy ne blokkoljuk a főszálat ──
+        djiExecutor.submit(() -> {
+            try {
+                DJIHelper dji = DJIHelper.getInstance();
+                boolean rcOk = dji.isRcConnected();
+                boolean connected = dji.isConnected();
+                String name = connected ? dji.getConnectedProductName() : null;
+                runOnUiThread(() -> {
+                    if (sbRc == null) return;
+                    sbRc.setText("RC: " + (rcOk ? "OK" : "nincs"));
+                    sbRc.setTextColor(rcOk ? 0xFF44FF88 : 0xFFFF4444);
+                    if (!rcOk) { sbRcBatt.setText("--"); sbRcBatt.setTextColor(0xFF888888); }
+                    if (!connected) {
+                        sbDrone.setText("DRON: nincs"); sbDrone.setTextColor(0xFFFF4444);
+                        sbGps.setText("SAT: --"); sbGps.setTextColor(0xFF888888);
+                        sbDroneBatt.setText("AKKU: --"); sbDroneBatt.setTextColor(0xFF888888);
+                        lastSatCount = 0;
+                        updateStartButtonState();
+                        return;
+                    }
+                    sbDrone.setText(name != null ? name : "Dron");
+                    sbDrone.setTextColor(0xFF44FF88);
+                });
+                if (!connected) return;
 
             // RC akku (async)
             dji.getRcBatteryPercent(pct -> runOnUiThread(() -> {
@@ -1148,17 +1200,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 sbGps.setText("SAT: " + sats + (homeSet ? " H" : ""));
                 sbGps.setTextColor(sats >= 10 ? 0xFF44FF88 : sats >= 6 ? 0xFFFFAA00 : 0xFFFF4444);
                 updateStartButtonState();
-                // Mindig tároljuk a drón pozícióját (GPS gomb használja)
                 if (lat != 0 && lon != 0) {
                     lastDroneLat = lat;
                     lastDroneLon = lon;
-                }
-                if (lat != 0 && lon != 0) {
                     updateDroneMarker(lat, lon);
                 }
             }));
 
-        } catch (Throwable t) { /* DJI SDK nem elérhető */ }
+            } catch (Throwable t) { /* DJI SDK nem elérhető */ }
+        });
 
     }
 
@@ -1253,6 +1303,179 @@ public class MissionPlannerActivity extends AppCompatActivity {
             } else {
                 tvTerrainInfo.setText("Magasság korrekció DEM (SRTM) domborzati modell alapján");
                 tvTerrainInfo.setTextColor(0xFF888888);
+            }
+        });
+    }
+
+    // ── Crosshatch (keresztrács) mód ─────────────────────────────────────
+
+    private void initCrosshatchControls() {
+        switchCrosshatch  = findViewById(R.id.switchCrosshatch);
+        sbCrosshatchAngle = findViewById(R.id.sbCrosshatchAngle);
+        tvCrosshatchAngle = findViewById(R.id.tvCrosshatchAngle);
+
+        switchCrosshatch.setOnCheckedChangeListener((btn, isChecked) -> {
+            int vis = isChecked ? View.VISIBLE : View.GONE;
+            sbCrosshatchAngle.setVisibility(vis);
+            tvCrosshatchAngle.setVisibility(vis);
+            autoGenerateIfReady();
+        });
+
+        sbCrosshatchAngle.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb, int p, boolean user) {
+                tvCrosshatchAngle.setText("2. rács iránya: " + p + "°");
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb) {}
+            @Override public void onStopTrackingTouch(SeekBar sb) { autoGenerateIfReady(); }
+        });
+        tvCrosshatchAngle.setText("2. rács iránya: 90°");
+    }
+
+    // ── Szinkronizáció panel ──────────────────────────────────────────────
+
+    private void initSyncControls() {
+        btnSync      = findViewById(R.id.btnSync);
+        btnLogin     = findViewById(R.id.btnLogin);
+        tvSyncStatus = findViewById(R.id.tvSyncStatus);
+
+        btnLogin.setOnClickListener(v -> showLoginOrLogoutDialog());
+        btnSync.setOnClickListener(v -> doSync());
+
+        updateSyncStatus();
+    }
+
+    private void updateSyncStatus() {
+        if (btnSync == null) return;
+        boolean online = NetworkMonitor.getInstance(this).isOnline();
+        boolean authed = AuthManager.getInstance(this).isAuthenticated();
+
+        if (!online) {
+            tvSyncStatus.setText("Offline");
+            tvSyncStatus.setTextColor(0xFF888888);
+            btnSync.setEnabled(false);
+            btnLogin.setText("Bejelentkezes");
+        } else if (!authed) {
+            tvSyncStatus.setText("Online – nincs bejelentkezve");
+            tvSyncStatus.setTextColor(0xFFFFAA00);
+            btnSync.setEnabled(false);
+            btnLogin.setText("Bejelentkezes");
+        } else {
+            String user = AuthManager.getInstance(this).getUsername();
+            tvSyncStatus.setText("Online – " + (user != null ? user : "bejelentkezve"));
+            tvSyncStatus.setTextColor(0xFF44DD88);
+            btnSync.setEnabled(true);
+            btnLogin.setText("Kijelentkezes");
+        }
+    }
+
+    private void showLoginOrLogoutDialog() {
+        AuthManager am = AuthManager.getInstance(this);
+        if (am.isAuthenticated()) {
+            new AlertDialog.Builder(this)
+                .setTitle("Kijelentkezés")
+                .setMessage("Biztosan kijelentkezel? A szinkronizáció leáll.")
+                .setPositiveButton("Kijelentkezés", (d, w) -> {
+                    am.logout(null);
+                    updateSyncStatus();
+                })
+                .setNegativeButton("Mégse", null)
+                .show();
+            return;
+        }
+
+        // Felhasználónév + jelszó dialog
+        showUsernamePasswordDialog(am);
+    }
+
+    private void showUsernamePasswordDialog(AuthManager am) {
+        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
+        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = (int)(16 * getResources().getDisplayMetrics().density);
+        layout.setPadding(pad, pad, pad, 0);
+
+        EditText etUser = new EditText(this);
+        etUser.setHint("Felhasználónév");
+        etUser.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        layout.addView(etUser);
+
+        EditText etPass = new EditText(this);
+        etPass.setHint("Jelszó");
+        etPass.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        layout.addView(etPass);
+
+        final androidx.appcompat.app.AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("Dronterapia bejelentkezés")
+            .setView(layout)
+            .setPositiveButton("Bejelentkezés", null) // listener-t kézzel állítjuk be
+            .setNegativeButton("Mégse", null)
+            .setCancelable(true)
+            .create();
+
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String user = etUser.getText().toString().trim();
+                String pass = etPass.getText().toString();
+                if (user.isEmpty() || pass.isEmpty()) {
+                    Toast.makeText(this, "Add meg a felhasználónevet és jelszót!", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                tvSyncStatus.setText("Bejelentkezés...");
+                am.login(user, pass, new AuthManager.LoginCallback() {
+                    @Override public void onSuccess(String token, String username) {
+                        runOnUiThread(() -> {
+                            if (dialog.isShowing()) dialog.dismiss();
+                            updateSyncStatus();
+                            Toast.makeText(MissionPlannerActivity.this,
+                                "Bejelentkezve: " + username, Toast.LENGTH_SHORT).show();
+                        });
+                    }
+                    @Override public void onError(String message) {
+                        runOnUiThread(() -> {
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                            tvSyncStatus.setText("Hiba: " + message);
+                            tvSyncStatus.setTextColor(0xFFFF4444);
+                            Toast.makeText(MissionPlannerActivity.this,
+                                "Bejelentkezési hiba: " + message, Toast.LENGTH_LONG).show();
+                        });
+                    }
+                });
+            });
+        });
+
+        dialog.show();
+    }
+
+    private void doSync() {
+        btnSync.setEnabled(false);
+        tvSyncStatus.setText("Szinkronizálás...");
+        SyncManager.getInstance(this).syncAll(new SyncManager.SyncCallback() {
+            @Override public void onProgress(String message) {
+                runOnUiThread(() -> tvSyncStatus.setText(message));
+            }
+            @Override public void onComplete(SyncManager.SyncResult result,
+                                              int uploaded, int downloaded, String errorMessage) {
+                runOnUiThread(() -> {
+                    switch (result) {
+                        case SUCCESS:
+                            tvSyncStatus.setText("Kész: ↑" + uploaded + " ↓" + downloaded);
+                            tvSyncStatus.setTextColor(0xFF44DD88);
+                            break;
+                        case SKIPPED_OFFLINE:
+                            tvSyncStatus.setText("Offline – nincs hálózat");
+                            tvSyncStatus.setTextColor(0xFF888888);
+                            break;
+                        case SKIPPED_FLIGHT_ACTIVE:
+                            tvSyncStatus.setText("Sync letiltva repülés közben");
+                            tvSyncStatus.setTextColor(0xFFFFAA00);
+                            break;
+                        default:
+                            tvSyncStatus.setText("Hiba: " + (errorMessage != null ? errorMessage : "ismeretlen"));
+                            tvSyncStatus.setTextColor(0xFFFF4444);
+                    }
+                    updateSyncStatus(); // gomb állapot frissítése
+                });
             }
         });
     }
@@ -1428,6 +1651,20 @@ public class MissionPlannerActivity extends AppCompatActivity {
         }
     }
 
+    /** WiFi-n van-e (mobilneten NEM töltünk tile-t — OOM védelme Crystal Sky-on). */
+    private boolean isWifiConnected() {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected()
+                    && info.getType() == ConnectivityManager.TYPE_WIFI;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /**
      * Online/offline mód beállítása a térkép csempe letöltőnek.
      * Ha nincs internet: setUseDataConnection(false) → csak a helyi cache-ből tölt,
@@ -1435,12 +1672,12 @@ public class MissionPlannerActivity extends AppCompatActivity {
      * Hívódik: onResume(), toggleMapSource() után.
      */
     private void updateMapDataConnection() {
-        boolean online = isNetworkAvailable();
-        mapView.setUseDataConnection(online);
-        if (!online) {
-            android.util.Log.i("MapOffline",
-                    "Nincs internet — térkép csak cache-ből tölt");
-        }
+        // Csak WiFi-n töltünk tile-t — mobilneten OOM-ot okoz Crystal Sky-on
+        boolean wifi = isWifiConnected();
+        mapView.setUseDataConnection(wifi);
+        android.util.Log.i("MapOffline", wifi
+                ? "WiFi — tile letöltés engedélyezve"
+                : "Nincs WiFi — csak disk cache-ből tölt");
     }
 
     /**
@@ -1807,7 +2044,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 String name = currentPlanFile.getName()
                     .replace(ProjectManager.FILE_EXT, "").replace('_', ' ');
                 ProjectManager.saveProjectToFile(
-                    this, currentPlanFile, name, polygonPoints, null, buildConfig());
+                    this, currentPlanFile, name, polygonPoints, buildConfig());
                 updatePlanNameLabel();
                 Toast.makeText(this, "Mentve: " + currentPlanFile.getName(), Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
@@ -1870,7 +2107,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         try {
             MissionConfig config = buildConfig();
             File saved = ProjectManager.saveProject(
-                this, name, polygonPoints, null, config);
+                this, name, polygonPoints, config);
             currentPlanFile = saved;
             updatePlanNameLabel();
             Toast.makeText(this,
@@ -1963,8 +2200,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
             // ── Akadályok visszaállítása ──────────────────────────────────
             for (ObstacleData obs : data.obstacles) {
-                addObstacle(new GeoPoint(obs.latitude, obs.longitude),
-                    obs.radiusM, obs.heightM);
+                addObstacleWithMeta(obs);
             }
 
             // ── Térkép középpontja a polygon körülhatárolt területére ─────
@@ -2024,6 +2260,22 @@ public class MissionPlannerActivity extends AppCompatActivity {
         // terrainFollowing → switchTerrain
         if (switchTerrain != null) {
             switchTerrain.setChecked(data.terrainFollowing);
+        }
+
+        // gridMode → switchCrosshatch; crosshatchHeadingDeg → sbCrosshatchAngle
+        if (switchCrosshatch != null) {
+            boolean crosshatch = "crosshatch".equals(data.gridMode);
+            switchCrosshatch.setChecked(crosshatch);
+            int crosshatchVis = crosshatch ? View.VISIBLE : View.GONE;
+            if (sbCrosshatchAngle != null) {
+                sbCrosshatchAngle.setVisibility(crosshatchVis);
+                int chProg = (int) Math.round(data.crosshatchHeadingDeg);
+                sbCrosshatchAngle.setProgress(Math.max(0, Math.min(179, chProg)));
+            }
+            if (tvCrosshatchAngle != null) {
+                tvCrosshatchAngle.setVisibility(crosshatchVis);
+                tvCrosshatchAngle.setText("2. rács iránya: " + (int) data.crosshatchHeadingDeg + "°");
+            }
         }
 
         // droneProfile → spinnerDrone (name alapján keresés)
@@ -2126,6 +2378,37 @@ public class MissionPlannerActivity extends AppCompatActivity {
             })
             .setNegativeButton("Megse", null)
             .show();
+    }
+
+    /** Fájlból betöltött akadály visszaállítása — id és label megőrzésével */
+    private void addObstacleWithMeta(ObstacleData obs) {
+        obstacleList.add(obs);
+        GeoPoint p = new GeoPoint(obs.latitude, obs.longitude);
+        Polygon circle = buildCircleOverlay(obs.latitude, obs.longitude, obs.radiusM);
+        obstacleOverlays.add(circle);
+        mapView.getOverlays().add(0, circle);
+        Marker m = new Marker(mapView);
+        m.setPosition(p);
+        String label = (obs.label != null && !obs.label.isEmpty()) ? obs.label : obs.id;
+        m.setTitle(label.isEmpty() ? "Akadaly #" + obstacleList.size() : label);
+        m.setSnippet(String.format("Sugar: %.0fm | Mag: %.0fm", obs.radiusM, obs.heightM));
+        m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+        m.setOnMarkerClickListener((marker, mv) -> {
+            int idx = obstacleMarkers.indexOf(marker);
+            ObstacleData o = (idx >= 0 && idx < obstacleList.size()) ? obstacleList.get(idx) : obs;
+            new AlertDialog.Builder(MissionPlannerActivity.this)
+                .setTitle(m.getTitle())
+                .setMessage(String.format(
+                    "Pozicio: %.5f, %.5f\nBiztonsagi zona: %.0f m\nMagassag: %.0f m",
+                    o.latitude, o.longitude, o.radiusM, o.heightM))
+                .setPositiveButton("Torles", (d2, w2) -> removeObstacle(idx))
+                .setNegativeButton("Bezaras", null)
+                .show();
+            return true;
+        });
+        obstacleMarkers.add(m);
+        mapView.getOverlays().add(m);
+        mapView.invalidate();
     }
 
     /** Akadály hozzáadása a listához, marker és kör overlay rajzolásával */
@@ -2530,7 +2813,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 String autoName = "auto_" + new java.text.SimpleDateFormat(
                     "yyyy-MM-dd_HH-mm", java.util.Locale.getDefault()).format(new java.util.Date());
                 File saved = ProjectManager.saveProject(
-                    this, autoName, polygonPoints, null, buildConfig());
+                    this, autoName, polygonPoints, buildConfig());
                 currentPlanFile = saved;
                 updatePlanNameLabel();
             } catch (Exception ignored) {}
@@ -2682,6 +2965,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         missionRunning  = running;
         missionPaused   = false;
         missionUploaded = false;
+        SyncManager.getInstance(this).setFlightActive(running);
         btnPauseMission.setEnabled(running);
         btnStopMission.setEnabled(running);
         btnSimulate.setEnabled(!running && lastResult != null);
@@ -3062,10 +3346,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
         c.frontlapPercent   = getFrontlap();
         c.speedMs           = getSpeed();
         c.flightAngleDeg    = getAngle();
-        c.terrainFollowing  = switchTerrain != null && switchTerrain.isChecked();
-        c.offsetM           = getOffset();
-        c.obstacles         = new ArrayList<>(obstacleList); // akadályok másolata
-        c.cameraSettings    = buildCameraSettings();
+        c.terrainFollowing     = switchTerrain != null && switchTerrain.isChecked();
+        c.offsetM              = getOffset();
+        c.obstacles            = new ArrayList<>(obstacleList);
+        c.cameraSettings       = buildCameraSettings();
+        boolean crosshatch     = switchCrosshatch != null && switchCrosshatch.isChecked();
+        c.gridMode             = crosshatch ? "crosshatch" : "single";
+        c.crosshatchHeadingDeg = sbCrosshatchAngle != null ? sbCrosshatchAngle.getProgress() : 90.0;
         return c;
     }
 
@@ -3132,6 +3419,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
         statusHandler.removeCallbacks(statusRunnable);
         statusHandler.post(statusRunnable);
         updateMapDataConnection();
+        NetworkMonitor nm = NetworkMonitor.getInstance(this);
+        nm.register();
+        nm.addListener(networkListener);
+        updateSyncStatus();
     }
 
     @Override protected void onPause() {
@@ -3140,6 +3431,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         statusHandler.removeCallbacks(statusRunnable);
         if (videoWidget != null) videoWidget.stop();
         stopHistogramPolling();
+        NetworkMonitor.getInstance(this).removeListener(networkListener);
     }
     @Override protected void onDestroy() {
         super.onDestroy();
@@ -3148,6 +3440,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         mapView.onDetach();
         statusHandler.removeCallbacks(statusRunnable);
         if (videoWidget != null) videoWidget.destroy();
+        NetworkMonitor.getInstance(this).unregister();
     }
 
     // ── Képernyőkép és videórögzítés ──────────────────────────────────────

@@ -1,6 +1,7 @@
 package com.dronefly.app;
 
 import android.content.Intent;
+import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.TextView;
@@ -33,7 +34,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         try {
-            DJIHelper.getInstance().setListener(new DJIHelper.ConnectionListener() {
+            DJIHelper helper = DJIHelper.getInstance();
+            helper.setListener(new DJIHelper.ConnectionListener() {
                 @Override public void onRegistered(boolean success, String message) {
                     runOnUiThread(() -> updateDroneStatus());
                 }
@@ -44,8 +46,19 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(() -> updateDroneStatus());
                 }
             });
+            if (!helper.isConnected()) helper.reconnect();
         } catch (Throwable t) { /* DJI SDK nem elérhető */ }
         updateDroneStatus();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (UsbManager.ACTION_USB_ACCESSORY_ATTACHED.equals(intent.getAction())) {
+            try {
+                DJIHelper.getInstance().reconnect();
+            } catch (Throwable t) { /* ignore */ }
+        }
     }
 
     @Override
