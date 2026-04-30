@@ -1466,6 +1466,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
                             tvSyncStatus.setText("Offline – nincs hálózat");
                             tvSyncStatus.setTextColor(0xFF888888);
                             break;
+                        case SKIPPED_NO_AUTH:
+                            tvSyncStatus.setText("Lejárt token – jelentkezz be újra");
+                            tvSyncStatus.setTextColor(0xFFFF4444);
+                            break;
                         case SKIPPED_FLIGHT_ACTIVE:
                             tvSyncStatus.setText("Sync letiltva repülés közben");
                             tvSyncStatus.setTextColor(0xFFFFAA00);
@@ -2139,29 +2143,89 @@ public class MissionPlannerActivity extends AppCompatActivity {
             return;
         }
 
-        // Fájlnevek megjelenítéshez (kiterjesztés nélkül)
         final String[] names = new String[files.size()];
         for (int i = 0; i < files.size(); i++) {
             String fn = files.get(i).getName()
                 .replace(ProjectManager.FILE_EXT, "")
                 .replace('_', ' ');
-            // Utolsó módosítás dátuma
             String date = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",
                 java.util.Locale.getDefault())
                 .format(new java.util.Date(files.get(i).lastModified()));
             names[i] = fn + "\n" + date;
         }
 
-        new AlertDialog.Builder(this)
-            .setTitle("Repülési terv betöltése")
-            .setItems(names, new android.content.DialogInterface.OnClickListener() {
-                @Override
-                public void onClick(android.content.DialogInterface dialog, int which) {
-                    confirmLoadProject(files.get(which));
-                }
-            })
+        android.widget.ListView listView = new android.widget.ListView(this);
+        android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<String>(
+            this, android.R.layout.simple_list_item_2, android.R.id.text1, names) {
+            @Override
+            public android.view.View getView(int pos, android.view.View convertView, android.view.ViewGroup parent) {
+                android.view.View v = super.getView(pos, convertView, parent);
+                String[] parts = names[pos].split("\n", 2);
+                ((android.widget.TextView) v.findViewById(android.R.id.text1)).setText(parts[0]);
+                ((android.widget.TextView) v.findViewById(android.R.id.text2))
+                    .setText(parts.length > 1 ? parts[1] : "");
+                return v;
+            }
+        };
+        listView.setAdapter(adapter);
+
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("Repülési terv betöltése  (hosszan tartva: törlés)")
+            .setView(listView)
             .setNegativeButton("Mégse", null)
-            .show();
+            .create();
+
+        listView.setOnItemClickListener((parent, view, which, id) -> {
+            dialog.dismiss();
+            confirmLoadProject(files.get(which));
+        });
+
+        listView.setOnItemLongClickListener((parent, view, which, id) -> {
+            File target = files.get(which);
+            String tervNev = target.getName().replace(ProjectManager.FILE_EXT, "").replace('_', ' ');
+            new AlertDialog.Builder(this)
+                .setTitle("Terv törlése")
+                .setMessage("Törlöd a \"" + tervNev + "\" tervet?\nA szerveren is törlődik.")
+                .setPositiveButton("Törlés", (d2, w2) -> {
+                    dialog.dismiss();
+                    deleteProject(target);
+                })
+                .setNegativeButton("Mégse", null)
+                .show();
+            return true;
+        });
+
+        dialog.show();
+    }
+
+    private void deleteProject(File file) {
+        String id = null;
+        try {
+            ProjectManager.ProjectData data = ProjectManager.loadProject(file);
+            id = data.id;
+        } catch (Exception ignored) {}
+
+        if (file.equals(currentPlanFile)) {
+            clearAll();
+            currentPlanFile = null;
+            clearResumeState();
+            updatePlanNameLabel();
+        }
+        file.delete();
+
+        final String serverId = id;
+        if (serverId != null && !serverId.isEmpty()) {
+            SyncManager.getInstance(this).deleteFromServer(serverId, new SyncManager.DeleteCallback() {
+                @Override public void onResult(boolean ok) {
+                    runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
+                        ok ? "Terv törölve (helyi + szerver)"
+                           : "Helyi terv törölve (szerverről nem sikerült)",
+                        Toast.LENGTH_SHORT).show());
+                }
+            });
+        } else {
+            Toast.makeText(this, "Terv törölve", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void confirmLoadProject(final File file) {
