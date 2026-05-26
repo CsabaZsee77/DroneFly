@@ -222,7 +222,9 @@ public class ElevationProvider {
         for (int i = 0; i < waypoints.size(); i++) {
             double terrainDelta = elevations[i] - takeoffElevation;
             float correctedAlt = (float) (baseAGL + terrainDelta);
-            correctedAlt = Math.max(10f, correctedAlt);
+            // Alsó határ 3 m (összhangban a UI/Generator clamp-pel) — alacsony
+            // repülésnél engedjük le, de negatívba ne menjen.
+            correctedAlt = Math.max(3f, correctedAlt);
 
             waypoints.get(i).altitudeM = correctedAlt;
             waypoints.get(i).terrainElevation = elevations[i];

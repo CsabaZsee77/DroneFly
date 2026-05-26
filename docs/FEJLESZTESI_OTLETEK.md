@@ -482,6 +482,179 @@ Web app (React + Leaflet) → FastAPI backend → DroneFly Android app (letölti
 
 ---
 
+## 🏔️ Pre-flight DTM létrehozása saját 3D-felméréssel
+
+**Felmerülés:** 2026-05-26 (terepi tesztelés alacsony repülésnél)
+
+### A probléma
+
+A jelenlegi domborzatkövetés az Open-Elevation API SRTM 1″ (~30 m felbontás) adatából
+dolgozik. Egy 30–40 m hosszú repülési szakaszon ez **kb. egyetlen elevation-cella**,
+így finom terepszint-változást (pl. lankás lejtő ~5 m esés 30 m-en) nem tud követni.
+Alacsony repülésnél (3–8 m AGL) ez a drón ütközés-veszélyét, vagy a felbontási
+inkonzisztenciát okozhatja.
+
+### Megoldási irány — saját DTM "pre-flight survey"-vel
+
+```
+1. Felhasználó megrajzolja a felmérendő területet.
+2. Új gomb / menüpont: "3D pre-survey" → automatikus magas misszió.
+   - Magasság: pl. 80–120 m (gyors lefedés, biztonságos)
+   - GSD: 3–5 cm/px (nem kell részletes — csak DTM-hez)
+   - Crosshatch ajánlott (jobb 3D rekonstrukció)
+   - ~5–10 perc repülés egy 5 ha-os táblára
+3. A felvételeket OFFLINE feldolgozzuk (lokálisan a tableten vagy szerveren ODM-mel):
+   - Photogrammetria → pontfelhő → DTM raster
+   - Felbontás: 0,1–1 m (nagyságrendileg jobb mint SRTM)
+4. A DTM elmentve a területhez (geo-tagged):
+   data/dtm/{parcel_id}.tif
+5. Következő alacsony repüléseknél a domborzatkövetés ezt a DTM-et használja
+   a SRTM helyett, automatikus választás:
+   - Ha van helyi DTM és a waypoint a kiterjedésében van → helyi DTM
+   - Egyébként → fallback SRTM (Open-Elevation API)
+```
+
+### Előnyök
+- **Lokális, pontos** terepmodell (0,1–1 m vs. SRTM 30 m)
+- A felhasználó saját adatából dolgozik — nincs Internet-függés a domborzatkövetéshez
+  (csak a pre-survey idején van szükség hálózati feltöltésre, ha szerveroldali ODM)
+- A DTM újrahasznosítható minden későbbi misszióban ugyanazon a területen
+- A 3D modell egyébként is érték lehet (terület-térkép, lejtő-analízis, talajeróziós
+  területek kiszűrése)
+
+### Kihívások
+- **Feldolgozási idő:** ODM 5 ha-on kb. 15–30 perc szerveren, tableten 1–2 óra
+- **Tárhely:** egy DTM 5 ha-on ~10–50 MB; sok terület esetén jelentős
+- **Reprojektálás:** a DTM raster (pl. EPSG:23700) és a misszió (WGS84) közötti
+  transzformáció
+- **Aktualitás:** ha a felszín változott (szántás, növényzet), a DTM elavul →
+  versioning szükséges (dátum + revízió)
+
+### Implementálási sorrend (későbbi feladat)
+
+1. **Fázis 1:** UI gomb "3D pre-survey" → speciális misszió-generálás (magas, crosshatch)
+2. **Fázis 2:** Felvételek feltöltése a Dronterapia szerverre → ODM job triggerelése
+3. **Fázis 3:** DTM eredmény letöltése a tabletre → lokális tárolás `.tif`-ként
+4. **Fázis 4:** `ElevationProvider` bővítése: helyi DTM raster query (GeoTools vagy
+   egyszerű GeoTIFF reader) — ha a waypoint a DTM kiterjedésében van, ezt használja,
+   különben SRTM fallback
+5. **Fázis 5:** UI — "Helyi DTM elérhető (2026-04-15, 0,5 m felbontás)" jelzés a
+   terep-követés switch mellett
+
+### Kapcsolódó projekt-modulok
+- **Dronterapia M08 (ODM):** A photogrammetria pipeline már létezik a webes
+  oldalon — innen lehet a DTM-et generálni
+- **DroneFly M02 (Grid Engine):** crosshatch generálás már működik
+- **DroneFly M06 (Dronterapia Sync):** a DTM letöltés-szinkron új endpoint
+
+**Státusz:** 🔵 **Rögzített ötlet — jövőbeli implementáció** (nincs sürgős)
+
+---
+
+## 🌾 Mintavételezéses tőszámlálás — ortofotó nélkül
+
+**Felmerülés:** 2026-05-26 (felhasználói javaslat)
+
+### A koncepció
+
+A hagyományos termésbecslési módszer **mintavételi négyzeteket** használ (pl.
+10×10 m parcellákat), ahol az agronómus kézzel megszámolja a növényeket, majd
+interpolálja az egész tábla területére. Ezt a megközelítést **drónos felméréssel
+kombinálva** is alkalmazhatjuk:
+
+```
+1. Felhasználó megrajzolja a teljes felmérendő területet (pl. 10 ha tábla).
+2. Új munkamenet: "Mintavételes tőszámlálás" → bemenetek:
+   - Mintavételi pontok száma (pl. 20–50 db)
+   - Mintavételi négyzet mérete (pl. 5×5 m vagy 10×10 m)
+   - Elosztás: véletlenszerű / stratifikált grid / felhasználói pontok
+3. A szoftver kijelöli a mintavételi helyszíneket a területen belül.
+4. A drón ezekre a pontokra repül (waypoint misszió, csak a pontok).
+5. Minden mintavételi ponton: hover + 1 fotó alacsonyan (3–10 m, magas felbontás)
+6. A fotókon lokálisan (tableten YOLO ONNX modellel) lefut a tőszámlálás.
+7. Interpoláció: minden mintavételi pontból kiszámítjuk a tőszám/m² értéket,
+   majd a teljes területre kriging vagy IDW (inverse distance weighting)
+   alapú heat map-et generálunk.
+8. Eredmény: prescription map + becsült összes tőszám + variabilitás (CV%).
+```
+
+### Előnyök a teljes ortofotó-alapú számlálással szemben
+
+| Szempont | Teljes ortofotó | Mintavételes |
+|----------|----------------|--------------|
+| Repülési idő (10 ha) | 25–40 perc | **5–10 perc** |
+| Akku-igény | 2–3 akku | **1 akku** |
+| Feldolgozási idő (szerver) | 30–60 perc | **2–5 perc** |
+| Tableten feldolgozható? | Nem (túl nagy) | **Igen** |
+| Internet-függés | Nagy (feltöltés) | **Minimális** |
+| Adatpontosság | Pontonkénti | Statisztikai (CV függő) |
+| Heterogén tábla detektálása | Pontosabb | Mintavétel-sűrűségtől függ |
+
+### Statisztikai megfontolások
+
+- **Mintavételi pontok ajánlott száma:** 1 ha-onként 3–5 pont (10 ha-ra 30–50 pont)
+- **Minta-négyzet méret:** legalább 50 növényt tartalmazzon, hogy a számlálás
+  statisztikailag stabil legyen (pl. kukoricánál 5×5 m ≈ 25 m², ~150 növény)
+- **Pontosság:** ha CV (variabilitási koefficiens) < 20%, ~30 mintaponttal a
+  becsült összes tőszám hibája < 5%
+- **Heterogén táblák:** ha CV > 30%, érdemes sűrűbb mintavétel vagy stratifikált
+  (zónánkénti) sampling — pl. NDVI sat-kép alapján 2–3 zóna, zónánként arányosan
+- **Edge effect:** a tábla szélén (5–10 m) lehet eltérő tőszám (vetési hiányok),
+  ezért nem ajánlott a peremre helyezni a mintapontokat
+
+### Implementálási vázlat
+
+**Dronterapia oldali (web):**
+- Új M03 funkció: "Mintavételes tőszámlálás session"
+- Paraméter UI: mintaszám, négyzetméret, eloszlás algoritmus
+- Mintapont-generálás: véletlenszerű Halton-szekvencia / latin hypercube /
+  egyszerű grid + jitter
+- Heat map kirajzolása + interpoláció (kriging vagy IDW)
+
+**DroneFly oldali (tablet):**
+- Új misszió-típus: "Sampling mission" — csak a mintapontok waypointjai
+  - Magasság: alacsony (3–10 m), magas felbontás (0,3–0,5 cm/px)
+  - Hover idő: 2–3 mp pontonként (kameragyengítés)
+  - Photo trigger: hovering közben (nem repülés közben)
+- Edge AI lehetőség: ONNX/TFLite modell betöltése a tableten → lokális tőszámlálás
+- Eredmény szinkron → Dronterapia M03 interpoláció
+
+### Akadályok / kihívások
+
+1. **Edge AI a tableten:** Crystal Sky CPU + 2 GB RAM elég-e a YOLOv8s/m ONNX
+   inferenciához? Tipikus 4K kép ~3–5 mp inferencia időre saccolható.
+2. **Hovering precíz pozicionálás:** Phantom 4 Pro v1 ±0,5–1 m GPS pontosság;
+   ha a mintaponton pontos pozícionálás szükséges, drift-korrekció kell
+3. **GSD konzisztencia:** minden mintaponton azonos magasság → konzisztens GSD,
+   stabil tőszám-becslés
+4. **Domborzatkövetés:** ha a tábla lejtős, a mintapontok altitude-ját egyenként
+   kell korrigálni (lásd "Pre-flight DTM" ötlet feljebb)
+
+### Kapcsolódó projekt-modulok
+
+- **Dronterapia M03 (Counting):** Az interpoláció és prescription map már részben
+  van — bővíteni a mintavételes módra
+- **Dronterapia M06 (Parcella):** a tábla geometriája innen jön
+- **Dronterapia M07 (Repülési tervező):** új sampling mission-típus
+- **DroneFly M01 (Misszió tervező):** új UI-flow
+- **DroneFly M03 (Export/Import):** standard CSV/KMZ a mintaponti misszióra
+
+### Javaslat sorrendre (későbbi feladat)
+
+1. **POC (proof of concept):** Dronterapia M03-ban manuálisan feltöltött fotók
+   listájából (mintapont = lat/lon + fotó) interpolációs heat map. Még nem
+   automatikus mission-generálás.
+2. **Mintapont algoritmus:** Halton-szekvencia vagy stratifikált sampling →
+   választható UI-ban
+3. **Automatikus misszió-generálás:** DroneFly oldali sampling mission típus
+4. **Edge AI:** tabletes ONNX inferencia
+5. **Kriging / IDW interpoláció:** Python (scipy.interpolate vagy pykrige)
+
+**Státusz:** 🔵 **Rögzített ötlet — jövőbeli implementáció**, magas üzleti
+értékkel (idő- és akkumulátor-megtakarítás), POC szinten könnyű kipróbálni.
+
+---
+
 ## 📝 Megjegyzések terepi tapasztalatokból
 
 - **SD kártya eltűnt felvételek:** Nem app-bug — a DJI Go 4 app adott esetben törölheti vagy áthelyezheti a felvételeket. Mindig az app-független DCIM mappát ellenőrizd.

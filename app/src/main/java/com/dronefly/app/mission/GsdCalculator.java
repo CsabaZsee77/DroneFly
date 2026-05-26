@@ -57,12 +57,16 @@ public class GsdCalculator {
     /**
      * Ajánlott sebesség a drón zárideje alapján (mozgási blur elkerülése).
      * Képlet: max_v = 0.5 × GSD_m × shutterSpeed
-     * Korlát: 3 m/s – drone.maxSpeedMs
+     * Korlát: 1 m/s – drone.maxSpeedMs
+     *
+     * A 1 m/s alsó határ a UI slider min-jével egyezik (sbSpeed 0-14 → 1-15 m/s).
+     * Alacsony repüléshez (3-10 m) a kisebb sebesség nélkülözhetetlen, hogy a
+     * P4P kamera 2 mp-es min fotó-időközével ne legyenek lefedettségi gap-ek.
      */
     public static float recommendedSpeedMs(double gsdCm, DroneProfile drone) {
         double gsdM = gsdCm / 100.0;
         double maxV = 0.5 * gsdM * drone.shutterSpeed;
-        return (float) Math.min(drone.maxSpeedMs, Math.max(3.0, maxV));
+        return (float) Math.min(drone.maxSpeedMs, Math.max(1.0, maxV));
     }
 
     /** Becsült repülési idő (perc) — drón profil alapján */
@@ -94,6 +98,6 @@ public class GsdCalculator {
     /** @deprecated Használd a recommendedSpeedMs(gsdCm, drone) változatot */
     public static float recommendedSpeedMs(double gsdCm) {
         double maxV = 0.5 * (gsdCm / 100.0) * 800.0;
-        return (float) Math.min(12.0, Math.max(3.0, maxV));
+        return (float) Math.min(12.0, Math.max(1.0, maxV));
     }
 }

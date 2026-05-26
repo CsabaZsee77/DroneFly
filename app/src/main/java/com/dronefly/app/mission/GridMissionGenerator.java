@@ -53,11 +53,22 @@ public class GridMissionGenerator {
             return result;
         }
 
-        // Magasság számítása GSD-ből (drón profil alapján, ha elérhető)
-        double altM = (config.droneProfile != null)
-            ? GsdCalculator.altitudeFromGsd(config.gsdCm, config.droneProfile)
-            : GsdCalculator.altitudeFromGsd(config.gsdCm);
-        altM = Math.max(10, Math.min(300, altM)); // 10–300m korlát
+        // Magasság, sávköz, fotótávolság
+        // A felhasználó által beírt magasság (config.altitudeM) az "igazság forrása",
+        // mert a buildConfig ezt veszi az etAltitude-ból. Ha valamilyen ok miatt
+        // nincs beállítva (régi MissionConfig <=0 érték), fallback a GSD-ből
+        // számolásra (backward kompatibilitás).
+        double altM;
+        if (config.altitudeM > 0) {
+            altM = config.altitudeM;
+        } else {
+            altM = (config.droneProfile != null)
+                ? GsdCalculator.altitudeFromGsd(config.gsdCm, config.droneProfile)
+                : GsdCalculator.altitudeFromGsd(config.gsdCm);
+        }
+        // Alsó határ 3 m (összhangban a UI clamp-pel), felső 300 m a generátor
+        // matematikai biztonságához (a UI 120 m EU max-nál figyelmeztet).
+        altM = Math.max(3, Math.min(300, altM));
         result.altitudeM = altM;
 
         double stripSpacing = (config.droneProfile != null)
@@ -69,13 +80,12 @@ public class GridMissionGenerator {
         result.stripSpacingM = stripSpacing;
         result.photoDistM    = photoDist;
 
-        // Centroid számítás
+        // Centroid
         double centLat = 0, centLon = 0;
         for (GeoPoint p : polygon) { centLat += p.getLatitude(); centLon += p.getLongitude(); }
         centLat /= polygon.size();
         centLon /= polygon.size();
 
-        // Méter/fok konverziós faktorok a centroid szélességénél
         final double mPerDegLat = 111000.0;
         final double mPerDegLon = 111000.0 * Math.cos(Math.toRadians(centLat));
 
@@ -86,11 +96,63 @@ public class GridMissionGenerator {
             px[i] = (polygon.get(i).getLongitude() - centLon) * mPerDegLon;
             py[i] = (polygon.get(i).getLatitude()  - centLat) * mPerDegLat;
         }
+        result.areaM2 = polygonAreaM2(px, py);
 
-        // Elforgatás -angle irányba (hogy a sávok vízszintesek legyenek)
-        double angle = Math.toRadians(config.flightAngleDeg);
-        double cosA =  Math.cos(-angle);
-        double sinA =  Math.sin(-angle);
+        double off = (config.offsetM > 0) ? config.offsetM : 0.0;
+
+        // Első rács (flightAngleDeg)
+        List<WaypointData> allWaypoints = new ArrayList<>(
+                runGridPass(px, py, centLat, centLon, mPerDegLat, mPerDegLon,
+                        stripSpacing, altM, off, config.obstacles,
+                        config.flightAngleDeg, result));
+
+        // Keresztrács (crosshatch) — második rács
+        if ("crosshatch".equals(config.gridMode)) {
+            GeneratorResult dummy = new GeneratorResult();
+            allWaypoints.addAll(runGridPass(px, py, centLat, centLon, mPerDegLat, mPerDegLon,
+                    stripSpacing, altM, off, config.obstacles,
+                    config.crosshatchHeadingDeg, dummy));
+            result.skippedByObstacle += dummy.skippedByObstacle;
+        }
+
+        if (allWaypoints.isEmpty()) {
+            result.errorMessage = "Nem sikerult waypointokat generalni. Ellenőrizd a teruletet es a beallitasokat.";
+            return result;
+        }
+
+        result.totalWaypoints = allWaypoints.size();
+        result.estimatedPhotoCount = (int)(result.areaM2 / stripSpacing / photoDist);
+        if ("crosshatch".equals(config.gridMode)) result.estimatedPhotoCount *= 2;
+        result.estimatedMinutes = GsdCalculator.estimatedFlightMinutes(
+                result.areaM2, altM, config.sidelapPercent, config.speedMs, config.droneProfile);
+        if ("crosshatch".equals(config.gridMode)) result.estimatedMinutes *= 2;
+
+        for (int start = 0; start < allWaypoints.size(); start += MAX_WAYPOINTS_PER_MISSION) {
+            int end = Math.min(start + MAX_WAYPOINTS_PER_MISSION, allWaypoints.size());
+            result.segments.add(new ArrayList<>(allWaypoints.subList(start, end)));
+        }
+
+        return result;
+    }
+
+    /**
+     * Egy rács-pass futtatása adott repülési szöggel.
+     * Visszatér a lapos waypoint listával (szegmentálás előtt).
+     */
+    private static List<WaypointData> runGridPass(
+            double[] px, double[] py,
+            double centLat, double centLon,
+            double mPerDegLat, double mPerDegLon,
+            double stripSpacing, double altM, double off,
+            List<ObstacleData> obstacles,
+            double angleDeg,
+            GeneratorResult result) {
+
+        double angle = Math.toRadians(angleDeg);
+        double cosA  = Math.cos(-angle);
+        double sinA  = Math.sin(-angle);
+
+        // Polygon elforgatása
         double[] rx = new double[px.length];
         double[] ry = new double[py.length];
         for (int i = 0; i < px.length; i++) {
@@ -98,7 +160,7 @@ public class GridMissionGenerator {
             ry[i] = px[i] * sinA + py[i] * cosA;
         }
 
-        // Bounding box a forgatott koordinátákban
+        // Bounding box
         double xMin = rx[0], xMax = rx[0], yMin = ry[0], yMax = ry[0];
         for (int i = 1; i < rx.length; i++) {
             if (rx[i] < xMin) xMin = rx[i];
@@ -107,23 +169,12 @@ public class GridMissionGenerator {
             if (ry[i] > yMax) yMax = ry[i];
         }
 
-        // Terület becslése (eredeti sokszög alapján, offset előtt)
-        result.areaM2 = polygonAreaM2(rx, ry);
-
-        // ── Offset: sokszög kiterjesztése centroidtól kifelé ──────────
-        // Ha van offset, a scan-vonalak a bővített határon belül futnak,
-        // és a metszéspontokat is kibővítjük az offset-tel.
-        double off = (config.offsetM > 0) ? config.offsetM : 0.0;
-
-        // Ha van offset, minden pontot eltolunk a centroidtól kifelé off méterrel.
-        // Ez konvex polygonra pontos, konkáv esetén közelítés (mezőgazdasági tereken OK).
+        // Offset alkalmazása
         double[] rxOff = rx, ryOff = ry;
         if (off > 0) {
-            // Centroid a forgatott koordinátarendszerben (közel 0,0)
             double cxR = 0, cyR = 0;
             for (int i = 0; i < rx.length; i++) { cxR += rx[i]; cyR += ry[i]; }
             cxR /= rx.length; cyR /= ry.length;
-
             rxOff = new double[rx.length];
             ryOff = new double[ry.length];
             for (int i = 0; i < rx.length; i++) {
@@ -136,7 +187,6 @@ public class GridMissionGenerator {
                     rxOff[i] = rx[i]; ryOff[i] = ry[i];
                 }
             }
-            // Bővített bounding box
             xMin = rxOff[0]; xMax = rxOff[0]; yMin = ryOff[0]; yMax = ryOff[0];
             for (int i = 1; i < rxOff.length; i++) {
                 if (rxOff[i] < xMin) xMin = rxOff[i];
@@ -146,74 +196,56 @@ public class GridMissionGenerator {
             }
         }
 
-        // ── Akadályok előfeldolgozása: GPS → forgatott lokális koordináta ──
-        // Csak azok az akadályok számítanak, amelyek veszélyesek ezen a repülési magasságon.
-        // A körök középpontját és sugarát a scan-vonalak koordináta-rendszerébe transzformáljuk,
-        // hogy a sávok vágása (clipping) egyszerű 2D körmetszéssel megoldható legyen.
-        List<double[]> rotatedObstacles = new ArrayList<>(); // [cx, cy, r]
-        if (config.obstacles != null) {
-            for (ObstacleData obs : config.obstacles) {
+        // Akadályok transzformálása ebbe a szögtartományba
+        List<double[]> rotatedObstacles = new ArrayList<>();
+        if (obstacles != null) {
+            for (ObstacleData obs : obstacles) {
                 if (!obs.isDangerousAt((float) altM)) continue;
-                // GPS → lokális XY
                 double ox = (obs.longitude - centLon) * mPerDegLon;
                 double oy = (obs.latitude  - centLat) * mPerDegLat;
-                // Elforgatás (ugyanaz a transzformáció, mint a polygon csúcsoknál)
                 double orx = ox * cosA - oy * sinA;
                 double ory = ox * sinA + oy * cosA;
                 rotatedObstacles.add(new double[]{orx, ory, obs.radiusM});
             }
         }
 
-        // Scan vonalak generálása (Y irány = sávköz)
-        double yStart = yMin + stripSpacing / 2.0;
-        List<WaypointData> allWaypoints = new ArrayList<>();
-
+        // Scan vonalak generálása
         final double cosB = Math.cos(angle);
         final double sinB = Math.sin(angle);
-
+        List<WaypointData> waypoints = new ArrayList<>();
         int stripIndex = 0;
-        for (double scanY = yStart; scanY <= yMax + stripSpacing / 2.0; scanY += stripSpacing) {
-            // Metszéspontok a (bővített) sokszög éleivel
+
+        for (double scanY = yMin + stripSpacing / 2.0;
+             scanY <= yMax + stripSpacing / 2.0;
+             scanY += stripSpacing) {
+
             List<Double> intersections = computeIntersections(rxOff, ryOff, scanY);
             if (intersections.size() < 2) { stripIndex++; continue; }
             Collections.sort(intersections);
 
-            // Sávonként párban vesszük a metszéspontokat
             for (int k = 0; k + 1 < intersections.size(); k += 2) {
-                double rawEnter = intersections.get(k);
-                double rawExit  = intersections.get(k + 1);
-
-                // ── Akadály alapú sávvágás (strip clipping) ──
-                // Az akadályok a sávot több részsávra osztják.
-                // Minden részsávba külön generálunk waypontokat → a drón megáll
-                // az akadály határánál, és a másik oldalon folytatja.
                 List<double[]> substrips = clipStripAgainstObstacles(
-                        rawEnter, rawExit, scanY, rotatedObstacles, result);
+                        intersections.get(k), intersections.get(k + 1),
+                        scanY, rotatedObstacles, result);
 
-                // Kaszáló irány: páros sávban balról jobbra, páratlanban jobbra balra
                 boolean reverse = (stripIndex % 2 != 0);
                 if (reverse) Collections.reverse(substrips);
 
                 for (double[] sub : substrips) {
                     double xEnter = reverse ? sub[1] : sub[0];
                     double xExit  = reverse ? sub[0] : sub[1];
+                    if (Math.abs(xExit - xEnter) < 0.5) continue;
 
-                    double len = Math.abs(xExit - xEnter);
-                    if (len < 0.5) continue; // 0.5 m-nél rövidebb részsáv kihagyva
-
-                    // Folyamatos repülés: csak sávvégpontok — a fotót kamera intervallum triggereli
-                    // Sáv kezdőpontja
                     double lx1 = xEnter * cosB - scanY * sinB;
                     double ly1 = xEnter * sinB + scanY * cosB;
-                    allWaypoints.add(new WaypointData(
+                    waypoints.add(new WaypointData(
                             centLat + ly1 / mPerDegLat,
                             centLon + lx1 / mPerDegLon,
                             (float) altM, false));
 
-                    // Sáv végpontja
                     double lx2 = xExit * cosB - scanY * sinB;
                     double ly2 = xExit * sinB + scanY * cosB;
-                    allWaypoints.add(new WaypointData(
+                    waypoints.add(new WaypointData(
                             centLat + ly2 / mPerDegLat,
                             centLon + lx2 / mPerDegLon,
                             (float) altM, false));
@@ -221,25 +253,7 @@ public class GridMissionGenerator {
             }
             stripIndex++;
         }
-
-        if (allWaypoints.isEmpty()) {
-            result.errorMessage = "Nem sikerult waypointokat generalni. Ellenőrizd a teruletet es a beallitasokat.";
-            return result;
-        }
-
-        result.totalWaypoints = allWaypoints.size();
-        // Becsült fotószám: teljes sávhossz / fotótávolság
-        result.estimatedPhotoCount = (int)(result.areaM2 / stripSpacing / photoDist);
-        result.estimatedMinutes = GsdCalculator.estimatedFlightMinutes(
-                result.areaM2, altM, config.sidelapPercent, config.speedMs, config.droneProfile);
-
-        // Szegmensekre bontás ha >99 waypoint
-        for (int start = 0; start < allWaypoints.size(); start += MAX_WAYPOINTS_PER_MISSION) {
-            int end = Math.min(start + MAX_WAYPOINTS_PER_MISSION, allWaypoints.size());
-            result.segments.add(new ArrayList<>(allWaypoints.subList(start, end)));
-        }
-
-        return result;
+        return waypoints;
     }
 
     /**

@@ -14,16 +14,39 @@
 ### GSD SeekBar
 
 ```
-SeekBar max = 95, progress → gsdCm érték:
-  gsdCm = 0.5 + progress * 0.1
+SeekBar max = 99, progress → gsdCm érték:
+  gsdCm = 0.1 + progress * 0.1
 
-  progress  0 → 0.5 cm/px
-  progress 25 → 3.0 cm/px  (default)
-  progress 95 → 10.0 cm/px
+  progress  0 → 0.1 cm/px
+  progress 29 → 3.0 cm/px  (default)
+  progress 99 → 10.0 cm/px
 
-Label formátum: "GSD: 3.0 cm/px  →  magasság: 118 m  (ajanl. v: 12.0 m/s)"
-  → magasság: GsdCalculator.altitudeFromGsd(gsdCm, droneProfile) kerekítve egészre
+Label formátum: "GSD: 3.0 cm/px  (ajánl. v: 12.0 m/s)"
   → ajánlott sebesség: GsdCalculator.recommendedSpeedMs(gsdCm, droneProfile)
+```
+
+### Magasság (etAltitude) — közvetlen bevitel
+
+```
+EditText etAltitude (3–120 m) + btnAltMinus / btnAltPlus gombok.
+
+Kétirányú szinkron a GSD slider-rel:
+  - Felhasználó húzza sbGsd-t (user==true) →
+      syncAltitudeFromGsd: etAltitude = altitudeFromGsd(getGsd(), drone)
+  - Felhasználó ír etAltitude-ba (focus loss / Done) →
+      setAltitudeAndSyncGsd: sbGsd.progress = round((gsdFromAltitude - 0.1) / 0.1)
+      A slider clamp-elt lehet (0..99); az etAltitude megőrzi a kézi értéket.
+
+Az "igazság forrása" mentéskor:
+  buildConfig() → c.altitudeM = parseAltitudeField() (3–120 m clamp)
+                  c.gsdCm     = gsdFromAltitude(c.altitudeM, drone)
+  → A felhasználó által beírt magasság megőrződik a .flightprogram.json-ban,
+    még ha a GSD-slider min-je miatt a slider visuálisan a min-en is ragad.
+
+Betöltéskor (restoreConfigToUI):
+  1. Drón profil + többi slider beállítása ELŐRE
+  2. Magasság LEGUTOLJÁRA: setAltitudeAndSyncGsd(data.altitudeM)
+  → Régi mentés (altitude_m hiányzik / 0): fallback altitudeFromGsd(gsdCm).
 ```
 
 ### Sidelap SeekBar
@@ -49,16 +72,26 @@ Label formátum: "Menetirány átfedés: 80%"
 ### Sebesség SeekBar
 
 ```
-SeekBar max = 12, progress → sebesség:
-  speedMs = 3 + progress  (3–15 m/s)
-  default progress = 4 → 7 m/s
+SeekBar max = 14, progress → sebesség:
+  speedMs = 1 + progress  (1–15 m/s)
+  default progress = 6 → 7 m/s
 
   GSD vagy drón profil változásakor auto-frissítés:
     javasolt = GsdCalculator.recommendedSpeedMs(gsdCm, droneProfile)
-    progress = round(javasolt) - 3  (0–12 értékre clampelve)
+    progress = round(javasolt) - 1  (0–14 értékre clampelve)
 
 Label formátum: "Sebesség: 7 m/s"
 ```
+
+**Az 1 m/s alsó határ indoklása:**
+A P4P kamera 2 mp-es min fotó-időközénél a megtett táv két fotó között =
+sebesség × 2 mp. Alacsony repülésnél (3–6 m) ez a táv könnyen meghaladhatja
+a kép-footprint hosszát → lefedettségi gap-ek. Pl. 3 m magasságon a footprint
+3 m hosszú, 3 m/s mellett a fotótáv 6 m, így 3 m kihagyott szakaszok lesznek.
+1 m/s mellett a fotótáv 2 m → 33% átfedés, használható.
+
+A MissionUploader a DJI felé 1–15 közötti tartományt küld (Math.max(1f)). A
+DroneProfile.maxSpeedMs csak felső korlát, a min mező nincs.
 
 ### Repülési irány SeekBar
 

@@ -84,10 +84,11 @@ Terület meghatározása — két lehetőség:
       ▼
 Paraméterek beállítása (jobb oldali csúsztatható panel):
   - Drón profil: Spinner (P4P v1, Mavic 2 Pro, Mini 3 Pro, Air 2S, stb.)
-  - GSD (cm/px): 0.5–10.0 cm/px (lépés: 0.1), default: 3.0 cm/px
+  - GSD (cm/px): 0.1–10.0 cm/px (lépés: 0.1), default: 3.0 cm/px
+  - Magasság (m): 3–120 m közvetlen bevitel (etAltitude + +/- gombok), kétirányú szinkron a GSD slider-rel
   - Sidelap (%): 50–90%, default: 75%
   - Frontlap (%): 60–90%, default: 80%
-  - Sebesség (m/s): 3–15 m/s, default: auto (GSD-ből számított)
+  - Sebesség (m/s): 1–15 m/s, default: auto (GSD-ből számított). Az 1 m/s alsó határ az alacsony repüléshez (3–10 m) szükséges — a P4P 2 mp-es min fotó-időközével a magasabb sebesség lefedettségi gap-eket okoz.
   - Repülési irány (°): 0–179°, default: 0° (É–D irány)
   - Offset (m): 0–30 m, default: 0 (túlrepülési határ)
   → Csúszka **elengedésekor** (`onStopTrackingTouch`) autoGenerateIfReady() fut, ha ≥3 pont van

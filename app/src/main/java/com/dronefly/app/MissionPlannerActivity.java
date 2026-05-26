@@ -387,29 +387,37 @@ public class MissionPlannerActivity extends AppCompatActivity {
         tvOffset   = findViewById(R.id.tvOffset);
         tvStats    = findViewById(R.id.tvStats);
 
-        sbGsd      = findViewById(R.id.sbGsd);      // 0–95 → 0.5–10.0 cm/px
+        sbGsd      = findViewById(R.id.sbGsd);      // 0–99 → 0.1–10.0 cm/px
         sbSidelap  = findViewById(R.id.sbSidelap);  // 0–40 → 50–90%
         sbFrontlap = findViewById(R.id.sbFrontlap); // 0–30 → 60–90%
-        sbSpeed    = findViewById(R.id.sbSpeed);    // 0–12 → 3–15 m/s
+        sbSpeed    = findViewById(R.id.sbSpeed);    // 0–14 → 1–15 m/s
         sbAngle    = findViewById(R.id.sbAngle);    // 0–179°
         sbOffset   = findViewById(R.id.sbOffset);  // 0–30 m
 
-        // Default: GSD 3.0 cm → progress = (3.0-0.5)/0.1 = 25
-        sbGsd.setMax(95);
-        sbGsd.setProgress(25);
+        // Default: GSD 3.0 cm → progress = (3.0-0.1)/0.1 = 29
+        sbGsd.setMax(99);
+        sbGsd.setProgress(29);
         sbSidelap.setProgress(25);  // 75%
         sbFrontlap.setProgress(20); // 80%
-        sbSpeed.setProgress(4);     // 7 m/s
+        sbSpeed.setProgress(6);     // 7 m/s (1 + 6 = 7)
         sbAngle.setProgress(0);
 
         SeekBar.OnSeekBarChangeListener listener = new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int p, boolean user) {
+                // Csak a felhasználó által húzott sbGsd írhatja felül az
+                // etAltitude-ot — programozott setProgress (pl. magasság-bevitel
+                // utáni clamp, vagy projekt betöltés) ne nullázza le a kézi
+                // értéket.
+                if (sb == sbGsd && user) {
+                    syncAltitudeFromGsd();
+                }
                 updateLabels();
                 // Ha GSD változik, frissítsük az ajánlott sebességet
                 if (sb == sbGsd) {
                     float rec = GsdCalculator.recommendedSpeedMs(getGsd(), getSelectedDrone());
-                    int speedProg = Math.round(rec) - 3;
-                    sbSpeed.setProgress(Math.max(0, Math.min(12, speedProg)));
+                    // sbSpeed progress = ajánlott sebesség - 1 (mert getSpeed = 1 + progress)
+                    int speedProg = Math.round(rec) - 1;
+                    sbSpeed.setProgress(Math.max(0, Math.min(14, speedProg)));
                 }
             }
             @Override public void onStartTrackingTouch(SeekBar sb) {}
@@ -555,11 +563,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
         droneAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerDrone.setAdapter(droneAdapter);
         spinnerDrone.setSelection(0);
-        // Ha módosítják a drónt és már van generált misszió, frissítjük a labeleket
+        // Ha módosítják a drónt és már van generált misszió, frissítjük a labeleket.
+        // A magasság is frissül a GSD-ből, mert a drón szenzorparaméterei
+        // változnak (ugyanaz a cm/px más altitude-ot ad másik drónnál).
         spinnerDrone.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(android.widget.AdapterView<?> parent, android.view.View view,
                                        int position, long id) {
+                syncAltitudeFromGsd();
                 updateLabels();
             }
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
@@ -603,6 +614,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
         initCrosshatchControls();
         initSyncControls();
         initStatusBar();
+        // Az updateLabels nem írja az etAltitude-ot (a felhasználói magasság-érték
+        // védelme miatt); init-kor egyszer explicit szinkronizálunk a default GSD-ből.
+        syncAltitudeFromGsd();
         updateLabels();
     }
 
@@ -685,14 +699,30 @@ public class MissionPlannerActivity extends AppCompatActivity {
         selectCameraMode(true); // alapértelmezett: AUTO
 
         // ── Auto Lock ─────────────────────────────────────────────────
+        // Egy lépéses lock: az auto értékeket visszaolvassuk, UI-ba töltjük,
+        // manuális módra váltunk, ÉS azonnal alkalmazzuk is a drónra. A
+        // felhasználó számára: 1 kattintás = a kamera ezzel a beállítással
+        // marad, amíg az [AUTO] gombra vissza nem kapcsol.
         btnAutoLock.setOnClickListener(v -> {
             tvCameraStatus5.setText("Olvasás...");
             CameraConfigurator.lockAutoToManual((success, settings, msg) ->
                 runOnUiThread(() -> {
                     if (success && settings != null) {
                         applyReadbackToUI(settings);
-                        selectCameraMode(false); // MANUÁLIS módra vált
-                        tvCameraStatus5.setText("🔒 Lockolt");
+                        selectCameraMode(false); // MANUÁLIS módra vált (csak UI)
+                        tvCameraStatus5.setText("Alkalmazás...");
+                        // Ténylegesen elküldjük a drónra is a kiolvasott
+                        // manuális értékeket — különben a DJI továbbra is
+                        // PROGRAM/AUTO módban marad, és a "lock" csak látszat.
+                        CameraConfigurator.applySettings(settings, (applySuccess, applyMsg) ->
+                            runOnUiThread(() -> {
+                                if (applySuccess) {
+                                    tvCameraStatus5.setText("🔒 Lockolva");
+                                } else {
+                                    tvCameraStatus5.setText("Lock: olvasás OK, küldés hiba");
+                                    Toast.makeText(this, applyMsg, Toast.LENGTH_SHORT).show();
+                                }
+                            }));
                     } else {
                         tvCameraStatus5.setText("Lock sikertelen");
                         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
@@ -830,8 +860,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
         }
 
         // Lock AUTO gomb csak auto módban látszik
-        if (btnAutoLock != null)
+        if (btnAutoLock != null) {
             btnAutoLock.setVisibility(auto ? View.VISIBLE : View.GONE);
+            // A gomb a cameraParamsGroup belsejében van, ami AUTO módban
+            // setAlpha(0.4f)-szel halványítva van. A Lock gomb az egyetlen
+            // AKTÍV elem itt AUTO módban — explicit teljes átlátszatlanságot
+            // állítunk be, hogy ne tűnjön letiltottnak.
+            btnAutoLock.setAlpha(1.0f);
+        }
         if (btnApplyCamera5 != null)
             btnApplyCamera5.setVisibility(auto ? View.GONE : View.VISIBLE);
 
@@ -1522,7 +1558,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     for (List<WaypointData> seg : result.segments) {
                         for (WaypointData wp : seg) {
                             double delta = elevations[idx] - takeoffElev;
-                            float correctedAlt = Math.max(10f, (float) (baseAGL + delta));
+                            // Alsó határ 3 m (összhangban a UI/Generator clamp-pel).
+                            float correctedAlt = Math.max(3f, (float) (baseAGL + delta));
                             wp.altitudeM = correctedAlt;
                             wp.terrainElevation = elevations[idx];
                             wp.hasTerrainCorrection = true;
@@ -1843,7 +1880,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private void updateLabels() {
         double gsd    = getGsd();
         DroneProfile drone = getSelectedDrone();
-        double alt    = GsdCalculator.altitudeFromGsd(gsd, drone);
+        // Magasság: ha az etAltitude valid, az a forrás (felülírhatja a GSD slider
+        // clamp-elt értékét — pl. 3 m a 0.1 cm/px slider min-je alatt).
+        double alt    = (etAltitude != null)
+                ? parseAltitudeField()
+                : GsdCalculator.altitudeFromGsd(gsd, drone);
         double side   = getSidelap();
         double front  = getFrontlap();
         float  speed  = getSpeed();
@@ -1851,13 +1892,6 @@ public class MissionPlannerActivity extends AppCompatActivity {
         float  recSpd = GsdCalculator.recommendedSpeedMs(gsd, drone);
 
         tvGsd.setText(String.format("GSD: %.2f cm/px  (ajánl. v: %.1f m/s)", gsd, recSpd));
-
-        // Magasság mező szinkronizálása ha a GSD csúszka húzta
-        if (!updatingAlt && etAltitude != null) {
-            updatingAlt = true;
-            etAltitude.setText(String.valueOf((int) Math.round(alt)));
-            updatingAlt = false;
-        }
         tvSidelap.setText(String.format("Oldalsó átfedes: %.0f%%", side));
         tvFrontlap.setText(String.format("Menetirany átfedes: %.0f%%", front));
         tvSpeed.setText(String.format("Sebesseg: %.0f m/s", speed));
@@ -2295,9 +2329,22 @@ public class MissionPlannerActivity extends AppCompatActivity {
      * Fordított mapping (buildConfig() inverze).
      */
     private void restoreConfigToUI(ProjectManager.ProjectData data) {
-        // gsdCm → sbGsd: progress = round((gsd - 0.5) / 0.1)
-        int gsdProg = (int) Math.round((data.gsdCm - 0.5) / 0.1);
-        sbGsd.setProgress(Math.max(0, Math.min(sbGsd.getMax(), gsdProg)));
+        // FONTOS sorrend: először minden olyan UI elemet beállítunk, ami a
+        // listener-eken keresztül felülírhatná a magasságot (drón csere,
+        // sbGsd). A mentett altitude_m-et UTOLSÓ lépésként állítjuk be, hogy
+        // ez legyen az érvényes érték — különben pl. a drón csere
+        // syncAltitudeFromGsd hívása felülírná.
+
+        // droneProfile → spinnerDrone (name alapján keresés) — ELŐRE, mert
+        // változtatja a sensor paramétereket, amit a magasság-szinkron használ
+        if (!data.droneProfileName.isEmpty()) {
+            for (int i = 0; i < DroneProfiles.ALL.size(); i++) {
+                if (DroneProfiles.ALL.get(i).name.equals(data.droneProfileName)) {
+                    spinnerDrone.setSelection(i);
+                    break;
+                }
+            }
+        }
 
         // sidelapPercent → sbSidelap: progress = sidelap - 50
         int sidelapProg = (int) Math.round(data.sidelapPercent - 50.0);
@@ -2307,8 +2354,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         int frontlapProg = (int) Math.round(data.frontlapPercent - 60.0);
         sbFrontlap.setProgress(Math.max(0, Math.min(sbFrontlap.getMax(), frontlapProg)));
 
-        // speedMs → sbSpeed: progress = round(speed - 3)
-        int speedProg = Math.round(data.speedMs - 3.0f);
+        // speedMs → sbSpeed: progress = round(speed - 1)  (getSpeed = 1 + progress)
+        int speedProg = Math.round(data.speedMs - 1.0f);
         sbSpeed.setProgress(Math.max(0, Math.min(sbSpeed.getMax(), speedProg)));
 
         // flightAngleDeg → sbAngle
@@ -2342,15 +2389,21 @@ public class MissionPlannerActivity extends AppCompatActivity {
             }
         }
 
-        // droneProfile → spinnerDrone (name alapján keresés)
-        if (!data.droneProfileName.isEmpty()) {
-            for (int i = 0; i < DroneProfiles.ALL.size(); i++) {
-                if (DroneProfiles.ALL.get(i).name.equals(data.droneProfileName)) {
-                    spinnerDrone.setSelection(i);
-                    break;
-                }
-            }
+        // Magasság az elsődleges forrás (lásd buildConfig). A mentett altitude_m
+        // értéket írjuk vissza az etAltitude-ba, és setAltitudeAndSyncGsd
+        // gondoskodik a GSD slider szinkronizálásáról. Fallback: ha az
+        // altitude_m hiányzik (régi mentés), a GSD-ből származtatott magasságot
+        // használjuk a most már aktív drón profillal.
+        int altInt;
+        if (data.altitudeM > 0.0) {
+            altInt = (int) Math.round(data.altitudeM);
+        } else {
+            altInt = (int) Math.round(
+                GsdCalculator.altitudeFromGsd(data.gsdCm, getSelectedDrone()));
         }
+        // triggerAutoGen=false: a loadProject() a végén explicit generateMission()-t
+        // hív, ne legyen dupla generálás.
+        setAltitudeAndSyncGsd(altInt, false);
 
         updateLabels();
     }
@@ -3404,8 +3457,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private MissionConfig buildConfig() {
         MissionConfig c = new MissionConfig();
         c.droneProfile      = getSelectedDrone();
-        c.gsdCm             = getGsd();
-        c.altitudeM         = GsdCalculator.altitudeFromGsd(c.gsdCm, c.droneProfile);
+        // Magasság az elsődleges forrás: a felhasználó által beírt etAltitude érték
+        // megy a mentésbe, a GSD ebből származtatva. Így a manuálisan választott
+        // alacsony magasság (pl. 5 m a GSD-slider min-je alatt) megőrződik.
+        c.altitudeM         = Math.max(3, Math.min(120, parseAltitudeField()));
+        c.gsdCm             = GsdCalculator.gsdFromAltitude(c.altitudeM, c.droneProfile);
         c.sidelapPercent    = getSidelap();
         c.frontlapPercent   = getFrontlap();
         c.speedMs           = getSpeed();
@@ -3420,10 +3476,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
         return c;
     }
 
-    private double getGsd()      { return 0.5 + sbGsd.getProgress() * 0.1; }
+    private double getGsd()      { return 0.1 + sbGsd.getProgress() * 0.1; }
     private double getSidelap()  { return 50.0 + sbSidelap.getProgress(); }
     private double getFrontlap() { return 60.0 + sbFrontlap.getProgress(); }
-    private float  getSpeed()    { return 3.0f + sbSpeed.getProgress(); }
+    private float  getSpeed()    { return 1.0f + sbSpeed.getProgress(); }
     private int    getAngle()    { return sbAngle.getProgress(); }
     private int    getOffset()   { return sbOffset != null ? sbOffset.getProgress() : 0; }
 
@@ -3446,18 +3502,51 @@ public class MissionPlannerActivity extends AppCompatActivity {
     }
 
     private void setAltitudeAndSyncGsd(int altM) {
-        altM = Math.max(10, Math.min(120, altM));
+        setAltitudeAndSyncGsd(altM, true);
+    }
+
+    /**
+     * @param triggerAutoGen ha true, a végén autoGenerateIfReady() lefut.
+     *                       Project betöltéskor false-szal hívandó, mert a
+     *                       loadProject() a végén explicit generateMission()-t
+     *                       hív — felesleges és pazarló a duplikáció.
+     */
+    private void setAltitudeAndSyncGsd(int altM, boolean triggerAutoGen) {
+        altM = Math.max(3, Math.min(120, altM));
         updatingAlt = true;
         etAltitude.setText(String.valueOf(altM));
 
-        // GSD csúszka szinkronizálása: progress = round((gsd - 0.5) / 0.1)
+        // GSD csúszka szinkronizálása: progress = round((gsd - 0.1) / 0.1)
         DroneProfile drone = getSelectedDrone();
         double gsd = GsdCalculator.gsdFromAltitude(altM, drone);
-        int prog = (int) Math.round((gsd - 0.5) / 0.1);
+        int prog = (int) Math.round((gsd - 0.1) / 0.1);
         sbGsd.setProgress(Math.max(0, Math.min(sbGsd.getMax(), prog)));
-        // updateLabels() a SeekBar listener-en keresztül lefut, de ne írja felül az EditText-et
-        // (updatingAlt=true véd ettől)
         updateLabels();
+        updatingAlt = false;
+        // Misszió automatikus újragenerálása: a slider drag elengedéskor
+        // onStopTrackingTouch-en keresztül történik, de programatikus
+        // setProgress (etAltitude bevitel, +/- gombok) NEM triggereli azt.
+        // Explicit hívással biztosítjuk, hogy a tvStats (összesítés) és a
+        // térkép-overlay azonnal frissüljön a kézi magasság-bevitel után is.
+        if (triggerAutoGen) {
+            autoGenerateIfReady();
+        }
+    }
+
+    /**
+     * Magasság mező frissítése a GSD slider aktuális értékéből.
+     * Csak akkor hívandó, amikor a felhasználó ténylegesen mozgatja a sbGsd-t
+     * (lásd SeekBar listener, user==true ág). Programozott sbGsd.setProgress
+     * (pl. magasság-bevitel utáni clamp-szinkron, projekt betöltés) NE hívja,
+     * különben elveszne a manuális magasság.
+     */
+    private void syncAltitudeFromGsd() {
+        if (updatingAlt || etAltitude == null) return;
+        DroneProfile drone = getSelectedDrone();
+        int alt = (int) Math.round(GsdCalculator.altitudeFromGsd(getGsd(), drone));
+        alt = Math.max(3, Math.min(120, alt));
+        updatingAlt = true;
+        etAltitude.setText(String.valueOf(alt));
         updatingAlt = false;
     }
 
@@ -3660,6 +3749,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
     private void updateDroneStatus() {
         if (tvDroneStatus == null) return;
+        boolean droneConnected = false;
         try {
             DJIHelper helper = DJIHelper.getInstance();
             if (helper.isConnected()) {
@@ -3667,6 +3757,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 tvDroneStatus.setText("● Csatlakoztatva: " + (name != null ? name : "drón"));
                 tvDroneStatus.setTextColor(0xFF44FF44);
                 btnUpload.setEnabled(lastResult != null && !missionRunning);
+                droneConnected = true;
             } else if (helper.isRegistered()) {
                 tvDroneStatus.setText("● SDK regisztrálva – drón keresése...");
                 tvDroneStatus.setTextColor(0xFFFFAA00);
@@ -3684,5 +3775,11 @@ public class MissionPlannerActivity extends AppCompatActivity {
             btnUpload.setEnabled(false);
             btnStart.setEnabled(false);
         }
+        // Kamera-akciók (AE Lock, Alkalmaz) csak akkor érhetők el, ha a drón
+        // ténylegesen csatlakozik. Drón nélkül a CameraConfigurator getCamera()
+        // null-t ad, és a click csak hibaüzenetet eredményez — jobb, ha a gombot
+        // letiltjuk vizuálisan is.
+        if (btnAutoLock != null) btnAutoLock.setEnabled(droneConnected);
+        if (btnApplyCamera5 != null) btnApplyCamera5.setEnabled(droneConnected);
     }
 }

@@ -281,11 +281,14 @@ void autoGenerateIfReady() {
 MissionConfig buildConfig() {
     MissionConfig c = new MissionConfig();
     c.droneProfile     = getSelectedDrone();              // Spinner kiválasztott profil
-    c.gsdCm            = 0.5 + sbGsd.getProgress() * 0.1;
-    c.altitudeM        = GsdCalculator.altitudeFromGsd(c.gsdCm, c.droneProfile);
+    // Magasság az "igazság forrása" — a felhasználó által beírt etAltitude érték
+    // kerül a mentésbe, a GSD ebből származtatva. Így a manuálisan beírt
+    // alacsony magasság (pl. 5 m a GSD-slider min-je alatt) megőrződik.
+    c.altitudeM        = Math.max(3, Math.min(120, parseAltitudeField())); // 3–120 m clamp
+    c.gsdCm            = GsdCalculator.gsdFromAltitude(c.altitudeM, c.droneProfile);
     c.sidelapPercent   = 50.0 + sbSidelap.getProgress(); // 50–90%
     c.frontlapPercent  = 60.0 + sbFrontlap.getProgress();// 60–90%
-    c.speedMs          = 3.0f + sbSpeed.getProgress();   // 3–15 m/s
+    c.speedMs          = 1.0f + sbSpeed.getProgress();   // 1–15 m/s
     c.flightAngleDeg   = sbAngle.getProgress();          // 0–179°
     c.terrainFollowing = switchTerrain.isChecked();
     c.offsetM          = sbOffset.getProgress();         // 0–30 m
@@ -517,10 +520,11 @@ FrameLayout (rootLayout, full screen)
             ├─ TextView "Drón" + Spinner (id: spinnerDrone)
             ├─ TextView (id: tvDroneStatus)   DJI kapcsolat státusz
             ├─ TextView "Misszió beállítások" (bold, 16sp)
-            ├─ TextView (id: tvGsd) + SeekBar (id: sbGsd, max=95)
+            ├─ TextView (id: tvGsd) + SeekBar (id: sbGsd, max=99)
+            ├─ LinearLayout "Magasság:" + Button(-) + EditText (id: etAltitude, 3–120 m) + Button(+)
             ├─ TextView (id: tvSidelap) + SeekBar (id: sbSidelap, max=40)
             ├─ TextView (id: tvFrontlap) + SeekBar (id: sbFrontlap, max=30)
-            ├─ TextView (id: tvSpeed) + SeekBar (id: sbSpeed, max=12)
+            ├─ TextView (id: tvSpeed) + SeekBar (id: sbSpeed, max=14)
             ├─ TextView (id: tvAngle) + SeekBar (id: sbAngle, max=179)
             ├─ TextView (id: tvOffset) + SeekBar (id: sbOffset, max=30)
             ├─ separator
