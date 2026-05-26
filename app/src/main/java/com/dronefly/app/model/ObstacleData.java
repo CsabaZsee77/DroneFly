@@ -6,12 +6,23 @@ package com.dronefly.app.model;
  * körzetébe esnek ÉS a repülési magasság <= az akadály magassága.
  */
 public class ObstacleData {
+    public String id    = "";   // "obst1", "obst2", ... — belső azonosító, nem változtatható
+    public String label = "";   // szerkeszthető megnevezés, alap: azonos az id-vel
     public double latitude;
     public double longitude;
     public float radiusM;   // biztonsági zóna sugara (m) – minimum clearance
     public float heightM;   // akadály becsült magassága a talajhoz képest (m)
 
     public ObstacleData(double lat, double lon, float radiusM, float heightM) {
+        this.latitude  = lat;
+        this.longitude = lon;
+        this.radiusM   = radiusM;
+        this.heightM   = heightM;
+    }
+
+    public ObstacleData(String id, String label, double lat, double lon, float radiusM, float heightM) {
+        this.id        = id != null ? id : "";
+        this.label     = label != null ? label : this.id;
         this.latitude  = lat;
         this.longitude = lon;
         this.radiusM   = radiusM;

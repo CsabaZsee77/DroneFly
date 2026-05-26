@@ -9,10 +9,13 @@ public class MissionConfig {
     public double sidelapPercent = 75.0; // oldalsó átfedés %
     public double frontlapPercent = 80.0;// menetirány átfedés %
     public float speedMs = 7.0f;         // repülési sebesség m/s
-    public double flightAngleDeg = 0.0;  // 0 = K-Ny sávok (É-D irányban halad)
+    public double flightAngleDeg = 0.0;       // 0 = K-Ny sávok (É-D irányban halad)
+    public String gridMode = "single";        // "single" | "crosshatch"
+    public double crosshatchHeadingDeg = 90.0;// második rács iránya (crosshatch módban)
+    public String startCorner = "auto";       // "auto" | "0" | "1" | "2" | "3"
     public boolean returnHome = true;
-    public boolean terrainFollowing = false; // domborzatkövetés engedélyezése
-    public double offsetM = 0.0;            // túlrepülési határ méterben (0 = nincs)
+    public boolean terrainFollowing = false;  // domborzatkövetés engedélyezése
+    public double offsetM = 0.0;              // túlrepülési határ méterben (0 = nincs)
     public DroneProfile droneProfile;    // kiválasztott drón kamera profil
     public CameraSettings cameraSettings = CameraSettings.getAgricultureDefaults();
     public List<ObstacleData> obstacles = new ArrayList<>(); // akadályok listája
