@@ -90,8 +90,8 @@ public class MissionUploader {
         WaypointMission.Builder builder = new WaypointMission.Builder();
         builder.waypointList(wpList)
                .waypointCount(wpList.size())
-               .maxFlightSpeed(Math.min(15f, Math.max(1f, config.speedMs)))
-               .autoFlightSpeed(Math.min(15f, Math.max(1f, config.speedMs)))
+               .maxFlightSpeed(Math.min(15f, Math.max(2f, config.speedMs)))
+               .autoFlightSpeed(Math.min(15f, Math.max(2f, config.speedMs)))
                .finishedAction(config.returnHome
                        ? WaypointMissionFinishedAction.GO_HOME
                        : WaypointMissionFinishedAction.NO_ACTION)

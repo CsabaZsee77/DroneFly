@@ -74,6 +74,7 @@ Az app DJI MSDK v4.18-ra épül, Crystal Sky + Phantom 4 Pro v1 kombóra optimal
 | GPS gomb — pozícióra ugrás | v1.9.6 | Drón GPS preferált, tablet GPS fallback, zoom 15 |
 | REC gomb — képernyőkép | v1.9.7–v1.9.8 | PNG → /sdcard/Pictures/DroneFly/; zöld villanás visszajelzés |
 | REC gomb — képernyővideó | v1.9.7–v1.9.9 | MediaProjection, 720p/25fps/H264; stopRecording háttérszálon |
+| Sebesség SeekBar minimum 2 m/s | v1.9.10 | DJI MSDK v4 `maxFlightSpeed` ≥ 2 m/s korlát — 1 m/s feltöltési hibát okozott alacsony magasságnál |
 
 ---
 

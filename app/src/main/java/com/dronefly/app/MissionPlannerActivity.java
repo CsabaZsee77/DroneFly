@@ -399,7 +399,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         sbGsd.setProgress(29);
         sbSidelap.setProgress(25);  // 75%
         sbFrontlap.setProgress(20); // 80%
-        sbSpeed.setProgress(6);     // 7 m/s (1 + 6 = 7)
+        sbSpeed.setProgress(5);     // 7 m/s (2 + 5 = 7)
         sbAngle.setProgress(0);
 
         SeekBar.OnSeekBarChangeListener listener = new SeekBar.OnSeekBarChangeListener() {
@@ -415,9 +415,9 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 // Ha GSD változik, frissítsük az ajánlott sebességet
                 if (sb == sbGsd) {
                     float rec = GsdCalculator.recommendedSpeedMs(getGsd(), getSelectedDrone());
-                    // sbSpeed progress = ajánlott sebesség - 1 (mert getSpeed = 1 + progress)
-                    int speedProg = Math.round(rec) - 1;
-                    sbSpeed.setProgress(Math.max(0, Math.min(14, speedProg)));
+                    // sbSpeed progress = ajánlott sebesség - 2 (mert getSpeed = 2 + progress)
+                    int speedProg = Math.round(rec) - 2;
+                    sbSpeed.setProgress(Math.max(0, Math.min(13, speedProg)));
                 }
             }
             @Override public void onStartTrackingTouch(SeekBar sb) {}
@@ -2354,8 +2354,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         int frontlapProg = (int) Math.round(data.frontlapPercent - 60.0);
         sbFrontlap.setProgress(Math.max(0, Math.min(sbFrontlap.getMax(), frontlapProg)));
 
-        // speedMs → sbSpeed: progress = round(speed - 1)  (getSpeed = 1 + progress)
-        int speedProg = Math.round(data.speedMs - 1.0f);
+        // speedMs → sbSpeed: progress = round(speed - 2)  (getSpeed = 2 + progress)
+        int speedProg = Math.round(data.speedMs - 2.0f);
         sbSpeed.setProgress(Math.max(0, Math.min(sbSpeed.getMax(), speedProg)));
 
         // flightAngleDeg → sbAngle
@@ -3479,7 +3479,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private double getGsd()      { return 0.1 + sbGsd.getProgress() * 0.1; }
     private double getSidelap()  { return 50.0 + sbSidelap.getProgress(); }
     private double getFrontlap() { return 60.0 + sbFrontlap.getProgress(); }
-    private float  getSpeed()    { return 1.0f + sbSpeed.getProgress(); }
+    private float  getSpeed()    { return 2.0f + sbSpeed.getProgress(); }
     private int    getAngle()    { return sbAngle.getProgress(); }
     private int    getOffset()   { return sbOffset != null ? sbOffset.getProgress() : 0; }
 
