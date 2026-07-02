@@ -4,8 +4,8 @@
 **Szint:** L2 – Döntési Logika
 **Verzió:** v0.1.1
 **Létrehozva:** 2026-06-19
-**Utolsó módosítás:** 2026-06-29
-**Státusz:** ✅ Implementálva (verifikáció + UI tesztelés hátra)
+**Utolsó módosítás:** 2026-07-02
+**Státusz:** ✅ Kézi UI-verifikáció OK Crystal Sky-n (2026-07-02)
 
 ---
 
