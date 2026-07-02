@@ -285,3 +285,105 @@ Drón repüli az 1. szegmenst
 | M02 Grid Engine | **Közvetlen hívás** — generateMission() → GridMissionGenerator |
 | M03 Export/Import | **Közvetlen hívás** — exportCsv(), exportKmz(), importCsv() |
 | M04 DJI Integráció | **Közvetlen hívás** — uploadMission(), pauseMission(), stopMission() |
+
+---
+
+## 10. Mintavételi misszió (Sampling Mission) — ✅ Implementálva, eszközön még nem tesztelve (2026-07-02)
+
+**Felmerülés:** napraforgó tányérszámlálás megbeszélés (Dronterapia projekt) — a teljes
+táblás, alacsony GSD-jű felvételezés tíz-egynéhány hektáros táblákon irreálisan sok
+képet és repülési időt igényel. Ehelyett néhány mintaponton (10–50 db) készül alacsony
+magasságú, nagy felbontású felvétel, amit a Dronterapia oldali interpoláció (M03
+`utils/sampling_plan.py` + `utils/interpolation.py`, már implementálva) becsül teljes
+táblára.
+
+**Kapcsolódó Dronterapia dokumentáció:** `Dronterapia/docs/M03_COUNTING/M03_L1_UZLETI_FOLYAMAT.md`
+§10, `Dronterapia/ROADMAP.md` §10.
+
+### 10.1 Miért nem a meglévő Grid Engine (M02) útvonalán megy ez?
+
+A meglévő kígyózó (lawnmower) misszió **teljes lefedettségre** tervez: minden ponton
+azonos, a GSD-ből számított magasságon repül, és a fotó a kamera **időintervallum**
+alapú triggerelésével készül, folyamatos (`CURVED`) repülés közben, megállás nélkül.
+
+A mintavételi misszió ehhez képest **strukturálisan más**:
+- Nem folyamatos lefedettség kell, hanem **diszkrét pontok** meglátogatása
+- A pontok közötti (transit) szakaszon **nem** kell fotózni
+- Minden ponton **le kell ereszkedni** egy alacsonyabb, a mintavételi GSD-hez
+  szükséges magasságra, majd **vissza kell emelkedni** — ez **két különböző
+  magasságot** igényel (nem egyet, mint a Grid Engine-nél)
+- A fotónak **pontosan a mintapont fölött**, megállva (hover) kell készülnie,
+  nem folyamatos repülés közben — ld. 10.3. pont
+
+Ezért ez egy **új misszió-típus és új végrehajtási mód** (részletek: M02 §7, M04 §15),
+nem a meglévő grid-generátor bővítése.
+
+### 10.2 UI-folyamat
+
+```
+[Operátor] → "🎯 Mintavételi misszió" mód kiválasztása
+  (a meglévő "Kígyózó misszió" mód mellett, radio/tab váltó)
+      │
+      ▼
+Terület meghatározása — UGYANAZ a mechanizmus, mint a kígyózó missziónál:
+  - Polygon rajzolása a térképen (meglévő mechanizmus, változtatás nélkül)
+  - VAGY CSV/KML import
+  - Terület (ha) automatikusan megjelenik — a meglévő, pontos (helyi XY vetületű
+    Gauss-formula) területszámítás újrahasznosításával (M02 §4 lépés 3+5)
+  - Kézi hektár-szám megadás NEM támogatott ebben a módban — a mintapontokhoz
+    valós GPS-koordinátájú geometria kell, amerre a drón ténylegesen repülhet
+      │
+      ▼
+Mintavételi paraméterek panel:
+  - Mintapontok száma: [Ajánlott: N] csúszka/szám-bevitel (10–100)
+    → alapértelmezett: recommended_n_points(area_ha) — ld. M02 §7.2
+  - Elosztási algoritmus: Spinner ("Rétegzett rács" | "Halton" | "Random")
+    → alapértelmezett: "Rétegzett rács"
+  - Transit magasság (m): a pontok közötti repülési magasság — akadálybiztos
+    → alapértelmezett: a legmagasabb ismert akadály + biztonsági ráhagyás,
+      vagy kézi megadás (10–120 m)
+  - Mintavételi magasság (m): a fotózási magasság minden ponton
+    → alapértelmezett: GSD-ből számítva (GsdCalculator újrahasznosítása),
+      tipikusan 3–15 m
+  - Hover időtartam (mp): mennyi ideig áll meg fotózás előtt (alapért.: 2–3 mp)
+      │
+      ▼
+Auto-generált mintavételi misszió eredménye (SamplingMissionGenerator, M02 §7):
+  - Mintapontok megjelenítve térképen (számozott markerek, nem folytonos vonal)
+  - Statisztikák:
+      Terület: X ha | N mintapont | 3N waypoint (transit+süllyedés+emelkedés pontonként)
+      Transit magasság: X m | Mintavételi magasság: X m
+      Becsült repülési idő: ~X perc (hover időkkel együtt)
+      │
+      ▼
+[Feltöltés] + [START] → M04 új végrehajtási út (NORMAL mód + waypoint akciók, M04 §15)
+```
+
+**Fontos UX-döntés:** a terület kijelölése (rajzolás/import) és a területmérés
+**azonos marad** a kígyózó misszióval — nincs szükség új rajzoló-komponensre,
+csak egy új "mit generáljunk a polygonból" ág nyílik a paraméterpanel után.
+
+### 10.3 Miért kell megállnia (hover) fotózás közben?
+
+Két önálló ok, mindkettő szükséges:
+
+1. **Biztonság akadályok miatt** — a süllyedés a mintapont fölött, függőlegesen
+   történik (nem oldalról, ferdén közelítve), miután a vízszintes mozgás már
+   befejeződött a transit magasságon. Ez garantálja, hogy a lefelé/felfelé mozgás
+   mindig egy már ellenőrzött, akadálymentes oszlopban történik.
+2. **Képminőség** — alacsony magasságon (3–15 m) ugyanaz az abszolút sebesség/rezgés
+   sokkal nagyobb relatív elmosódást (motion blur) okoz, mint nagy magasságon (ez
+   ugyanaz az összefüggés, ami a Dronterapia-oldali GSD-megbeszélésből is következett).
+   A hover stabilizálja a pozíciót a záridő pillanatára.
+
+**Technikai következmény:** ez a viselkedés a DJI MSDK waypoint-akció rendszerén
+(`WaypointActionType.STAY` + `START_TAKE_PHOTO`) keresztül valósítható meg, ami
+**csak** `NORMAL` (nem `CURVED`) repülési módban működik — ld. M04 §15.
+
+### 10.4 Kapcsolódó modulok (kiegészítés)
+
+| Modul | Kapcsolat típusa |
+|-------|-----------------|
+| M02 Grid Engine | **Új komponens** — SamplingPointGenerator + SamplingMissionGenerator (§7) |
+| M04 DJI Integráció | **Új végrehajtási út** — NORMAL mód + waypoint akciók (§15), session-alapú médialetöltés (§16) |
+| Dronterapia M03 (Counting) | **Downstream** — a letöltött, mintaponkénti fotók a Dronterapia Counting oldal "🎯 Mintavételezéses állományfelmérés" expanderébe tölthetők fel manuálisan (jelenlegi állapot); jövőbeli bővítés: közvetlen szinkron |

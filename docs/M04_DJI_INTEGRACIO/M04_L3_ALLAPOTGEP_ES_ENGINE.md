@@ -465,6 +465,214 @@ checkSDCard → (dialog ha nincs) → setNadirPitch → applySettings
 
 ---
 
+## MissionUploader — mintavételi kiegészítés (uploadSamplingMission) — 🔲 Tervezve
+
+**Forrásfájl-bővítés (tervezett):** `dji/MissionUploader.java` — új publikus metódus,
+a meglévő `uploadMission()` mellett, NEM annak lecserélése.
+
+```java
+public class MissionUploader {
+
+    // ... meglévő uploadMission() (CURVED, grid misszió) VÁLTOZATLAN ...
+
+    /**
+     * Mintavételi misszió feltöltése — NORMAL flightPathMode, waypoint-akciókkal.
+     * A waypoints listában a hoverSeconds > 0 elemek kapnak STAY + START_TAKE_PHOTO
+     * akciót; a hoverSeconds == 0 elemek (transit ki/be) akció nélküli áthaladási pontok.
+     */
+    public void uploadSamplingMission(List<WaypointData> waypoints, MissionConfig config,
+                                      UploadCallback callback) {
+        WaypointMissionOperator operator = getOperator();
+        if (operator == null) {
+            if (callback != null) callback.onError("DJI SDK nincs inicializálva");
+            return;
+        }
+
+        List<Waypoint> wpList = new ArrayList<>();
+        for (WaypointData wp : waypoints) {
+            Waypoint waypoint = new Waypoint((float) wp.latitude, (float) wp.longitude,
+                                             wp.altitudeM);
+            if (wp.hoverSeconds > 0f) {
+                waypoint.addAction(new WaypointAction(
+                        WaypointActionType.STAY, (int) (wp.hoverSeconds * 1000)));
+                waypoint.addAction(new WaypointAction(
+                        WaypointActionType.START_TAKE_PHOTO, 0));
+            }
+            wpList.add(waypoint);
+        }
+
+        WaypointMission.Builder builder = new WaypointMission.Builder();
+        builder.waypointList(wpList)
+               .waypointCount(wpList.size())
+               .maxFlightSpeed(Math.min(15f, Math.max(2f, config.speedMs)))
+               .autoFlightSpeed(Math.min(15f, Math.max(2f, config.speedMs)))
+               .finishedAction(config.returnHome
+                       ? WaypointMissionFinishedAction.GO_HOME
+                       : WaypointMissionFinishedAction.NO_ACTION)
+               .headingMode(WaypointMissionHeadingMode.AUTO)
+               .flightPathMode(WaypointMissionFlightPathMode.NORMAL)  // ← eltérés!
+               .gotoFirstWaypointMode(WaypointMissionGotoWaypointMode.SAFELY);
+
+        DJIError loadError = operator.loadMission(builder.build());
+        if (loadError != null) {
+            if (callback != null)
+                callback.onError("Misszió betöltési hiba: " + loadError.getDescription());
+            return;
+        }
+        operator.uploadMission(djiError -> {
+            if (djiError == null) { if (callback != null) callback.onSuccess(); }
+            else if (callback != null)
+                callback.onError("Feltöltési hiba: " + djiError.getDescription());
+        });
+    }
+}
+```
+
+**Kameramód-előkészítés mintavételi misszióhoz** (a `doLaunchMission()` szekvencia
+mintavételi-módú változata, `CameraConfigurator` kiegészítéssel):
+
+```
+checkSDCard → setNadirPitch → applySettings
+           → setShootPhotoMode(SINGLE)     ← INTERVAL helyett
+           → (NINCS startIntervalShooting hívás — a fotó a waypoint-akció felelőssége)
+           → MissionUploader.uploadSamplingMission(...) → startMission
+```
+
+**`WaypointActionType.STAY` viselkedés (MSDK v4):** a paraméter ezred­másodpercben
+(int) adja meg a hover időtartamát; a drón a megadott ideig lebeg a waypoint
+pozíciójában, mielőtt a következő akciót (vagy a következő waypointra indulást)
+végrehajtaná. A `START_TAKE_PHOTO` paramétere nem használt (0).
+
+---
+
+## MediaSessionDownloader — session-alapú médialetöltés (🔲 Tervezve)
+
+**Forrásfájl (tervezett):** `dji/MediaSessionDownloader.java`
+
+**Fontos architekturális megjegyzés:** a `MediaManager`/`MediaFile` a DJI MSDK v4
+**publikus, stabil, nem obfuszkált** API-ja (`dji.sdk.media.MediaManager`,
+`dji.sdk.media.MediaFile`) — ezekhez **nem szükséges** a projekt más részein
+(RC akkumulátor, gimbal) alkalmazott reflection-alapú megközelítés. Direkt import
+és hívás használható, ami egyszerűbb és megbízhatóbb kódot eredményez.
+
+```java
+public class MediaSessionDownloader {
+
+    public interface SessionDownloadListener {
+        void onFileProgress(int fileIndex, int totalFiles, long current, long total);
+        void onFileComplete(int fileIndex, String localPath);
+        void onFileError(int fileIndex, String error);
+        void onSessionComplete(int successCount, int totalCount, File sessionJsonFile);
+    }
+
+    /**
+     * @param sampleCount          a session mintapontjainak száma (N)
+     * @param missionStartTimeMs   a misszió indításának időbélyege (sanity check-hez)
+     * @param samplePoints         mintapontok (lat, lon) sorrendben — a session.json-hoz
+     * @param sessionId            egyedi azonosító (pl. dátum+idő alapú)
+     */
+    public void downloadSessionMedia(int sampleCount, long missionStartTimeMs,
+                                     List<GeoPoint> samplePoints, String sessionId,
+                                     SessionDownloadListener listener) {
+
+        Camera camera = getCamera(); // meglévő getProduct().getCamera() minta
+        if (camera == null) { /* hiba */ return; }
+
+        // 1. Kameramód váltás — csak MEDIA_DOWNLOAD módban él a MediaManager
+        camera.setMode(SettingsDefinitions.CameraMode.MEDIA_DOWNLOAD, djiError -> {
+            if (djiError != null) { /* onFileError összegzés */ return; }
+
+            MediaManager mediaManager = camera.getMediaManager();
+
+            // 2. Fájllista frissítés
+            mediaManager.refreshFileListOfStorageLocation(
+                    SettingsDefinitions.StorageLocation.SDCARD, refreshError -> {
+                if (refreshError != null) { /* hiba */ return; }
+
+                // 3. Pillanatkép lekérése, időrend szerint rendezve
+                List<MediaFile> allFiles = mediaManager.getSDCardFileListSnapshot();
+                allFiles.sort((a, b) -> a.getTimeCreated().compareTo(b.getTimeCreated()));
+
+                // 4. Utolsó N fájl — determinisztikus 1:1 megfeleltetés (M04 §15)
+                int total = allFiles.size();
+                if (total < sampleCount) { /* onFileError: kevesebb fájl, mint várt */ return; }
+                List<MediaFile> selected = allFiles.subList(total - sampleCount, total);
+
+                // Sanity check — nem blokkoló, csak figyelmeztetés a listenerben
+                for (MediaFile f : selected) {
+                    if (f.getTimeCreated().getTime() < missionStartTimeMs) {
+                        // onSessionWarning(...) — a misszió kezdete előtti fájl a válogatásban
+                    }
+                }
+
+                // 5. Letöltési ciklus (szekvenciális — egyszerre 1 fájl, MSDK ajánlás)
+                downloadNext(selected, 0, sessionId, samplePoints, sampleCount,
+                             missionStartTimeMs, listener, camera);
+            });
+        });
+    }
+
+    private void downloadNext(List<MediaFile> files, int index, String sessionId,
+                              List<GeoPoint> samplePoints, int sampleCount,
+                              long missionStartTimeMs, SessionDownloadListener listener,
+                              Camera camera) {
+        if (index >= files.size()) {
+            // Session JSON írása + kameramód visszaváltás SHOOT_PHOTO-ra
+            File sessionJson = writeSessionJson(sessionId, samplePoints, files);
+            camera.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, ignored -> {});
+            listener.onSessionComplete(files.size(), sampleCount, sessionJson);
+            return;
+        }
+
+        MediaFile mf = files.get(index);
+        File localFile = new File(getSessionDir(sessionId),
+                                  String.format("point_%03d.jpg", index));
+
+        mf.fetchFileData(localFile, null, new DownloadListener<String>() {
+            @Override
+            public void onRateUpdate(long total, long current, long persize) {
+                listener.onFileProgress(index, files.size(), current, total);
+            }
+            @Override
+            public void onSuccess(String s) {
+                listener.onFileComplete(index, localFile.getAbsolutePath());
+                downloadNext(files, index + 1, sessionId, samplePoints, sampleCount,
+                            missionStartTimeMs, listener, camera);
+            }
+            @Override
+            public void onFailure(DJIError error) {
+                listener.onFileError(index, error.getDescription());
+                downloadNext(files, index + 1, sessionId, samplePoints, sampleCount,
+                            missionStartTimeMs, listener, camera); // folytatás hiba esetén is
+            }
+        });
+    }
+
+    /** /sdcard/DroneFly/sessions/{sessionId}/ mappa létrehozása, ha nem létezik */
+    private File getSessionDir(String sessionId) { ... }
+
+    /** session.json írása a M04 L1 §16.1 6. lépésben leírt séma szerint */
+    private File writeSessionJson(String sessionId, List<GeoPoint> samplePoints,
+                                  List<MediaFile> downloadedFiles) { ... }
+}
+```
+
+**Ismert MSDK osztályok a médialetöltéshez (v4.18):**
+
+| Osztály | Csomag | Megjegyzés |
+|---------|--------|-----------|
+| `MediaManager` | `dji.sdk.media.MediaManager` | `camera.getMediaManager()` — csak MEDIA_DOWNLOAD módban nem-null |
+| `MediaFile` | `dji.sdk.media.MediaFile` | `getFileName()`, `getTimeCreated()`, `fetchFileData()` |
+| `SettingsDefinitions.CameraMode` | `dji.common.camera.SettingsDefinitions` | `.SHOOT_PHOTO`, `.MEDIA_DOWNLOAD` |
+| `SettingsDefinitions.StorageLocation` | ua. | `.SDCARD` |
+| `MediaManager.FetchMediaTaskContent.DownloadListener` | `dji.sdk.media.MediaManager` | `onRateUpdate/onProgress/onSuccess/onFailure` |
+
+**Kameramód-váltás időzítési korlátja:** a `MEDIA_DOWNLOAD` mód csak akkor
+kérhető, ha a misszió véglegesen befejeződött (`onMissionFinished`) — aktív
+fotózás/repülés közben a váltás hibát ad vagy figyelmen kívül marad.
+
+---
+
 ## build.gradle módosítás (Crystal Sky buildhez)
 
 ```groovy

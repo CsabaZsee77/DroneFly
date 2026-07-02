@@ -13,10 +13,10 @@
 
 | Modul | Leírás | Státusz |
 |-------|--------|---------|
-| [M01 Misszió Tervező](M01_MISSZIO_TERVEZO/) | Térképes UI, polygon rajzolás, paraméter beállítás | ✅ Implementálva (v1.0.0) |
-| [M02 Grid Engine](M02_GRID_ENGINE/) | GSD kalkulátor, rácsútvonal generátor (kígyózó minta), crosshatch kettős rács | ✅ Implementálva (v1.0.0) |
+| [M01 Misszió Tervező](M01_MISSZIO_TERVEZO/) | Térképes UI, polygon rajzolás, paraméter beállítás | ✅ Implementálva (v1.0.0) — + ✅ Mintavételi misszió mód (§10), eszközön még nem tesztelve (2026-07-02) |
+| [M02 Grid Engine](M02_GRID_ENGINE/) | GSD kalkulátor, rácsútvonal generátor (kígyózó minta), crosshatch kettős rács | ✅ Implementálva (v1.0.0) — + ✅ SamplingMissionGenerator (§7), eszközön még nem tesztelve (2026-07-02) |
 | [M03 Export / Import](M03_EXPORT_IMPORT/) | Litchi CSV export, KMZ export, CSV import | ✅ Implementálva (v1.0.0) |
-| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés | ✅ Implementálva — telemetria, kamera, misszió feltöltés/indítás, isFlying állapot, intervallum fotózás |
+| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés | ✅ Implementálva — telemetria, kamera, misszió feltöltés/indítás, isFlying állapot, intervallum fotózás — + ✅ NORMAL-módú mintavételi végrehajtás és session-alapú médialetöltés (§15–16), eszközön még nem tesztelve (2026-07-02) |
 | [M05 Kamera Konfigurátor](M05_KAMERA_KONFIGURATOR/) | Manuális expozíció (ISO/rekesz/zár/WB/fókusz), élő hisztogram, EV csúszka smart prioritással, kamera profilok | 🔲 Tervezve |
 | [M06 Dronterapia Szinkron](M06_DRONTERAPIA_SYNC/) | NetworkMonitor, AuthManager (username+jelszó), SyncManager (kétirányú .flightprogram.json szinkronizáció), Sync UI | ✅ Implementálva (v2.1.0) |
 | [M07 Blokk-felosztás](M07_BLOKK_FELOSZTAS/) | Nagy területű AOI felbontása rácscellákra (W×H + dőlés + átfedés-puffer), blokk-tap kiválasztás, blokkonkénti misszió generálás, állapotkövetés | ✅ Kézi UI-verifikáció OK Crystal Sky-n (2026-07-02) |

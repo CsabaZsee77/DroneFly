@@ -43,6 +43,14 @@ public class GridMissionGenerator {
         public boolean terrainCorrected = false;
         /** Akadályok miatt kihagyott waypointok száma */
         public int skippedByObstacle = 0;
+
+        // ── Mintavételi misszió mezők (M02 §7) ──────────────────────────
+        /** Igaz, ha ezt az eredményt a SamplingMissionGenerator hozta létre
+         *  (nem a kígyózó Grid Engine) — az Activity ez alapján dönti el,
+         *  hogy uploadMission() vagy uploadSamplingMission() kell-e. */
+        public boolean isSamplingMission = false;
+        /** Mintapontok száma (0, ha nem mintavételi misszió) */
+        public int sampleCount = 0;
     }
 
     public static GeneratorResult generate(List<GeoPoint> polygon, MissionConfig config) {

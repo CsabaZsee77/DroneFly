@@ -27,6 +27,17 @@ public class MissionConfig {
      */
     public BlockGridConfig blockGrid = null;
 
+    // ── Mintavételi misszió (M01 §10 / M02 §7) ─────────────────────────
+    // Ha true, a SamplingMissionGenerator-t kell hívni a GridMissionGenerator
+    // helyett — a paraméterpanel is a mintavételi mezőket mutatja.
+    public boolean samplingMode = false;
+    public int nSamplePoints = 30;                 // mintapontok száma
+    public String samplingMethod = "stratified";   // "stratified" | "halton" | "random"
+    public long samplingSeed = 42L;                // reprodukálhatóság
+    public double transitAltitudeM = 60.0;          // akadálybiztos utazó-magasság
+    public double sampleAltitudeM = 8.0;            // fotózási magasság (GSD-ből számítható)
+    public float hoverSeconds = 2.5f;               // megállás időtartama fotózás előtt
+
     public MissionConfig() {
         this.droneProfile = DroneProfiles.getDefault();
     }

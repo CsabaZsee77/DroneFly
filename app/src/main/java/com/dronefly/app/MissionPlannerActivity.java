@@ -38,6 +38,7 @@ import com.dronefly.app.dji.CameraConfigurator;
 import com.dronefly.app.dji.DJIHelper;
 import com.dronefly.app.dji.DroneVideoWidget;
 import com.dronefly.app.dji.MissionUploader;
+import com.dronefly.app.dji.MediaSessionDownloader;
 import com.dronefly.app.model.CameraSettings;
 
 // DJI kapcsolat listener – valós idejű státusz frissítés
@@ -55,6 +56,8 @@ import com.dronefly.app.mission.GridMissionGenerator;
 import com.dronefly.app.mission.GsdCalculator;
 import com.dronefly.app.mission.MissionExporter;
 import com.dronefly.app.mission.ProjectManager;
+import com.dronefly.app.mission.SamplingPointGenerator;
+import com.dronefly.app.mission.SamplingMissionGenerator;
 import com.dronefly.app.model.Block;
 import com.dronefly.app.model.BlockGridConfig;
 import com.dronefly.app.model.BlockStatus;
@@ -270,6 +273,18 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private GridMissionGenerator.GeneratorResult lastResult;
     private int currentSegmentIndex = 0;
     private final MissionUploader uploader = new MissionUploader();
+
+    // M01 §10 / M02 §7 — Mintavételi misszió (2026-07-02)
+    private Switch   switchSamplingMode;
+    private LinearLayout samplingParamsPanel;
+    private EditText etSampleCount, etTransitAlt, etSampleAlt, etHoverSeconds;
+    private Spinner  spinnerSamplingMethod;
+    private Button   btnDownloadSession;
+    private List<GeoPoint> lastSamplePoints = null;
+    private final List<Marker> samplePointMarkers = new ArrayList<>();
+    private long   samplingMissionStartTimeMs = 0L;
+    private String currentSamplingSessionId   = null;
+    private final MediaSessionDownloader mediaSessionDownloader = new MediaSessionDownloader();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -644,6 +659,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         initCameraConfigPanel();
         initTerrainControls();
         initCrosshatchControls();
+        initSamplingControls();
         initSyncControls();
         initStatusBar();
         // Az updateLabels nem írja az etAltitude-ot (a felhasználói magasság-érték
@@ -1397,6 +1413,41 @@ public class MissionPlannerActivity extends AppCompatActivity {
             @Override public void onStopTrackingTouch(SeekBar sb) { autoGenerateIfReady(); }
         });
         tvCrosshatchAngle.setText("2. rács iránya: 90°");
+    }
+
+    // ── Mintavételi misszió panel (M01 §10) ──────────────────────────────
+
+    private void initSamplingControls() {
+        switchSamplingMode  = findViewById(R.id.switchSamplingMode);
+        samplingParamsPanel = findViewById(R.id.samplingParamsPanel);
+        etSampleCount       = findViewById(R.id.etSampleCount);
+        etTransitAlt        = findViewById(R.id.etTransitAlt);
+        etSampleAlt         = findViewById(R.id.etSampleAlt);
+        etHoverSeconds      = findViewById(R.id.etHoverSeconds);
+        spinnerSamplingMethod = findViewById(R.id.spinnerSamplingMethod);
+        btnDownloadSession  = findViewById(R.id.btnDownloadSession);
+
+        ArrayAdapter<String> methodAdapter = new ArrayAdapter<>(
+            this, android.R.layout.simple_spinner_item,
+            new String[]{"stratified", "halton", "random"});
+        methodAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerSamplingMethod.setAdapter(methodAdapter);
+        spinnerSamplingMethod.setSelection(0);
+
+        switchSamplingMode.setOnCheckedChangeListener((btn, isChecked) -> {
+            samplingParamsPanel.setVisibility(isChecked ? View.VISIBLE : View.GONE);
+            // Mód váltásnál a korábbi eredmény (másik móddal generálva) már
+            // nem érvényes — töröljük, hogy ne lehessen felkeverni a két típust.
+            lastResult = null;
+            lastSamplePoints = null;
+            clearSamplePointMarkers();
+            btnUpload.setEnabled(false);
+            btnDownloadSession.setVisibility(View.GONE);
+            tvStats.setText("");
+            autoGenerateIfReady();
+        });
+
+        btnDownloadSession.setOnClickListener(v -> triggerSessionDownload());
     }
 
     // ── Szinkronizáció panel ──────────────────────────────────────────────
@@ -2701,7 +2752,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
 
         MissionConfig config = buildConfig();
         config.terrainFollowing = false; // auto-generálásban nincs terrain (túl lassú lenne)
-        lastResult = GridMissionGenerator.generate(polygonPoints, config);
+        lastResult = runGeneration(polygonPoints, config);
 
         if (lastResult.errorMessage != null) {
             tvStats.setText("Hiba: " + lastResult.errorMessage);
@@ -2806,7 +2857,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         }
         MissionConfig config = buildConfig();
         config.terrainFollowing = switchTerrain != null && switchTerrain.isChecked();
-        lastResult = GridMissionGenerator.generate(generationPolygon, config);
+        lastResult = runGeneration(generationPolygon, config);
 
         if (lastResult.errorMessage != null) {
             Toast.makeText(this, lastResult.errorMessage, Toast.LENGTH_LONG).show();
@@ -2821,29 +2872,48 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnExport.setEnabled(true);
         if (btnSimulate != null) btnSimulate.setEnabled(true);
 
-        double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
         StringBuilder sbStats = new StringBuilder();
-        sbStats.append(String.format(
-            "Terulet: %.2f ha | ~%d foto (%d szegmens)\n" +
-            "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
-            "Sebesseg: %.0f m/s (ajanl: %.0f m/s) | Ido: ~%.0f perc",
-            lastResult.areaM2 / 10000.0,
-            lastResult.estimatedPhotoCount, lastResult.segments.size(),
-            lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
-            (double) config.speedMs, (double) recSpd, lastResult.estimatedMinutes));
+        if (lastResult.isSamplingMission) {
+            sbStats.append(String.format(
+                "Terulet: %.2f ha | %d mintapont | %d waypoint (%d szegmens)\n" +
+                "Transit magassag: %.0f m | Mintaveteli magassag: %.0f m\n" +
+                "Sebesseg: %.0f m/s | Ido: ~%.0f perc",
+                lastResult.areaM2 / 10000.0, lastResult.sampleCount,
+                lastResult.totalWaypoints, lastResult.segments.size(),
+                config.transitAltitudeM, config.sampleAltitudeM,
+                (double) config.speedMs, lastResult.estimatedMinutes));
+            if (config.transitAltitudeM > MAX_ALTITUDE_LEGAL) {
+                Toast.makeText(this,
+                    String.format("Figyelem: transit magasság %.0fm > 120m (EU határ)!",
+                        config.transitAltitudeM),
+                    Toast.LENGTH_LONG).show();
+            }
+        } else {
+            double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
+            sbStats.append(String.format(
+                "Terulet: %.2f ha | ~%d foto (%d szegmens)\n" +
+                "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
+                "Sebesseg: %.0f m/s (ajanl: %.0f m/s) | Ido: ~%.0f perc",
+                lastResult.areaM2 / 10000.0,
+                lastResult.estimatedPhotoCount, lastResult.segments.size(),
+                lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
+                (double) config.speedMs, (double) recSpd, lastResult.estimatedMinutes));
+            if (lastResult.altitudeM > MAX_ALTITUDE_LEGAL) {
+                Toast.makeText(this,
+                    String.format("Figyelem: %.0fm > 120m (EU határ)! Csokkentsd a GSD-t.",
+                        lastResult.altitudeM),
+                    Toast.LENGTH_LONG).show();
+            }
+        }
         if (lastResult.skippedByObstacle > 0) {
             sbStats.append(String.format("\n⚠ Akadaly miatt kihagyva: %d wp", lastResult.skippedByObstacle));
         }
         tvStats.setText(sbStats.toString());
 
-        if (lastResult.altitudeM > MAX_ALTITUDE_LEGAL) {
-            Toast.makeText(this,
-                String.format("Figyelem: %.0fm > 120m (EU határ)! Csokkentsd a GSD-t.",
-                    lastResult.altitudeM),
-                Toast.LENGTH_LONG).show();
-        }
-
-        if (config.terrainFollowing) {
+        // Domborzatkövetés a mintavételi misszióra nem értelmezhető (a 3-waypontos
+        // érkezés/süllyedés/emelkedés szerkezet feltételezi, hogy a transit magasság
+        // már manuálisan biztonságos minden akadály fölött — ld. M01 §10).
+        if (config.terrainFollowing && !lastResult.isSamplingMission) {
             applyTerrainFollowing(lastResult, lastResult.altitudeM);
         }
     }
@@ -3007,7 +3077,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         progress.setCancelable(false);
         progress.show();
 
-        uploader.uploadMission(segment, buildConfig(), new MissionUploader.UploadCallback() {
+        MissionUploader.UploadCallback uploadCallback = new MissionUploader.UploadCallback() {
             @Override public void onSuccess() {
                 runOnUiThread(() -> {
                     progress.dismiss();
@@ -3033,7 +3103,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
                         .show();
                 });
             }
-        });
+        };
+
+        // M04 §15 — mintavételi misszió: NORMAL mód + waypoint-akciók, a
+        // meglévő CURVED+intervallum-fotózás útvonal helyett.
+        if (lastResult != null && lastResult.isSamplingMission) {
+            uploader.uploadSamplingMission(segment, buildConfig(), uploadCallback);
+        } else {
+            uploader.uploadMission(segment, buildConfig(), uploadCallback);
+        }
     }
 
     private void startMission() {
@@ -3080,18 +3158,30 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 Toast.makeText(this, "Gimbal hiba: " + gimbalMsg, Toast.LENGTH_SHORT).show();
             }
             // 3. Kamera beállítások alkalmazása
+            // Mintavételi misszió (M04 §15): SHOOT_PHOTO + SINGLE mód — a fotó
+            // triggerelése a waypoint-akció (START_TAKE_PHOTO) felelőssége, NEM
+            // az intervallum-időzítő (ami CURVED módban is figyelmen kívül maradna).
+            boolean sampling = lastResult != null && lastResult.isSamplingMission;
             Toast.makeText(this, "Kamera beállítása...", Toast.LENGTH_SHORT).show();
-            CameraSettings camSettings = buildCameraSettings();
-            CameraConfigurator.applySettings(camSettings, (success, msg) ->
+            CameraConfigurator.ConfigCallback cameraPrepCallback = (success, msg) ->
                 runOnUiThread(() -> {
                     if (!success) {
                         Toast.makeText(this,
                             "Kamera hiba: " + msg + " – indítás folytatódik",
                             Toast.LENGTH_SHORT).show();
                     }
-                    // 4. Misszió indítása — intervallum fotózás csak az 1. WP
-                    //    elérésekor indul (lásd startMissionListener.onWaypointReached),
-                    //    hogy a felszállás és felemelkedés közben ne készüljenek felvételek
+                    if (sampling) {
+                        samplingMissionStartTimeMs = System.currentTimeMillis();
+                        currentSamplingSessionId = new java.text.SimpleDateFormat(
+                            "yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
+                        btnDownloadSession.setVisibility(View.GONE);
+                    }
+                    // 4. Misszió indítása — grid misszióban az intervallum fotózás
+                    //    csak az 1. WP elérésekor indul (lásd
+                    //    startMissionListener.onWaypointReached), hogy a felszállás
+                    //    és felemelkedés közben ne készüljenek felvételek.
+                    //    Mintavételi misszióban a fotózást a waypoint-akciók
+                    //    vezérlik, itt nincs teendő.
                     uploader.startMission(new MissionUploader.UploadCallback() {
                         @Override public void onSuccess() {
                             runOnUiThread(() -> {
@@ -3106,8 +3196,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
                                 "Indítás hiba: " + errMsg, Toast.LENGTH_LONG).show());
                         }
                     });
-                })
-            );
+                });
+
+            if (sampling) {
+                CameraConfigurator.prepareForSamplingMission(cameraPrepCallback);
+            } else {
+                CameraSettings camSettings = buildCameraSettings();
+                CameraConfigurator.applySettings(camSettings, cameraPrepCallback);
+            }
         }));
     }
 
@@ -3267,37 +3363,50 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     updateProgressUI(actualIndex, totalSize);
                     updateCompletedOverlay(actualIndex);
 
-                    // Intervallum fotózás indítása az 1. WP elérésekor —
-                    // ezzel kerüljük el a felszállás közbeni felesleges felvételeket
-                    if (index == 0) {
-                        float photoDistM = (lastResult != null)
-                                ? (float) lastResult.photoDistM : 16f;
-                        float speedMs = buildConfig().speedMs;
-                        CameraConfigurator.startIntervalShooting(photoDistM, speedMs,
-                            (camOk, camMsg) -> runOnUiThread(() -> {
-                                if (!camOk) {
-                                    Toast.makeText(MissionPlannerActivity.this,
-                                        "Fotózás indítás hiba: " + camMsg,
-                                        Toast.LENGTH_SHORT).show();
-                                }
-                            }));
-                    }
-                    // Intervallum fotózás leállítása az utolsó WP elérésekor —
-                    // így az RTH / leszállás alatt nem készülnek felvételek
-                    if (total > 0 && index == total - 1) {
-                        CameraConfigurator.stopIntervalShooting();
+                    // Mintavételi misszióban a fotózást a waypoint-akciók (STAY +
+                    // START_TAKE_PHOTO, M04 §15) vezérlik — az intervallum-fotózás
+                    // itt nem alkalmazandó (CURVED-specifikus mechanizmus).
+                    boolean sampling = lastResult != null && lastResult.isSamplingMission;
+                    if (!sampling) {
+                        // Intervallum fotózás indítása az 1. WP elérésekor —
+                        // ezzel kerüljük el a felszállás közbeni felesleges felvételeket
+                        if (index == 0) {
+                            float photoDistM = (lastResult != null)
+                                    ? (float) lastResult.photoDistM : 16f;
+                            float speedMs = buildConfig().speedMs;
+                            CameraConfigurator.startIntervalShooting(photoDistM, speedMs,
+                                (camOk, camMsg) -> runOnUiThread(() -> {
+                                    if (!camOk) {
+                                        Toast.makeText(MissionPlannerActivity.this,
+                                            "Fotózás indítás hiba: " + camMsg,
+                                            Toast.LENGTH_SHORT).show();
+                                    }
+                                }));
+                        }
+                        // Intervallum fotózás leállítása az utolsó WP elérésekor —
+                        // így az RTH / leszállás alatt nem készülnek felvételek
+                        if (total > 0 && index == total - 1) {
+                            CameraConfigurator.stopIntervalShooting();
+                        }
                     }
                 });
             }
             @Override
             public void onMissionFinished(boolean completedSuccessfully, int lastIndex) {
                 runOnUiThread(() -> {
+                    boolean sampling = lastResult != null && lastResult.isSamplingMission;
                     if (completedSuccessfully) {
                         resumeWaypointIndex = -1;
                         resumeSegmentIndex  = -1;
                         clearResumeState();
                         Toast.makeText(MissionPlannerActivity.this,
                             "Misszió befejezve!", Toast.LENGTH_LONG).show();
+                        // M04 §16 — mintavételi misszió után a "Fotók letöltése" gomb
+                        // aktívvá válik (nem automatikus — a felhasználó dönt, mikor
+                        // váltson a kamera MEDIA_DOWNLOAD módba).
+                        if (sampling && btnDownloadSession != null) {
+                            btnDownloadSession.setVisibility(android.view.View.VISIBLE);
+                        }
                     }
                     // Ha megszakadt: resumeWaypointIndex + SharedPreferences megmarad a folytatáshoz
                     setMissionRunning(false);
@@ -3542,7 +3651,142 @@ public class MissionPlannerActivity extends AppCompatActivity {
         c.gridMode             = crosshatch ? "crosshatch" : "single";
         c.crosshatchHeadingDeg = sbCrosshatchAngle != null ? sbCrosshatchAngle.getProgress() : 90.0;
         c.blockGrid            = blockGridConfig; // M07: null ha nincs blokk-mód
+
+        // M01 §10 / M02 §7 — Mintavételi misszió paraméterek
+        c.samplingMode = isSamplingMode();
+        if (etSampleCount != null) {
+            try { c.nSamplePoints = Integer.parseInt(etSampleCount.getText().toString().trim()); }
+            catch (NumberFormatException ignored) {}
+        }
+        if (spinnerSamplingMethod != null && spinnerSamplingMethod.getSelectedItem() != null) {
+            c.samplingMethod = spinnerSamplingMethod.getSelectedItem().toString();
+        }
+        if (etTransitAlt != null) {
+            try { c.transitAltitudeM = Double.parseDouble(etTransitAlt.getText().toString().trim()); }
+            catch (NumberFormatException ignored) {}
+        }
+        if (etSampleAlt != null) {
+            try { c.sampleAltitudeM = Double.parseDouble(etSampleAlt.getText().toString().trim()); }
+            catch (NumberFormatException ignored) {}
+        }
+        if (etHoverSeconds != null) {
+            try { c.hoverSeconds = Float.parseFloat(etHoverSeconds.getText().toString().trim()); }
+            catch (NumberFormatException ignored) {}
+        }
         return c;
+    }
+
+    private boolean isSamplingMode() {
+        return switchSamplingMode != null && switchSamplingMode.isChecked();
+    }
+
+    /**
+     * Közös generálási belépési pont — a mintavételi mód és a kígyózó (grid)
+     * mód közötti elágazás EGYETLEN helyen (autoGenerateIfReady() és
+     * generateMission() is ezt hívja, nem közvetlenül a generátorokat).
+     */
+    private GridMissionGenerator.GeneratorResult runGeneration(List<GeoPoint> polygon,
+                                                               MissionConfig config) {
+        if (config.samplingMode) {
+            lastSamplePoints = SamplingPointGenerator.generate(
+                    polygon, config.nSamplePoints, config.samplingMethod, config.samplingSeed);
+            drawSamplePointMarkers(lastSamplePoints);
+            return SamplingMissionGenerator.generate(lastSamplePoints, polygon, config);
+        } else {
+            clearSamplePointMarkers();
+            lastSamplePoints = null;
+            return GridMissionGenerator.generate(polygon, config);
+        }
+    }
+
+    // ── Mintapont markerek (mintavételi mód) ─────────────────────────────
+
+    private void drawSamplePointMarkers(List<GeoPoint> points) {
+        clearSamplePointMarkers();
+        if (points == null || mapView == null) return;
+        for (int i = 0; i < points.size(); i++) {
+            Marker m = new Marker(mapView);
+            m.setPosition(points.get(i));
+            m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+            m.setTitle("Mintapont #" + (i + 1));
+            m.setInfoWindow(null);
+            mapView.getOverlays().add(m);
+            samplePointMarkers.add(m);
+        }
+        mapView.invalidate();
+    }
+
+    private void clearSamplePointMarkers() {
+        if (mapView != null) {
+            for (Marker m : samplePointMarkers) mapView.getOverlays().remove(m);
+            mapView.invalidate();
+        }
+        samplePointMarkers.clear();
+    }
+
+    // ── Session médialetöltés (M04 §16) ──────────────────────────────────
+
+    private void triggerSessionDownload() {
+        if (lastSamplePoints == null || lastSamplePoints.isEmpty()
+                || currentSamplingSessionId == null) {
+            Toast.makeText(this, "Nincs elérhető mintavételi session", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        android.app.ProgressDialog progress = new android.app.ProgressDialog(this);
+        progress.setTitle("Fotók letöltése");
+        progress.setMessage("Session médiafájlok letöltése...");
+        progress.setMax(lastSamplePoints.size());
+        progress.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        progress.setCancelable(false);
+        progress.show();
+
+        mediaSessionDownloader.downloadSessionMedia(this, lastSamplePoints.size(),
+            samplingMissionStartTimeMs, lastSamplePoints, currentSamplingSessionId,
+            new MediaSessionDownloader.SessionDownloadListener() {
+                @Override
+                public void onFileProgress(int fileIndex, int totalFiles, long current, long total) {
+                    runOnUiThread(() -> progress.setProgress(fileIndex));
+                }
+                @Override
+                public void onFileComplete(int fileIndex, String localPath) {}
+                @Override
+                public void onFileError(int fileIndex, String error) {
+                    runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
+                        (fileIndex + 1) + ". fotó hiba: " + error, Toast.LENGTH_SHORT).show());
+                }
+                @Override
+                public void onSessionWarning(String message) {
+                    runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
+                        "⚠️ " + message, Toast.LENGTH_LONG).show());
+                }
+                @Override
+                public void onSessionComplete(int successCount, int totalCount, File sessionDir) {
+                    runOnUiThread(() -> {
+                        progress.dismiss();
+                        new AlertDialog.Builder(MissionPlannerActivity.this)
+                            .setTitle("Letöltés kész")
+                            .setMessage(successCount + "/" + totalCount + " fotó letöltve.\n\n"
+                                + "Mappa: " + sessionDir.getAbsolutePath() + "\n\n"
+                                + "A session.json és a képek manuálisan feltölthetők a "
+                                + "Dronterapia Counting oldal \"🎯 Mintavételezéses állományfelmérés\" "
+                                + "expanderébe.")
+                            .setPositiveButton("OK", null)
+                            .show();
+                        btnDownloadSession.setVisibility(View.GONE);
+                    });
+                }
+                @Override
+                public void onSessionError(String message) {
+                    runOnUiThread(() -> {
+                        progress.dismiss();
+                        new AlertDialog.Builder(MissionPlannerActivity.this)
+                            .setTitle("Letöltési hiba")
+                            .setMessage(message)
+                            .setPositiveButton("OK", null)
+                            .show();
+                    });
+                }
+            });
     }
 
     /** Az aktuális blokk-lista a perzisztenciához (null ha nincs blokk-mód). */

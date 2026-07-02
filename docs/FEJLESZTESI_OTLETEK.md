@@ -555,6 +555,9 @@ inkonzisztenciát okozhatja.
 ## 🌾 Mintavételezéses tőszámlálás — ortofotó nélkül
 
 **Felmerülés:** 2026-05-26 (felhasználói javaslat)
+**Frissítve:** 2026-07-02 — az 1–2. lépés (POC + mintapont algoritmus) elkészült a
+Dronterapia repóban, napraforgó tányérszámlálás megbeszélés kapcsán újra előkerülve
+(ld. lentebb "Javaslat sorrendre" és "Implementálási vázlat" — ✅ jelölések).
 
 ### A koncepció
 
@@ -605,12 +608,22 @@ kombinálva** is alkalmazhatjuk:
 
 ### Implementálási vázlat
 
-**Dronterapia oldali (web):**
-- Új M03 funkció: "Mintavételes tőszámlálás session"
-- Paraméter UI: mintaszám, négyzetméret, eloszlás algoritmus
-- Mintapont-generálás: véletlenszerű Halton-szekvencia / latin hypercube /
-  egyszerű grid + jitter
-- Heat map kirajzolása + interpoláció (kriging vagy IDW)
+**Dronterapia oldali (web) — ✅ POC elkészült (2026-07-02):**
+- ✅ Új Counting-oldali funkció: "🎯 Mintavételezéses állományfelmérés" expander
+  (`Dronterapia/_pages/3_🔍_Counting.py`)
+- ✅ Paraméter UI: mintaszám (`recommended_n_points()`), cellaméret, eloszlás algoritmus
+  (stratified/halton/random)
+- ✅ Mintapont-generálás: `Dronterapia/utils/sampling_plan.py`
+  (`generate_sample_points()`, stratifikált rács + jitter / Halton / random)
+- ✅ Heat map + interpoláció: `Dronterapia/utils/interpolation.py` (`idw_interpolate()`) —
+  kriging egyelőre nincs, csak IDW
+- **Fontos korlát a POC-ban:** a kép-terület számítás **mintaponkénti kézi GSD-bevitel**
+  alapján történik (sortáv-kalibrációval, a felhasználó adja meg), NEM konstans
+  terület-becsléssel és NEM a drón jelentett magasságából — alacsony repülésnél a
+  barométeres magasság-tartás pontatlan lehet (ld. Dronterapia
+  `docs/CIKK_MAGASSAGI_ELTERES_PHANTOM4PRO.md`), ami torzítaná a sűrűségszámítást
+- A képek hozzárendelése a mintapontokhoz **még kézi feltöltés** — nincs automatikus
+  drón→web szinkron ehhez a workflow-hoz
 
 **DroneFly oldali (tablet):**
 - Új misszió-típus: "Sampling mission" — csak a mintapontok waypointjai
@@ -642,17 +655,26 @@ kombinálva** is alkalmazhatjuk:
 
 ### Javaslat sorrendre (későbbi feladat)
 
-1. **POC (proof of concept):** Dronterapia M03-ban manuálisan feltöltött fotók
-   listájából (mintapont = lat/lon + fotó) interpolációs heat map. Még nem
-   automatikus mission-generálás.
-2. **Mintapont algoritmus:** Halton-szekvencia vagy stratifikált sampling →
-   választható UI-ban
-3. **Automatikus misszió-generálás:** DroneFly oldali sampling mission típus
-4. **Edge AI:** tabletes ONNX inferencia
-5. **Kriging / IDW interpoláció:** Python (scipy.interpolate vagy pykrige)
+1. ✅ **POC (proof of concept):** Dronterapia M03-ban manuálisan feltöltött fotók
+   listájából (mintapont = lat/lon + fotó) interpolációs heat map. **Elkészült
+   2026-07-02.** Még nem automatikus mission-generálás.
+2. ✅ **Mintapont algoritmus:** Halton-szekvencia / stratifikált sampling / random →
+   választható UI-ban. **Elkészült 2026-07-02**, a POC-cal együtt.
+3. ✅ **Automatikus misszió-generálás:** DroneFly oldali sampling mission típus —
+   **M01 (Misszió Tervező) + M02 (Grid Engine, `SamplingPointGenerator.java` +
+   `SamplingMissionGenerator.java`) + M04 (DJI Integráció, `uploadSamplingMission()`
+   NORMAL mód + waypoint-akciók, `MediaSessionDownloader.java` session-alapú
+   médialetöltés)**. Kódszinten kész, `./gradlew assembleDebug` sikeres a valódi
+   DJI SDK 4.18 függőséggel. **Fizikai eszközön (Crystal Sky + Phantom 4 Pro v1)
+   még nem tesztelve** — ez a következő lépés, valódi repülés előtt kötelező.
+4. 🔲 **Edge AI:** tabletes ONNX inferencia. Még nincs elkezdve.
+5. 🟡 **Kriging / IDW interpoláció:** IDW megvan (Python, Dronterapia
+   `utils/interpolation.py`), kriging még nincs.
 
-**Státusz:** 🔵 **Rögzített ötlet — jövőbeli implementáció**, magas üzleti
-értékkel (idő- és akkumulátor-megtakarítás), POC szinten könnyű kipróbálni.
+**Státusz:** 🟡 **Nagyrészt implementálva, eszközön nem tesztelve** — a szerveroldali
+POC (1-2-5/IDW lépés) és a drónos automatikus misszió-generálás + médialetöltés
+(3. lépés) kódszinten kész (2026-07-02), de valódi Crystal Sky + Phantom 4 Pro v1
+eszközön még nem lett kipróbálva. Az Edge AI (4. lépés) még nem kezdődött el.
 
 ---
 

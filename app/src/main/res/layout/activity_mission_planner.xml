@@ -605,6 +605,190 @@
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"/>
 
+                <!-- M01 §10 — Mintavételi misszió (kísérleti, 🔲 tervezve → implementálva 2026-07-02) -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#334466"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="4dp"/>
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp">
+                    <TextView
+                        android:text="🎯 Mintavételi misszió mód:"
+                        android:textColor="#AADDFF"
+                        android:textSize="12sp"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"/>
+                    <Switch
+                        android:id="@+id/switchSamplingMode"
+                        android:textColor="#AADDFF"
+                        android:textSize="12sp"
+                        android:checked="false"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <TextView
+                    android:textColor="#888888"
+                    android:textSize="10sp"
+                    android:text="Néhány mintaponton alacsony fotó, teljes lefedettség helyett (Dronterapia M03 §10 interpolációhoz)"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="6dp"/>
+
+                <LinearLayout
+                    android:id="@+id/samplingParamsPanel"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <LinearLayout
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="6dp">
+                        <TextView
+                            android:text="Mintapontok:"
+                            android:textColor="#AADDFF"
+                            android:textSize="12sp"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"/>
+                        <EditText
+                            android:id="@+id/etSampleCount"
+                            android:inputType="number"
+                            android:text="30"
+                            android:textColor="#AADDFF"
+                            android:textSize="14sp"
+                            android:gravity="center"
+                            android:layout_width="56dp"
+                            android:layout_height="36dp"
+                            android:background="#333333"
+                            android:maxLength="3"
+                            android:imeOptions="actionDone"/>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="6dp">
+                        <TextView
+                            android:text="Elosztás:"
+                            android:textColor="#AADDFF"
+                            android:textSize="12sp"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"/>
+                        <Spinner
+                            android:id="@+id/spinnerSamplingMethod"
+                            android:layout_width="150dp"
+                            android:layout_height="36dp"/>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="6dp">
+                        <TextView
+                            android:text="Transit magasság (m):"
+                            android:textColor="#AADDFF"
+                            android:textSize="12sp"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"/>
+                        <EditText
+                            android:id="@+id/etTransitAlt"
+                            android:inputType="number"
+                            android:text="60"
+                            android:textColor="#AADDFF"
+                            android:textSize="14sp"
+                            android:gravity="center"
+                            android:layout_width="56dp"
+                            android:layout_height="36dp"
+                            android:background="#333333"
+                            android:maxLength="3"
+                            android:imeOptions="actionDone"/>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="6dp">
+                        <TextView
+                            android:text="Mintavételi magasság (m):"
+                            android:textColor="#AADDFF"
+                            android:textSize="12sp"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"/>
+                        <EditText
+                            android:id="@+id/etSampleAlt"
+                            android:inputType="number"
+                            android:text="8"
+                            android:textColor="#AADDFF"
+                            android:textSize="14sp"
+                            android:gravity="center"
+                            android:layout_width="56dp"
+                            android:layout_height="36dp"
+                            android:background="#333333"
+                            android:maxLength="3"
+                            android:imeOptions="actionDone"/>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp">
+                        <TextView
+                            android:text="Hover (mp):"
+                            android:textColor="#AADDFF"
+                            android:textSize="12sp"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"/>
+                        <EditText
+                            android:id="@+id/etHoverSeconds"
+                            android:inputType="numberDecimal"
+                            android:text="2.5"
+                            android:textColor="#AADDFF"
+                            android:textSize="14sp"
+                            android:gravity="center"
+                            android:layout_width="56dp"
+                            android:layout_height="36dp"
+                            android:background="#333333"
+                            android:maxLength="4"
+                            android:imeOptions="actionDone"/>
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/btnDownloadSession"
+                        android:text="📥 Fotók letöltése (session)"
+                        android:textSize="12sp"
+                        android:visibility="gone"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:backgroundTint="#2266AA"/>
+
+                </LinearLayout>
+
                 <!-- Kamera beállítások (összecsukható) -->
                 <View
                     android:layout_width="match_parent"

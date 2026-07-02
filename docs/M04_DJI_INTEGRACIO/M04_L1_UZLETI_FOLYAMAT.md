@@ -426,9 +426,173 @@ mivel az MSDK belső Set gyűjteményekbe teszi a callback-eket, amelyek
 
 ---
 
-## 14. Kapcsolódó modulok
+## 15. Mintavételi misszió végrehajtása (NORMAL mód) — ✅ Implementálva, eszközön még nem tesztelve (2026-07-02)
+
+**Üzleti kontextus:** M01 §10, M02 §7. A meglévő grid-misszió `CURVED` (folyamatos,
+megállás nélküli) repülési módban, kamera-időintervallum alapú fotózással fut — ez
+mintavételi misszióhoz nem alkalmas, mert ott **diszkrét pontokon kell megállni és
+fotózni**, a köztes (transit) szakaszon fotó nélkül.
+
+**A DJI MSDK egy kulcsfontosságú korlátja, ami ezt meghatározza:** a waypoint-akciók
+(`WaypointAction`, pl. `STAY` hover + `START_TAKE_PHOTO`) **csak `NORMAL`
+(egyenes-vonalú, megállós) `flightPathMode`-ban hajtódnak végre** — `CURVED` módban
+figyelmen kívül maradnak (ezt a jelenlegi `MissionUploader.java` kódkommentje is
+rögzíti). Ezért a mintavételi misszió egy **második, párhuzamos feltöltési útvonalat**
+igényel, nem a meglévő módosítását.
+
+```
+uploadSamplingMission(waypoints, config, callback)
+      │
+      ▼
+WaypointMission.Builder felépítése — ELTÉRÉSEK a grid-misszióhoz képest:
+  .flightPathMode(NORMAL)              ← CURVED helyett — megáll minden waypontnál
+  .maxFlightSpeed(config.speedMs)
+  .autoFlightSpeed(config.speedMs)
+  .finishedAction(RETURN_TO_HOME)
+  .headingMode(AUTO)
+  .gotoFirstWaypointMode(SAFELY)
+      │
+      ▼
+Minden WaypointData → Waypoint objektum:
+  new Waypoint(lat, lon, altitudeM)
+  IF wp.hoverSeconds > 0:
+      waypoint.addAction(new WaypointAction(WaypointActionType.STAY,
+                                             (int)(wp.hoverSeconds * 1000)))
+      waypoint.addAction(new WaypointAction(WaypointActionType.START_TAKE_PHOTO, 0))
+  (a transit — hoverSeconds==0 — waypontoknak nincs akciójuk, csak áthaladás)
+      │
+      ▼
+Kameramód mission előtt: SHOOT_PHOTO + SINGLE (INTERVAL helyett — a fotó
+  triggerelése mostantól a waypoint-akció felelőssége, nem az intervallum-időzítő)
+      │
+      ▼
+loadMission() → uploadMission() → startMission()  (a meglévő pause/resume/stop
+  vezérlők VÁLTOZATLANOK — a WaypointMissionOperator API azonos)
+```
+
+**Kameramód-eltérés a grid-misszióhoz képest:**
+
+| | Grid misszió (meglévő) | Mintavételi misszió (tervezett) |
+|---|---|---|
+| `flightPathMode` | `CURVED` | `NORMAL` |
+| Fotó trigger | Kamera időintervallum (`startIntervalShooting`) | Waypoint-akció (`START_TAKE_PHOTO`) |
+| Megállás waypontnál | Nem | Igen, a mintavételi (alacsony) waypontokon |
+| `shootPhotoMode` | `INTERVAL` | `SINGLE` |
+| Fotó/mintapont determinizmusa | Nem garantált (idő alapú) | **Garantált 1:1** — minden mintapont pontosan egy fotót eredményez, sorrendben |
+
+**Miért fontos az utolsó sor?** Mivel a fotó sorrendje determinisztikus (az N-edik
+lefotózott kép = az N-edik mintapont), a médialetöltésnél (§16) **nem kell** a fájlnevet
+vagy GPS-koordinátát elemezni a hozzárendeléshez — elég az utolsó N fájlt kapcsolatba
+hozni a mintapontok sorrendjével.
+
+---
+
+## 16. Session-alapú médialetöltés (Media Download) — ✅ Implementálva, eszközön még nem tesztelve (2026-07-02)
+
+**Üzleti probléma:** a mintavételi misszió befejezése után a memóriakártyán lévő
+összes fotó közül **csak az ebben a sessionben készült N db** érdekes — a kártyán
+lehetnek korábbi felmérésekből származó, akár több ezer fájl is. Ezeket egyenként,
+kézzel kikeresni WiFi-n (DJI OcuSync/Lightbridge downlink) át irreális.
+
+**Jelenlegi állapot:** a kódban **nincs médialetöltési funkció** — a meglévő
+"SD kártya ellenőrzés" (`CameraConfigurator.checkSDCard()`) csak azt nézi, van-e
+kártya, fájlokat nem listáz és nem tölt le. Ez egy teljesen új M04 komponens.
+
+### 16.1 Folyamat
+
+```
+Misszió befejeződött (MissionProgressListener.onMissionFinished, siker)
+      │
+      ▼
+1. Kameramód váltás: SHOOT_PHOTO → MEDIA_DOWNLOAD
+   (csak ebben a módban érhető el a MediaManager)
+      │
+      ▼
+2. MediaManager.refreshFileListOfStorageLocation(SDCARD, callback)
+   → a kártya teljes fájllistája frissül a memóriában
+      │
+      ▼
+3. getSDCardFileListSnapshot() → List<MediaFile>
+   Rendezés: getTimeCreated() (vagy fájlnév sorszám) szerint csökkenő
+      │
+      ▼
+4. Az UTOLSÓ N fájl kiválasztása (N = a session mintapontjainak száma)
+   → determinisztikus 1:1 megfeleltetés a §15 szerint:
+     lista[0] = mintapont #0, lista[1] = mintapont #1, ...
+      │
+      ▼
+   Biztonsági ellenőrzés (nem blokkoló, csak figyelmeztetés):
+     IF bármelyik kiválasztott fájl getTimeCreated() < missionStartTimestamp:
+        → UI figyelmeztetés: "A talált fájlok egy része a misszió kezdete előtti
+           lehet — ellenőrizd manuálisan." (pl. kihagyott/sikertelen fotóakció esetén)
+      │
+      ▼
+5. Letöltési ciklus — minden kiválasztott MediaFile-ra:
+   mediaFile.fetchFileData(localDestFile, null, downloadListener)
+     onProgress(total, current) → progress bar frissítés (ProgressDialog, a
+        meglévő misszió-feltöltési dialog mintájára)
+     onSuccess() → local fájl mentve: /sdcard/DroneFly/sessions/{session_id}/
+                    point_{index:03d}.jpg
+                    (a HELYI fájlnevet MI adjuk — a DJI eredeti (DJI_0001.JPG stb.)
+                     nevét firmware-szinten nem tudjuk felülírni, de nem is kell:
+                     a helyi másolat neve már a mintapont-indexet hordozza)
+     onFailure(error) → hibalista, összegzés a ciklus végén
+      │
+      ▼
+6. Session metaadat JSON mentése: /sdcard/DroneFly/sessions/{session_id}/session.json
+   {
+     "session_id": "...", "parcel_name": "...", "mission_start_ts": ...,
+     "mission_end_ts": ..., "transit_altitude_m": ..., "sample_altitude_m": ...,
+     "points": [
+       {"index": 0, "lat": ..., "lon": ..., "local_file": "point_000.jpg",
+        "original_dji_filename": "DJI_0001.JPG", "capture_time": ...},
+       ...
+     ]
+   }
+      │
+      ▼
+7. Kameramód visszaváltás: MEDIA_DOWNLOAD → SHOOT_PHOTO (a következő misszióhoz)
+      │
+      ▼
+8. UI összegzés: "N/N fotó letöltve. Session mentve: {session_id}"
+   [📁 Session megnyitása] — helyi galéria nézet a letöltött képekhez
+   [⬆️ Feltöltés Dronterapiába] — jövőbeli bővítés (jelenleg: manuális feltöltés
+     a Dronterapia Counting oldal "🎯 Mintavételezéses állományfelmérés" expanderébe,
+     a session.json és a képek alapján kézzel kitöltve a GSD-t mintaponkénti)
+```
+
+### 16.2 Miért "utolsó N fájl", nem fájlnév-parsing vagy GPS-egyeztetés?
+
+Mert a §15 szerinti egy-fotó-per-waypoint-akció végrehajtás **garantálja** a
+determinisztikus sorrendet — nincs szükség bonyolultabb (és hibázóbb) logikára.
+Ha a jövőben interval-shooting is bekerülne mintavételi módba (pl. több fotó
+mintaponton belüli redundanciához), ezt a mechanizmust felül kell vizsgálni
+(pl. `capture_time` ablak szerinti csoportosítás mintapontonként, nem egyszerű index).
+
+### 16.3 Teljesítmény-becslés
+
+| Mintapontok száma | Fotók mérete (5472×3648 JPEG) | Becsült letöltési idő (OcuSync downlink) |
+|---|---|---|
+| 20 | ~8–12 MB/fotó → 160–240 MB | ~1–3 perc |
+| 50 | ~8–12 MB/fotó → 400–600 MB | ~3–7 perc |
+
+> Pontos érték a terepi teszttől függ (jelerősség, távolság) — a progress bar
+> (`onRateUpdate`) ad valós idejű visszajelzést, nem egy előre becsült időt kell
+> mutatni a UI-n.
+
+### 16.4 Kapcsolódó modulok
 
 | Modul | Kapcsolat típusa |
 |-------|-----------------|
-| M01 Misszió Tervező | **Közvetlen hívó** — uploadMission(), pause, stop, videoWidget |
-| M02 Grid Engine | **Adat forrás** — WaypointData lista input |
+| M01 Misszió Tervező | **UI-hívó** — "Fotók letöltése" gomb a misszió befejezése után |
+| M02 Grid Engine | **Adat forrás** — mintapontok száma és sorrendje (session korreláció) |
+| Dronterapia M03 (Counting) | **Downstream, jelenleg manuális** — a session mappa tartalma manuálisan tölthető fel a meglévő mintavételezéses expanderbe |
+
+---
+
+## 17. Kapcsolódó modulok (teljes lista, §15–16 bővítéssel)
+
+| Modul | Kapcsolat típusa |
+|-------|-----------------|
+| M01 Misszió Tervező | **Közvetlen hívó** — uploadMission(), pause, stop, videoWidget; §15 esetén uploadSamplingMission() |
+| M02 Grid Engine | **Adat forrás** — WaypointData lista input; §15 esetén SamplingMissionGenerator kimenete |

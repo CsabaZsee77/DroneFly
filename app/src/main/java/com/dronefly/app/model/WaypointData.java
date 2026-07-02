@@ -14,6 +14,16 @@ public class WaypointData {
     /** Igaz, ha az altitudeM domborzati korrekcióval lett módosítva */
     public boolean hasTerrainCorrection = false;
 
+    // ── Mintavételi misszió mező (M02 §7 / M04 §15) ────────────────────
+    /**
+     * Hover időtartam másodpercben, mielőtt a shootPhoto akció végrehajtódik.
+     * 0 = nincs megállás (grid misszió waypontjai, CURVED módban úgyis
+     * figyelmen kívül maradna). >0 = a mintavételi misszió alacsony
+     * (fotózó) waypontjai — NORMAL flightPathMode + WaypointAction
+     * (STAY + START_TAKE_PHOTO) szükséges a végrehajtáshoz.
+     */
+    public float hoverSeconds = 0f;
+
     public WaypointData(double lat, double lon, float altM) {
         this.latitude = lat;
         this.longitude = lon;

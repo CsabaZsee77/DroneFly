@@ -116,6 +116,67 @@ public class MissionUploader {
         });
     }
 
+    // ── Mintavételi misszió feltöltés (NORMAL mód + waypoint akciók) ───────────
+    // M01 §10, M02 §7, M04 §15 — külön útvonal, mert a waypoint-akciók
+    // (STAY + START_TAKE_PHOTO) csak NORMAL flightPathMode-ban hajtódnak végre,
+    // a meglévő uploadMission() CURVED módja figyelmen kívül hagyná őket.
+
+    public void uploadSamplingMission(List<WaypointData> waypoints, MissionConfig config,
+                                      UploadCallback callback) {
+        WaypointMissionOperator operator = getOperator();
+        if (operator == null) {
+            if (callback != null) callback.onError("DJI SDK nincs inicializálva");
+            return;
+        }
+        if (waypoints == null || waypoints.isEmpty()) {
+            if (callback != null) callback.onError("Nincsenek waypontok");
+            return;
+        }
+
+        List<Waypoint> wpList = new ArrayList<>();
+        for (WaypointData wp : waypoints) {
+            Waypoint waypoint = new Waypoint(
+                    (float) wp.latitude,
+                    (float) wp.longitude,
+                    wp.altitudeM);
+            if (wp.hoverSeconds > 0f) {
+                waypoint.addAction(new WaypointAction(
+                        WaypointActionType.STAY, (int) (wp.hoverSeconds * 1000)));
+                waypoint.addAction(new WaypointAction(
+                        WaypointActionType.START_TAKE_PHOTO, 0));
+            }
+            wpList.add(waypoint);
+        }
+
+        WaypointMission.Builder builder = new WaypointMission.Builder();
+        builder.waypointList(wpList)
+               .waypointCount(wpList.size())
+               .maxFlightSpeed(Math.min(15f, Math.max(2f, config.speedMs)))
+               .autoFlightSpeed(Math.min(15f, Math.max(2f, config.speedMs)))
+               .finishedAction(config.returnHome
+                       ? WaypointMissionFinishedAction.GO_HOME
+                       : WaypointMissionFinishedAction.NO_ACTION)
+               .headingMode(WaypointMissionHeadingMode.AUTO)
+               .flightPathMode(WaypointMissionFlightPathMode.NORMAL)  // ← eltérés a grid missziótól
+               .gotoFirstWaypointMode(WaypointMissionGotoWaypointMode.SAFELY);
+
+        DJIError loadError = operator.loadMission(builder.build());
+        if (loadError != null) {
+            if (callback != null)
+                callback.onError("Misszió betöltési hiba: " + loadError.getDescription());
+            return;
+        }
+
+        operator.uploadMission(djiError -> {
+            if (djiError == null) {
+                if (callback != null) callback.onSuccess();
+            } else {
+                if (callback != null)
+                    callback.onError("Feltöltési hiba: " + djiError.getDescription());
+            }
+        });
+    }
+
     // ── Listener indítás / leállítás ───────────────────────────────────────────
 
     /**

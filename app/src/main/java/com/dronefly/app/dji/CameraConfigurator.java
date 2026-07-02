@@ -289,6 +289,34 @@ public class CameraConfigurator {
         });
     }
 
+    // ── Mintavételi misszió kamera-előkészítés (M04 §15) ───────────────
+
+    /**
+     * Kamera beállítása mintavételi misszióhoz: SHOOT_PHOTO mód + SINGLE
+     * fotó-mód. A fotó triggerelése — a folyamatos intervallum-fotózással
+     * ellentétben — a waypoint-akció (START_TAKE_PHOTO, NORMAL flightPathMode)
+     * felelőssége, ezért itt NEM hívunk startShootPhoto()-t.
+     */
+    public static void prepareForSamplingMission(ConfigCallback callback) {
+        Camera camera = getCamera();
+        if (camera == null) {
+            if (callback != null) callback.onComplete(false, "Kamera nem elérhető");
+            return;
+        }
+        camera.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, modeErr -> {
+            if (modeErr != null) {
+                Log.w(TAG, "Kamera mód hiba (mintavétel): " + modeErr.getDescription());
+            }
+            camera.setShootPhotoMode(SettingsDefinitions.ShootPhotoMode.SINGLE, singleErr -> {
+                if (singleErr != null) {
+                    Log.w(TAG, "SINGLE fotó mód hiba: " + singleErr.getDescription());
+                }
+                Log.i(TAG, "Kamera mintavételi misszióhoz előkészítve (SHOOT_PHOTO + SINGLE)");
+                if (callback != null) callback.onComplete(true, "Kamera kész (SINGLE mód)");
+            });
+        });
+    }
+
     // ── Gimbal nadir ──────────────────────────────────────────────────
 
     /**

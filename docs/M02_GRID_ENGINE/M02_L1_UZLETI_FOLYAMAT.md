@@ -201,3 +201,107 @@ Előny: minimális fordulási szám, egyenletes lefedettség
 | M01 Misszió Tervező | **Közvetlen felhasználó** — generateMission() hívja |
 | M03 Export | **Kimenet** — WaypointData lista exportra kerül |
 | M04 DJI | **Kimenet** — WaypointData lista feltöltésre kerül |
+
+---
+
+## 7. Mintavételi misszió generátor (SamplingMissionGenerator) — 🔲 Tervezve (2026-07-02)
+
+**Üzleti kontextus:** M01 §10. Az engine két lépésből áll: mintapontok kijelölése
+a polygonon belül, majd minden ponthoz egy 3-waypointos "süllyedés-fotó-emelkedés"
+szekvencia felépítése.
+
+### 7.1 SamplingPointGenerator — mintapont-kijelölés
+
+A Dronterapia `utils/sampling_plan.py` Python logikájának Java portja (offline
+működés — nincs függőség a Dronterapia-szinkronra a misszió generálásához,
+csak a polygon geometria kell, ami már helyben, a térképen rajzolva rendelkezésre
+áll).
+
+```
+[Bemenet]
+  polygonPoints: List<GeoPoint>  (a már meglévő, GridMissionGenerator-rel közös
+                                   polygon-rajzolási mechanizmusból)
+  nPoints: int
+  method: "stratified" | "halton" | "random"
+  seed: long  (reprodukálhatóság)
+
+      │
+      ▼
+1. Terület számítás — a GridMissionGenerator MEGLÉVŐ helyi XY transzformációját
+   és Shoelace-formuláját használja fel (nincs duplikált geometria-kód)
+      │
+      ▼
+2. Mintapontok generálása a polygon bounding box-án belül, elutasításos mintavétellel
+   (rejection sampling — a polygonon kívül eső jelöltek eldobása), a választott
+   módszer szerint:
+   - "stratified": rács (√n × √n) + jitter minden cellán belül
+   - "halton": kvázi-véletlen Halton-szekvencia (bázis 2, 3)
+   - "random": egyenletes véletlen
+      │
+      ▼
+[Kimenet]
+  List<GeoPoint>  — n db pont (lat, lon), mind a polygonon belül
+```
+
+### 7.2 Ajánlott mintapontszám
+
+Ugyanaz a statisztikai ökölszabály, mint a Dronterapia oldalon
+(`recommended_n_points()`), hogy a két rendszer konzisztens ajánlást adjon:
+
+```
+n = ceil((1.96 × CV / 0.1)²)      CV alapértelmezett: 0.3
+n_terulet = clamp(area_ha × 3, 15, 60)
+ajánlott = max(n, n_terulet)
+```
+
+### 7.3 SamplingMissionGenerator — waypoint-szekvencia építése
+
+```
+[Bemenet]
+  samplePoints: List<GeoPoint>
+  transitAltitudeM: double   (akadálybiztos, magasabb)
+  sampleAltitudeM: double    (GSD-hez szükséges, alacsonyabb)
+  hoverSeconds: float        (alapért.: 2–3 mp)
+
+      │
+      ▼
+MINDEN mintaponthoz (i = 0..n-1) HÁROM WaypointData generálása:
+
+  1. Érkezés (transit):    (lat_i, lon_i, transitAltitudeM), shootPhoto=false
+  2. Mintavétel (sample):  (lat_i, lon_i, sampleAltitudeM),  shootPhoto=true
+                           + hoverSeconds mező (ÚJ mező a WaypointData-ban,
+                             ld. lentebb)
+  3. Emelkedés (transit):  (lat_i, lon_i, transitAltitudeM), shootPhoto=false
+
+      │
+      ▼
+[Kimenet]
+  GeneratorResult (a GridMissionGenerator.GeneratorResult-hoz hasonló szerkezet):
+    segments: List<List<WaypointData>>   (99-es szegmensekre osztva —
+                                           MEGLÉVŐ szegmentáló logika újrahasznosítva)
+    totalWaypoints: int   (= 3 × n mintapont)
+    areaM2, estimatedMinutes, errorMessage: mint a Grid Engine-nél
+```
+
+**Waypoint-szám becslés:** 20–50 mintapont esetén 60–150 waypoint — a meglévő
+99-es szegmens-limit és automatikus akkumulátorcsere-kezelés (M01 §8) változtatás
+nélkül újrahasznosítható.
+
+### 7.4 WaypointData bővítés (tervezett mező)
+
+```java
+public class WaypointData {
+    // ... meglévő mezők változatlanul ...
+    public float hoverSeconds = 0f;  // ÚJ: 0 = nincs megállás (grid misszió),
+                                       // >0 = STAY akció ennyi másodpercig
+                                       // (mintavételi misszió alacsony waypontjain)
+}
+```
+
+### 7.5 Kapcsolódó modulok
+
+| Modul | Kapcsolat típusa |
+|-------|-----------------|
+| M01 Misszió Tervező | **Közvetlen felhasználó** — új "Mintavételi misszió" mód hívja |
+| M04 DJI | **Kimenet** — a `hoverSeconds > 0` waypontokhoz NORMAL-módú, akció-alapú feltöltés szükséges (nem a meglévő CURVED útvonal) |
+| Dronterapia `utils/sampling_plan.py` | **Referencia-implementáció** — azonos algoritmus, Python↔Java portolás, nem futásidejű függőség |

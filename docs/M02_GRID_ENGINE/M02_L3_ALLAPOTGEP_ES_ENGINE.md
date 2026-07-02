@@ -195,3 +195,111 @@ public class MissionConfig {
 | 100 ha  | 44 m   | ~3000 wp  | ~1.5 s              |
 
 > 50 ha felett a generálás érzékelhetően lassul — AsyncTask ajánlott.
+
+---
+
+## SamplingPointGenerator + SamplingMissionGenerator — teljes API (✅ Implementálva, 2026-07-02)
+
+**Forrásfájlok:**
+
+| Fájl | Szerepkör | Státusz |
+|------|-----------|---------|
+| `mission/SamplingPointGenerator.java` | Mintapont-kijelölés polygonon belül (stratified/halton/random) | ✅ Implementálva |
+| `mission/SamplingMissionGenerator.java` | Mintapontokból waypoint-szekvencia (transit+süllyedés+emelkedés) | ✅ Implementálva |
+| `model/WaypointData.java` | `hoverSeconds` mező | ✅ Implementálva (meglévő fájl bővítve) |
+| `model/MissionConfig.java` | `samplingMode`, `nSamplePoints`, `samplingMethod`, `samplingSeed`, `transitAltitudeM`, `sampleAltitudeM`, `hoverSeconds` mezők | ✅ Implementálva (meglévő fájl bővítve) |
+| `mission/GridMissionGenerator.java` | `GeneratorResult.isSamplingMission` + `.sampleCount` mezők | ✅ Implementálva (additív, nem törő bővítés) |
+
+**Tervezési döntés a dokumentáció korábbi verziójához képest:** a `SamplingMissionGenerator`
+**nem** önálló `SamplingResult` típust ad vissza, hanem a már meglévő
+`GridMissionGenerator.GeneratorResult`-ot hasznosítja újra (két új mezővel bővítve:
+`isSamplingMission`, `sampleCount`). Ennek oka: a `MissionPlannerActivity` a `lastResult`
+mezőt (ez a típus) **30+ helyen** használja (feltöltés, export, szimuláció, domborzatkövetés,
+GPS-ellenőrzés, resume-logika) — ha ezek mindegyike csak `List<WaypointData> segments`-en és
+néhány primitív mezőn dolgozik (nem a generátor-specifikus logikán), a közös típus
+újrahasznosítása **nulla módosítást** igényelt ezekben a meglévő, jól tesztelt
+kódrészletekben. Az egyetlen ténylegesen elágazó pont a tényleges DJI feltöltés
+(`uploadMission()` vs `uploadSamplingMission()`), amit az `isSamplingMission` flag vezérel.
+
+```java
+public class SamplingPointGenerator {
+
+    private static double halton(int index, int base) { ... } // Dronterapia sampling_plan.py port
+
+    /**
+     * @param polygon  legalább 3 GPS pont
+     * @param nPoints  kívánt mintapontszám (>0)
+     * @param method   "stratified" (alapért.) | "halton" | "random"
+     * @param seed     reprodukálhatóság
+     * @return legfeljebb nPoints db GeoPoint, mind a polygonon belül
+     *
+     * Önálló, kis méretű GPS<->helyi-XY transzformációt és egy point-in-polygon
+     * (ray-casting) tesztet tartalmaz — utóbbi a GridMissionGenerator-ben nem
+     * létezik (az scanline-alapú algoritmust használ), ezért nem indokolt közös
+     * geometria-kódra refaktorálni ezt a kis, önálló darabot.
+     */
+    public static List<GeoPoint> generate(List<GeoPoint> polygon, int nPoints,
+                                          String method, long seed) { ... }
+
+    public static int recommendedNPoints(double areaHectares, double cvEstimate) { ... }
+    public static int recommendedNPoints(double areaHectares) { ... } // cv=0.3 default
+}
+```
+
+```java
+public class SamplingMissionGenerator {
+
+    private static final int MAX_WAYPOINTS_PER_MISSION = 99; // azonos limit, mint Grid Engine
+
+    /**
+     * @param samplePoints SamplingPointGenerator.generate() kimenete
+     * @param polygon      az eredeti AOI polygon (terület-számításhoz), lehet null
+     * @param config       transitAltitudeM, sampleAltitudeM, hoverSeconds, speedMs
+     * @return GridMissionGenerator.GeneratorResult, isSamplingMission=true
+     */
+    public static GeneratorResult generate(List<GeoPoint> samplePoints,
+                                           List<GeoPoint> polygon,
+                                           MissionConfig config) {
+        // altitudeM = sampleAltitudeM (ez jelenik meg a meglévő UI-ban, pl. EU 120m
+        // jogszabályi figyelmeztetésnél — bár a MissionPlannerActivity a transit
+        // magasságot KÜLÖN is ellenőrzi ugyanerre a határra)
+        // Minden mintaponthoz 3 WaypointData: érkezés (transit, shootPhoto=false),
+        // mintavétel (sample, shootPhoto=true, hoverSeconds beállítva),
+        // emelkedés (transit, shootPhoto=false)
+        // estimatedMinutes: (vízszintes transit-táv + 2×(transitAlt-sampleAlt)×n) / speed
+        //                   + hoverSeconds × n, haversine-távolsággal számolva
+        ...
+    }
+}
+```
+
+**MissionPlannerActivity integráció (`runGeneration()` közös belépési pont):**
+
+```java
+private GridMissionGenerator.GeneratorResult runGeneration(List<GeoPoint> polygon,
+                                                           MissionConfig config) {
+    if (config.samplingMode) {
+        lastSamplePoints = SamplingPointGenerator.generate(
+                polygon, config.nSamplePoints, config.samplingMethod, config.samplingSeed);
+        drawSamplePointMarkers(lastSamplePoints);
+        return SamplingMissionGenerator.generate(lastSamplePoints, polygon, config);
+    } else {
+        clearSamplePointMarkers();
+        lastSamplePoints = null;
+        return GridMissionGenerator.generate(polygon, config);
+    }
+}
+```
+
+Ezt hívja `autoGenerateIfReady()` és `generateMission()` is a korábbi közvetlen
+`GridMissionGenerator.generate(...)` hívás helyett — ez az EGYETLEN hely, ahol a
+két misszió-típus közötti elágazás a generálási oldalon történik.
+
+**Build-ellenőrzés:** `./gradlew compileDebugJavaWithJavac --offline` és
+`./gradlew assembleDebug --offline` mindkettő sikeres (a valódi DJI SDK 4.18
+függőséggel, nem stub-bal) — a `WaypointAction`/`WaypointActionType.STAY`/
+`START_TAKE_PHOTO`/`WaypointMissionFlightPathMode.NORMAL`/`MediaManager`/`MediaFile`
+API-hívások helyessége a letöltött DJI SDK jar dekompilált bájtkódjából (`javap`)
+lett ellenőrizve, nem csak feltételezve. **Fizikai eszközön (Crystal Sky + Phantom 4
+Pro v1) még nem lett tesztelve** — ez a következő lépés, valódi repülés előtt
+kötelező.
