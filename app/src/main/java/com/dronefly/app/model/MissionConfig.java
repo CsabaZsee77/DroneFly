@@ -20,6 +20,13 @@ public class MissionConfig {
     public CameraSettings cameraSettings = CameraSettings.getAgricultureDefaults();
     public List<ObstacleData> obstacles = new ArrayList<>(); // akadályok listája
 
+    /**
+     * M07 — Blokk-felosztás konfiguráció.
+     * null = nincs blokk-mód, az AOI egyetlen misszióként megy (régi viselkedés).
+     * nem-null = blokk-mód aktív; a rács paraméterei.
+     */
+    public BlockGridConfig blockGrid = null;
+
     public MissionConfig() {
         this.droneProfile = DroneProfiles.getDefault();
     }

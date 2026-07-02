@@ -49,16 +49,22 @@ import com.dronefly.app.mission.CsvMissionParser;
 import com.dronefly.app.sync.AuthManager;
 import com.dronefly.app.sync.NetworkMonitor;
 import com.dronefly.app.sync.SyncManager;
+import com.dronefly.app.mission.BlockGridGenerator;
 import com.dronefly.app.mission.ElevationProvider;
 import com.dronefly.app.mission.GridMissionGenerator;
 import com.dronefly.app.mission.GsdCalculator;
 import com.dronefly.app.mission.MissionExporter;
 import com.dronefly.app.mission.ProjectManager;
+import com.dronefly.app.model.Block;
+import com.dronefly.app.model.BlockGridConfig;
+import com.dronefly.app.model.BlockStatus;
 import com.dronefly.app.model.DroneProfile;
 import com.dronefly.app.model.DroneProfiles;
 import com.dronefly.app.model.MissionConfig;
 import com.dronefly.app.model.ObstacleData;
 import com.dronefly.app.model.WaypointData;
+import com.dronefly.app.ui.BlockGridDialog;
+import com.dronefly.app.ui.BlockOverlay;
 
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.MapTileProviderBasic;
@@ -121,6 +127,15 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private final List<Marker>   polygonMarkers = new ArrayList<>(); // külön nyilvántartás, removeIf kiváltása
     private Polygon  polygonOverlay;
     private Polyline missionOverlay;
+
+    // M07 — Blokk-felosztás
+    private BlockGridConfig blockGridConfig = null;
+    private BlockGridGenerator.GridResult currentGrid = null;
+    private Block selectedBlock = null;
+    private BlockOverlay blockOverlay = null;
+    private Button   btnSplit, btnMarkDone, btnResetBlock;
+    private TextView tvBlockInfo;
+    private LinearLayout blockButtonRow;
 
     // Beállítások widgetek
     private TextView tvGsd, tvSidelap, tvFrontlap, tvSpeed, tvAngle, tvOffset, tvStats;
@@ -359,6 +374,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
             public boolean singleTapConfirmedHelper(GeoPoint p) {
                 if (obstacleMode) {
                     showAddObstacleDialog(p);
+                } else if (blockOverlay != null && currentGrid != null
+                        && currentGrid.blocks != null && !currentGrid.blocks.isEmpty()) {
+                    // M07: blokk-mód aktív → tap → blokk-kiválasztás
+                    Block hit = blockOverlay.hitTest(p);
+                    if (hit != null) {
+                        setSelectedBlock(hit);
+                    }
                 } else if (!missionRunning) {
                     // Mindig aktív pontlerakás (kivéve ha misszió fut)
                     addPolygonPoint(p);
@@ -463,6 +485,12 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnStart          = findViewById(R.id.btnStart);
         btnImportCsv = findViewById(R.id.btnImportCsv);
         btnExport    = findViewById(R.id.btnExport);
+        // M07 widgets
+        btnSplit       = findViewById(R.id.btnSplit);
+        btnMarkDone    = findViewById(R.id.btnMarkDone);
+        btnResetBlock  = findViewById(R.id.btnResetBlock);
+        tvBlockInfo    = findViewById(R.id.tvBlockInfo);
+        blockButtonRow = findViewById(R.id.blockButtonRow);
         tvDroneStatus = findViewById(R.id.tvDroneStatus);
 
         btnMyLocation = findViewById(R.id.btnMyLocation);
@@ -600,6 +628,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
         btnClearObstacles.setOnClickListener(v -> clearAllObstacles());
         btnClear.setOnClickListener(v -> clearAll());
         btnGenerate.setOnClickListener(v -> generateMission());
+        // M07 listeners
+        btnSplit.setOnClickListener(v -> onSplitClicked());
+        btnMarkDone.setOnClickListener(v -> onMarkDoneClicked());
+        btnResetBlock.setOnClickListener(v -> onResetBlockClicked());
         btnUpload.setOnClickListener(v -> uploadCurrentSegment());
         btnStart.setOnClickListener(v -> startMission());
         btnImportCsv.setOnClickListener(v -> pickCsvFile());
@@ -2082,7 +2114,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 String name = currentPlanFile.getName()
                     .replace(ProjectManager.FILE_EXT, "").replace('_', ' ');
                 ProjectManager.saveProjectToFile(
-                    this, currentPlanFile, name, polygonPoints, buildConfig());
+                    this, currentPlanFile, name, polygonPoints, buildConfig(),
+                    null, null, null, true, currentBlocksForSave());
                 updatePlanNameLabel();
                 Toast.makeText(this, "Mentve: " + currentPlanFile.getName(), Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
@@ -2145,7 +2178,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         try {
             MissionConfig config = buildConfig();
             File saved = ProjectManager.saveProject(
-                this, name, polygonPoints, config);
+                this, name, polygonPoints, config,
+                null, null, null, currentBlocksForSave());
             currentPlanFile = saved;
             updatePlanNameLabel();
             Toast.makeText(this,
@@ -2307,12 +2341,18 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 mapView.getController().animateTo(center);
             }
 
+            // ── M07: blokk-rács visszaállítása ────────────────────────────
+            if (data.blockGrid != null && polygonPoints.size() >= 3) {
+                restoreBlockGrid(data);
+            }
+
             currentPlanFile = file;
             loadResumeState();
             updatePlanNameLabel();
 
             // Ha van elég pont, automatikusan generáljuk
-            if (polygonPoints.size() >= 3) {
+            // (blokk-mód esetén nincs autogen — a felhasználó választ blokkot)
+            if (polygonPoints.size() >= 3 && blockGridConfig == null) {
                 generateMission();
             }
 
@@ -2725,6 +2765,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
         obstacleOverlays.clear();
         for (Marker mk : obstacleMarkers) mapView.getOverlays().remove(mk);
         obstacleMarkers.clear();
+        // M07: blokk-felosztás is törlődik
+        clearBlockGrid();
         lastResult = null;
         missionUploaded = false;
         btnUpload.setEnabled(false);
@@ -2743,13 +2785,28 @@ public class MissionPlannerActivity extends AppCompatActivity {
      * A pontlerakás és húzás automatikusan frissíti a missziót (autoGenerateIfReady).
      */
     private void generateMission() {
-        if (polygonPoints.size() < 3) {
-            Toast.makeText(this, "Legalabb 3 pont szukseges!", Toast.LENGTH_SHORT).show();
-            return;
+        // M07: ha blokk-mód aktív és van kiválasztott blokk → annak missionPolygon-ja
+        List<GeoPoint> generationPolygon;
+        if (blockGridConfig != null && selectedBlock != null) {
+            generationPolygon = selectedBlock.missionPolygon;
+            if (generationPolygon == null || generationPolygon.size() < 3) {
+                Toast.makeText(this, "A kivalasztott blokk poligonja ervenytelen", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        } else {
+            if (polygonPoints.size() < 3) {
+                Toast.makeText(this, "Legalabb 3 pont szukseges!", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (blockGridConfig != null && selectedBlock == null) {
+                Toast.makeText(this, "Valassz ki egy blokkot a terkepen", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            generationPolygon = polygonPoints;
         }
         MissionConfig config = buildConfig();
         config.terrainFollowing = switchTerrain != null && switchTerrain.isChecked();
-        lastResult = GridMissionGenerator.generate(polygonPoints, config);
+        lastResult = GridMissionGenerator.generate(generationPolygon, config);
 
         if (lastResult.errorMessage != null) {
             Toast.makeText(this, lastResult.errorMessage, Toast.LENGTH_LONG).show();
@@ -2930,7 +2987,8 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 String autoName = "auto_" + new java.text.SimpleDateFormat(
                     "yyyy-MM-dd_HH-mm", java.util.Locale.getDefault()).format(new java.util.Date());
                 File saved = ProjectManager.saveProject(
-                    this, autoName, polygonPoints, buildConfig());
+                    this, autoName, polygonPoints, buildConfig(),
+                    null, null, null, currentBlocksForSave());
                 currentPlanFile = saved;
                 updatePlanNameLabel();
             } catch (Exception ignored) {}
@@ -3031,34 +3089,23 @@ public class MissionPlannerActivity extends AppCompatActivity {
                             "Kamera hiba: " + msg + " – indítás folytatódik",
                             Toast.LENGTH_SHORT).show();
                     }
-                    // 4. Intervallum fotózás indítása (folyamatos survey repülés)
-                    float photoDistM = (lastResult != null)
-                            ? (float) lastResult.photoDistM : 16f;
-                    float speedMs = buildConfig().speedMs;
-                    CameraConfigurator.startIntervalShooting(photoDistM, speedMs,
-                        (camOk, camMsg) -> runOnUiThread(() -> {
-                            if (!camOk) {
-                                Toast.makeText(this,
-                                    "Fotózás beállítás hiba: " + camMsg + " – indítás folytatódik",
-                                    Toast.LENGTH_SHORT).show();
-                            }
-                            // 5. Misszió indítása
-                            uploader.startMission(new MissionUploader.UploadCallback() {
-                                @Override public void onSuccess() {
-                                    runOnUiThread(() -> {
-                                        Toast.makeText(MissionPlannerActivity.this,
-                                            "Repülés elindítva!", Toast.LENGTH_LONG).show();
-                                        setMissionRunning(true);
-                                        startMissionListener();
-                                    });
-                                }
-                                @Override public void onError(String errMsg) {
-                                    runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
-                                        "Indítás hiba: " + errMsg, Toast.LENGTH_LONG).show());
-                                }
+                    // 4. Misszió indítása — intervallum fotózás csak az 1. WP
+                    //    elérésekor indul (lásd startMissionListener.onWaypointReached),
+                    //    hogy a felszállás és felemelkedés közben ne készüljenek felvételek
+                    uploader.startMission(new MissionUploader.UploadCallback() {
+                        @Override public void onSuccess() {
+                            runOnUiThread(() -> {
+                                Toast.makeText(MissionPlannerActivity.this,
+                                    "Repülés elindítva!", Toast.LENGTH_LONG).show();
+                                setMissionRunning(true);
+                                startMissionListener();
                             });
-                        })
-                    );
+                        }
+                        @Override public void onError(String errMsg) {
+                            runOnUiThread(() -> Toast.makeText(MissionPlannerActivity.this,
+                                "Indítás hiba: " + errMsg, Toast.LENGTH_LONG).show());
+                        }
+                    });
                 })
             );
         }));
@@ -3219,6 +3266,27 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     saveResumeState();
                     updateProgressUI(actualIndex, totalSize);
                     updateCompletedOverlay(actualIndex);
+
+                    // Intervallum fotózás indítása az 1. WP elérésekor —
+                    // ezzel kerüljük el a felszállás közbeni felesleges felvételeket
+                    if (index == 0) {
+                        float photoDistM = (lastResult != null)
+                                ? (float) lastResult.photoDistM : 16f;
+                        float speedMs = buildConfig().speedMs;
+                        CameraConfigurator.startIntervalShooting(photoDistM, speedMs,
+                            (camOk, camMsg) -> runOnUiThread(() -> {
+                                if (!camOk) {
+                                    Toast.makeText(MissionPlannerActivity.this,
+                                        "Fotózás indítás hiba: " + camMsg,
+                                        Toast.LENGTH_SHORT).show();
+                                }
+                            }));
+                    }
+                    // Intervallum fotózás leállítása az utolsó WP elérésekor —
+                    // így az RTH / leszállás alatt nem készülnek felvételek
+                    if (total > 0 && index == total - 1) {
+                        CameraConfigurator.stopIntervalShooting();
+                    }
                 });
             }
             @Override
@@ -3473,7 +3541,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
         boolean crosshatch     = switchCrosshatch != null && switchCrosshatch.isChecked();
         c.gridMode             = crosshatch ? "crosshatch" : "single";
         c.crosshatchHeadingDeg = sbCrosshatchAngle != null ? sbCrosshatchAngle.getProgress() : 90.0;
+        c.blockGrid            = blockGridConfig; // M07: null ha nincs blokk-mód
         return c;
+    }
+
+    /** Az aktuális blokk-lista a perzisztenciához (null ha nincs blokk-mód). */
+    private List<Block> currentBlocksForSave() {
+        return (currentGrid != null) ? currentGrid.blocks : null;
     }
 
     private double getGsd()      { return 0.1 + sbGsd.getProgress() * 0.1; }
@@ -3781,5 +3855,173 @@ public class MissionPlannerActivity extends AppCompatActivity {
         // letiltjuk vizuálisan is.
         if (btnAutoLock != null) btnAutoLock.setEnabled(droneConnected);
         if (btnApplyCamera5 != null) btnApplyCamera5.setEnabled(droneConnected);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  M07 — Blokk-felosztás (lásd docs/M07_BLOKK_FELOSZTAS/)
+    // ─────────────────────────────────────────────────────────────────────
+
+    private void onSplitClicked() {
+        if (polygonPoints.size() < 3) {
+            Toast.makeText(this, "Eloszor rajzold meg az AOI-t (min. 3 pont)", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        BlockGridConfig start = (blockGridConfig != null) ? blockGridConfig : new BlockGridConfig();
+        new BlockGridDialog(this, start, new BlockGridDialog.Listener() {
+            @Override public void onApply(BlockGridConfig cfg)   { applyBlockGrid(cfg); }
+            @Override public void onPreview(BlockGridConfig cfg) { previewBlockGrid(cfg); }
+            @Override public void onCancel()                     { /* no-op */ }
+        }).show();
+    }
+
+    private void previewBlockGrid(BlockGridConfig cfg) {
+        // Élő preview a dialog SeekBar mozgásánál — nem perzisztálunk semmit
+        if (polygonPoints.size() < 3) return;
+        BlockGridGenerator gen = new BlockGridGenerator();
+        BlockGridGenerator.GridResult res = gen.generate(polygonPoints, cfg, null);
+        if (res.errorMessage != null) return;
+        ensureBlockOverlay();
+        blockOverlay.setBlocks(res.blocks);
+        mapView.invalidate();
+    }
+
+    private void applyBlockGrid(BlockGridConfig cfg) {
+        if (polygonPoints.size() < 3) return;
+        BlockGridGenerator gen = new BlockGridGenerator();
+        BlockGridGenerator.GridResult res = gen.generate(polygonPoints, cfg, currentGrid);
+        if (res.errorMessage != null) {
+            Toast.makeText(this, res.errorMessage, Toast.LENGTH_LONG).show();
+            return;
+        }
+        blockGridConfig = cfg;
+        currentGrid     = res;
+        selectedBlock   = null;
+        ensureBlockOverlay();
+        blockOverlay.setBlocks(res.blocks);
+        blockOverlay.setSelected(null);
+        updateBlockUiVisibility();
+        Toast.makeText(this,
+                String.format(Locale.US, "Felosztva: %d blokk", res.totalBlocks),
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private void ensureBlockOverlay() {
+        if (blockOverlay == null) {
+            blockOverlay = new BlockOverlay(mapView);
+            // A blokk-overlay-t a polygonOverlay és missionOverlay ALÁ tesszük
+            // (a 0. index a legalsó réteg)
+            mapView.getOverlays().add(0, blockOverlay);
+        }
+    }
+
+    private void setSelectedBlock(Block b) {
+        selectedBlock = b;
+        if (blockOverlay != null) blockOverlay.setSelected(b);
+        updateBlockUiVisibility();
+    }
+
+    private void onMarkDoneClicked() {
+        if (selectedBlock == null) return;
+        selectedBlock.status = BlockStatus.DONE;
+        if (blockOverlay != null) mapView.invalidate();
+        updateBlockUiVisibility();
+        Toast.makeText(this, selectedBlock.id + " kesz", Toast.LENGTH_SHORT).show();
+    }
+
+    private void onResetBlockClicked() {
+        if (selectedBlock == null) return;
+        selectedBlock.status = BlockStatus.NOT_STARTED;
+        if (blockOverlay != null) mapView.invalidate();
+        updateBlockUiVisibility();
+    }
+
+    /** Blokk-info panel és gombsor láthatóság + szöveg frissítés. */
+    private void updateBlockUiVisibility() {
+        if (tvBlockInfo == null || blockButtonRow == null) return;
+        if (selectedBlock == null) {
+            tvBlockInfo.setVisibility(View.GONE);
+            blockButtonRow.setVisibility(View.GONE);
+            return;
+        }
+        tvBlockInfo.setVisibility(View.VISIBLE);
+        blockButtonRow.setVisibility(View.VISIBLE);
+        tvBlockInfo.setText(String.format(Locale.US,
+                "%s | %.2f ha | %.0f%% lefedettseg | %s",
+                selectedBlock.id,
+                selectedBlock.missionAreaM2 / 10000.0,
+                selectedBlock.coverageRatio * 100.0,
+                statusLabel(selectedBlock.status)));
+    }
+
+    private static String statusLabel(BlockStatus s) {
+        if (s == null) return "?";
+        switch (s) {
+            case IN_PROGRESS: return "folyamatban";
+            case DONE:        return "kesz";
+            case NOT_STARTED:
+            default:          return "uj";
+        }
+    }
+
+    /** A blokk-rács teljes törlése (clearAll-ban hívva). */
+    private void clearBlockGrid() {
+        blockGridConfig = null;
+        currentGrid     = null;
+        selectedBlock   = null;
+        if (blockOverlay != null) {
+            blockOverlay.clear();
+            mapView.getOverlays().remove(blockOverlay);
+            blockOverlay = null;
+        }
+        updateBlockUiVisibility();
+    }
+
+    /** Betöltött projekt → blokk-rács újraépítése és status-ok visszaállítása. */
+    private void restoreBlockGrid(ProjectManager.ProjectData data) {
+        BlockGridGenerator gen = new BlockGridGenerator();
+        // A perzisztált origó megőrzése: previous-stílusú GridResult-ot
+        // szintetizálunk csak az originLat/Lon átadásához
+        BlockGridGenerator.GridResult prev = new BlockGridGenerator.GridResult();
+        prev.gridOriginLat   = data.blockGrid.originLat;
+        prev.gridOriginLon   = data.blockGrid.originLon;
+        prev.gridRotationDeg = data.blockGrid.rotationDeg;
+
+        BlockGridGenerator.GridResult res = gen.generate(polygonPoints, data.blockGrid, prev);
+        if (res.errorMessage != null) {
+            Toast.makeText(this,
+                    "Blokk-racs visszaallitasi hiba: " + res.errorMessage,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        // Status-ok visszahelyezése a perzisztált rekordokból
+        for (Block b : res.blocks) {
+            for (ProjectManager.BlockStateRecord r : data.blockStates) {
+                if (r.row == b.row && r.col == b.col) {
+                    b.status = r.status;
+                    break;
+                }
+            }
+        }
+
+        blockGridConfig = data.blockGrid;
+        currentGrid     = res;
+        selectedBlock   = null;
+        ensureBlockOverlay();
+        blockOverlay.setBlocks(res.blocks);
+        updateBlockUiVisibility();
+    }
+
+    /**
+     * Misszió Start eseménynél hívni: a kiválasztott blokk → IN_PROGRESS.
+     * (A jelenlegi startMission flow nem hívja még — későbbi M07 integráció.)
+     */
+    @SuppressWarnings("unused")
+    private void onBlockMissionStarted() {
+        if (selectedBlock != null) {
+            selectedBlock.status = BlockStatus.IN_PROGRESS;
+            if (blockOverlay != null) mapView.invalidate();
+            updateBlockUiVisibility();
+        }
     }
 }

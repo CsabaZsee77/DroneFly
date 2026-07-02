@@ -866,6 +866,51 @@
                     android:backgroundTint="#660000"
                     android:layout_marginBottom="6dp"/>
 
+                <!-- M07 Blokk-felosztás vezérlők -->
+                <Button android:id="@+id/btnSplit"
+                    android:text="Felosztas blokkokra"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:textSize="13sp"
+                    android:backgroundTint="#553388"
+                    android:layout_marginBottom="6dp"/>
+
+                <TextView android:id="@+id/tvBlockInfo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="12sp"
+                    android:textColor="#FFFFFF"
+                    android:padding="4dp"
+                    android:layout_marginBottom="4dp"
+                    android:visibility="gone"/>
+
+                <LinearLayout
+                    android:id="@+id/blockButtonRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="6dp"
+                    android:visibility="gone">
+
+                    <Button android:id="@+id/btnMarkDone"
+                        android:text="Kesz"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:textSize="12sp"
+                        android:backgroundTint="#007733"
+                        android:layout_marginEnd="3dp"/>
+
+                    <Button android:id="@+id/btnResetBlock"
+                        android:text="Visszaallit"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:textSize="12sp"
+                        android:backgroundTint="#775500"
+                        android:layout_marginStart="3dp"/>
+                </LinearLayout>
+
                 <Button android:id="@+id/btnGenerate"
                     android:text="Ujragenerales (beallitasokkal)"
                     android:layout_width="match_parent"

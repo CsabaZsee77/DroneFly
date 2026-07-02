@@ -2,6 +2,9 @@ package com.dronefly.app.mission;
 
 import android.content.Context;
 
+import com.dronefly.app.model.Block;
+import com.dronefly.app.model.BlockGridConfig;
+import com.dronefly.app.model.BlockStatus;
 import com.dronefly.app.model.MissionConfig;
 import com.dronefly.app.model.ObstacleData;
 
@@ -31,7 +34,7 @@ import java.util.UUID;
  */
 public class ProjectManager {
 
-    public static final String FORMAT_VERSION = "1.0";
+    public static final String FORMAT_VERSION = "1.1"; // 1.1: M07 block_grid + block_states (opt.)
     public static final String FORMAT_NAME    = "dronterapia_flight_program";
     public static final String FILE_EXT       = ".flightprogram.json";
     public static final String LEGACY_EXT     = ".dronefly.json";
@@ -76,9 +79,25 @@ public class ProjectManager {
                                    String existingId,
                                    String parcelId,
                                    String parcelName) throws Exception {
+        return saveProject(ctx, name, polygon, config, existingId, parcelId, parcelName, null);
+    }
+
+    /**
+     * Új repülési programot ment fájlba, opcionális blokk-lista perzisztálással (M07).
+     *
+     * @param blocks  jelenlegi blokk-lista (status-okhoz); null ha nincs blokk-mód
+     */
+    public static File saveProject(Context ctx,
+                                   String name,
+                                   List<GeoPoint> polygon,
+                                   MissionConfig config,
+                                   String existingId,
+                                   String parcelId,
+                                   String parcelName,
+                                   List<Block> blocks) throws Exception {
         String id  = (existingId != null && !existingId.isEmpty()) ? existingId : UUID.randomUUID().toString();
         String now = utcNow();
-        JSONObject root = buildJson(id, name, now, now, polygon, config, parcelId, parcelName, true);
+        JSONObject root = buildJson(id, name, now, now, polygon, config, parcelId, parcelName, true, blocks);
 
         String safeName = sanitizeFilename(name);
         File file = new File(getProjectsDir(ctx), safeName + FILE_EXT);
@@ -111,7 +130,23 @@ public class ProjectManager {
                                           String parcelId,
                                           String parcelName,
                                           boolean syncPending) throws Exception {
-        // Meglévő created_at és id megőrzése
+        saveProjectToFile(ctx, targetFile, name, polygon, config,
+                          existingId, parcelId, parcelName, syncPending, null);
+    }
+
+    /**
+     * Meglévő fájl felülírása opcionális blokk-lista perzisztálással (M07).
+     */
+    public static void saveProjectToFile(Context ctx,
+                                          File targetFile,
+                                          String name,
+                                          List<GeoPoint> polygon,
+                                          MissionConfig config,
+                                          String existingId,
+                                          String parcelId,
+                                          String parcelName,
+                                          boolean syncPending,
+                                          List<Block> blocks) throws Exception {
         String createdAt = utcNow();
         String id = (existingId != null && !existingId.isEmpty()) ? existingId : UUID.randomUUID().toString();
         try {
@@ -122,7 +157,8 @@ public class ProjectManager {
             }
         } catch (Exception ignored) {}
 
-        JSONObject root = buildJson(id, name, createdAt, utcNow(), polygon, config, parcelId, parcelName, syncPending);
+        JSONObject root = buildJson(id, name, createdAt, utcNow(),
+                                     polygon, config, parcelId, parcelName, syncPending, blocks);
         writeJson(targetFile, root);
     }
 
@@ -138,7 +174,8 @@ public class ProjectManager {
                                          MissionConfig config,
                                          String parcelId,
                                          String parcelName,
-                                         boolean syncPending) throws Exception {
+                                         boolean syncPending,
+                                         List<Block> blocks) throws Exception {
         JSONObject root = new JSONObject();
         root.put("version", FORMAT_VERSION);
         root.put("format",  FORMAT_NAME);
@@ -232,6 +269,36 @@ public class ProjectManager {
             obsArr.put(oj);
         }
         root.put("obstacles", obsArr);
+
+        // ── Block grid (M07) — opcionális ─────────────────────────────────────
+        if (config.blockGrid != null) {
+            BlockGridConfig bg = config.blockGrid;
+            JSONObject bgJson = new JSONObject();
+            bgJson.put("enabled",              true);
+            bgJson.put("cell_width_m",         bg.cellWidthM);
+            bgJson.put("cell_height_m",        bg.cellHeightM);
+            bgJson.put("rotation_deg",         bg.rotationDeg);
+            bgJson.put("overlap_buffer_m",     bg.overlapBufferM);
+            bgJson.put("min_coverage_percent", bg.minCoveragePercent);
+            bgJson.put("origin_mode",          bg.originMode);
+            if (!Double.isNaN(bg.originLat)) bgJson.put("origin_lat", bg.originLat);
+            if (!Double.isNaN(bg.originLon)) bgJson.put("origin_lon", bg.originLon);
+            root.put("block_grid", bgJson);
+
+            // block_states — csak ha van legalább egy blokk
+            if (blocks != null && !blocks.isEmpty()) {
+                JSONArray statesArr = new JSONArray();
+                for (Block b : blocks) {
+                    JSONObject bj = new JSONObject();
+                    bj.put("id",     b.id);
+                    bj.put("row",    b.row);
+                    bj.put("col",    b.col);
+                    bj.put("status", b.status.name());
+                    statesArr.put(bj);
+                }
+                root.put("block_states", statesArr);
+            }
+        }
 
         return root;
     }
@@ -330,6 +397,41 @@ public class ProjectManager {
                     (float) oj.optDouble("radius_m", 10.0),
                     (float) oj.optDouble("height_m",  5.0)
                 ));
+            }
+        }
+
+        // ── Block grid (M07) — opcionális, v1.1+ ──────────────────────────────
+        JSONObject bgJson = root.optJSONObject("block_grid");
+        if (bgJson != null && bgJson.optBoolean("enabled", false)) {
+            BlockGridConfig bg = new BlockGridConfig();
+            bg.cellWidthM         = bgJson.optDouble("cell_width_m",         120.0);
+            bg.cellHeightM        = bgJson.optDouble("cell_height_m",        120.0);
+            bg.rotationDeg        = bgJson.optDouble("rotation_deg",           0.0);
+            bg.overlapBufferM     = bgJson.optDouble("overlap_buffer_m",      40.0);
+            bg.minCoveragePercent = bgJson.optDouble("min_coverage_percent",  15.0);
+            bg.originMode         = bgJson.optString("origin_mode", BlockGridConfig.ORIGIN_CENTROID);
+            bg.originLat          = bgJson.has("origin_lat") ? bgJson.optDouble("origin_lat", Double.NaN) : Double.NaN;
+            bg.originLon          = bgJson.has("origin_lon") ? bgJson.optDouble("origin_lon", Double.NaN) : Double.NaN;
+            data.blockGrid = bg;
+        }
+
+        JSONArray statesArr = root.optJSONArray("block_states");
+        if (statesArr != null) {
+            for (int i = 0; i < statesArr.length(); i++) {
+                JSONObject bj = statesArr.optJSONObject(i);
+                if (bj == null) continue;
+                String statusStr = bj.optString("status", BlockStatus.NOT_STARTED.name());
+                BlockStatus status;
+                try {
+                    status = BlockStatus.valueOf(statusStr);
+                } catch (IllegalArgumentException ignored) {
+                    status = BlockStatus.NOT_STARTED;
+                }
+                data.blockStates.add(new BlockStateRecord(
+                        bj.optString("id", ""),
+                        bj.optInt("row", 0),
+                        bj.optInt("col", 0),
+                        status));
             }
         }
 
@@ -473,5 +575,23 @@ public class ProjectManager {
         public String  droneProfileName    = "";
         // Akadályok
         public List<ObstacleData> obstacles = new ArrayList<>();
+        // M07 — blokk-felosztás (opcionális)
+        public BlockGridConfig          blockGrid    = null;
+        public List<BlockStateRecord>   blockStates  = new ArrayList<>();
+    }
+
+    /** Egy blokk perzisztált state-rekordja a .flightprogram.json-ban (M07). */
+    public static class BlockStateRecord {
+        public String      id;
+        public int         row;
+        public int         col;
+        public BlockStatus status;
+
+        public BlockStateRecord(String id, int row, int col, BlockStatus status) {
+            this.id     = id;
+            this.row    = row;
+            this.col    = col;
+            this.status = status;
+        }
     }
 }
