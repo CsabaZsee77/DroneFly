@@ -465,7 +465,7 @@ checkSDCard → (dialog ha nincs) → setNadirPitch → applySettings
 
 ---
 
-## MissionUploader — mintavételi kiegészítés (uploadSamplingMission) — 🔲 Tervezve
+## MissionUploader — mintavételi kiegészítés (uploadSamplingMission) — ✅ Implementálva, javítás tervben (ld. lentebb, 2026-07-03)
 
 **Forrásfájl-bővítés (tervezett):** `dji/MissionUploader.java` — új publikus metódus,
 a meglévő `uploadMission()` mellett, NEM annak lecserélése.
@@ -542,6 +542,114 @@ checkSDCard → setNadirPitch → applySettings
 (int) adja meg a hover időtartamát; a drón a megadott ideig lebeg a waypoint
 pozíciójában, mielőtt a következő akciót (vagy a következő waypointra indulást)
 végrehajtaná. A `START_TAKE_PHOTO` paramétere nem használt (0).
+
+---
+
+## MissionUploader / CameraConfigurator — fotó-trigger javítás — ✅ Implementálva (2026-07-03)
+
+**Ok:** ld. M04_L1 §18 és M04_L2 §10 — a `START_TAKE_PHOTO` WaypointAction
+terepi tesztben megbízhatatlannak bizonyult (10 mintapontból 4 fotó nem
+készült el). A tényleges megvalósítás a `START_TAKE_PHOTO` akciót app-vezérelt,
+visszaigazolt+újrapróbálható hívással váltotta fel.
+
+**`MissionUploader.uploadSamplingMission()`** — a `START_TAKE_PHOTO` akció
+törölve, a `STAY` akció megmaradt:
+
+```java
+List<Waypoint> wpList = new ArrayList<>();
+for (WaypointData wp : waypoints) {
+    Waypoint waypoint = new Waypoint((float) wp.latitude, (float) wp.longitude, wp.altitudeM);
+    if (wp.hoverSeconds > 0f) {
+        waypoint.addAction(new WaypointAction(
+                WaypointActionType.STAY, (int) (wp.hoverSeconds * 1000)));
+        // START_TAKE_PHOTO akció TÖRÖLVE — a trigger CameraConfigurator.triggerSamplePhoto()-ból jön
+    }
+    wpList.add(waypoint);
+}
+```
+
+**`CameraConfigurator.triggerSamplePhoto()`** — új, a fotó-trigger logika ide
+került (nem a `MissionUploader`-be — a `CameraConfigurator` már rendelkezik a
+`getCamera()` helperrel és a `startShootPhotoInternal()` mintával az
+intervallum-fotózáshoz, ez a logikus hely a kameravezérlésnek):
+
+```java
+public interface PhotoTriggerListener {
+    void onPhotoConfirmed();
+    void onPhotoFailed(String reason);
+}
+
+private static final int STABILIZE_DELAY_MS = 500;
+private static final int RETRY_DELAY_MS     = 1000;
+private static final int MAX_ATTEMPTS       = 2; // 1 próbálkozás + 1 újrapróbálkozás
+
+public static void triggerSamplePhoto(PhotoTriggerListener listener) {
+    new android.os.Handler(android.os.Looper.getMainLooper())
+            .postDelayed(() -> triggerSamplePhotoAttempt(1, listener), STABILIZE_DELAY_MS);
+}
+
+private static void triggerSamplePhotoAttempt(int attemptNumber, PhotoTriggerListener listener) {
+    Camera camera = getCamera();
+    if (camera == null) {
+        if (listener != null) listener.onPhotoFailed("Kamera nem elérhető");
+        return;
+    }
+    camera.startShootPhoto(err -> {
+        if (err == null) {
+            if (listener != null) listener.onPhotoConfirmed();
+            return;
+        }
+        if (attemptNumber < MAX_ATTEMPTS) {
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                    () -> triggerSamplePhotoAttempt(attemptNumber + 1, listener), RETRY_DELAY_MS);
+        } else if (listener != null) {
+            listener.onPhotoFailed(err.getDescription());
+        }
+    });
+}
+```
+
+**Megvalósítási eltérés a korábbi tervtől — közvetlen hívás, nem reflexió:**
+a `Camera.startShootPhoto(CompletionCallback)` **közvetlenül** hívható — ez egy
+stabil, régóta változatlan publikus MSDK v4 API, amit a `CameraConfigurator`
+más metódusai (pl. `startShootPhotoInternal()`, az intervallum-fotózásnál) is
+közvetlenül hívnak, reflexió nélkül. A §9 tap-to-expose reflexiós mintája
+(dinamikus `InvocationHandler` proxy) csak a **kevésbé stabil**, verzió-függő
+fókusz/expozíció API-knál indokolt — a fotó-trigger nem ilyen, ezért itt a
+projektben már bevett, egyszerűbb közvetlen hívási minta a helyes választás.
+
+**`MissionPlannerActivity` — pontonkénti azonosítás index-cursor alapján
+(nem `session.json` `trigger_confirmed` mező):** az `onWaypointReached()`
+egy Activity-szintű `samplePointCursor`-t növel minden mintavételi waypoint
+(`actualIndex % 3 == 1`) elérésekor, és csak a **sikeresen megerősített**
+pontok `GeoPoint`-ját gyűjti egy `confirmedSamplePointsForSession` listába.
+A médialetöltés (§16, `triggerSessionDownload()`) ezt a **szűrt** listát adja
+át a `MediaSessionDownloader`-nek a nyers mintapontlista helyett — ezzel
+egyenértékű megoldás a tervezett `trigger_confirmed` mezővel, de egyszerűbb:
+nem igényel `session.json` séma-bővítést, mert a szűrés már a letöltés
+paraméterezésénél megtörténik.
+
+```java
+// MissionPlannerActivity.onWaypointReached() — mintavételi ág
+if (actualIndex % 3 == 1) {
+    int pointIdx = samplePointCursor++;
+    GeoPoint point = (lastSamplePoints != null && pointIdx < lastSamplePoints.size())
+            ? lastSamplePoints.get(pointIdx) : null;
+    triggerSamplePointPhoto(point); // → CameraConfigurator.triggerSamplePhoto()
+}
+// onPhotoConfirmed() → confirmedSamplePointsForSession.add(point)
+// onPhotoFailed()    → samplingPhotosFailed++, Toast figyelmeztetés
+
+// triggerSessionDownload() — a letöltés a szűrt listával indul:
+List<GeoPoint> pointsForDownload = haveTriggerStats
+        ? confirmedSamplePointsForSession : lastSamplePoints;
+mediaSessionDownloader.downloadSessionMedia(this, pointsForDownload.size(),
+    samplingMissionStartTimeMs, pointsForDownload, currentSamplingSessionId, listener);
+```
+
+**Build-ellenőrzés:** `./gradlew compileDebugJavaWithJavac` sikeres (2026-07-03).
+**Terepi teszt még hátravan** — Crystal Sky + Phantom 4 Pro v1 eszközön nincs
+kipróbálva, hogy a retry ténylegesen javítja-e a korábbi 10-ből-6-os arányt.
 
 ---
 

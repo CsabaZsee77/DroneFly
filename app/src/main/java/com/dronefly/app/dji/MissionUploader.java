@@ -133,6 +133,13 @@ public class MissionUploader {
             return;
         }
 
+        // Terepi javítás (2026-07-03, M04_L1 §18 / M04_L2 §10): a START_TAKE_PHOTO
+        // WaypointAction "tűzz és felejtsd el" jellegű — nincs SDK-szintű
+        // visszaigazolás, terepi tesztben 10 mintapontból 4-nél nem eredményezett
+        // fotót. A STAY akció MARAD (a hover pozícióban tartáshoz szükséges), de a
+        // fotó-triggert az app-oldali, onWaypointReached()-ből hívott
+        // CameraConfigurator.triggerSamplePhoto() adja — annak VAN siker/hiba
+        // callback-je, ezért retry-olható (ld. MissionPlannerActivity).
         List<Waypoint> wpList = new ArrayList<>();
         for (WaypointData wp : waypoints) {
             Waypoint waypoint = new Waypoint(
@@ -142,8 +149,6 @@ public class MissionUploader {
             if (wp.hoverSeconds > 0f) {
                 waypoint.addAction(new WaypointAction(
                         WaypointActionType.STAY, (int) (wp.hoverSeconds * 1000)));
-                waypoint.addAction(new WaypointAction(
-                        WaypointActionType.START_TAKE_PHOTO, 0));
             }
             wpList.add(waypoint);
         }

@@ -11,6 +11,16 @@
 
 ## 1. Modul célja
 
+> **⚠ Dokumentáció-frissítési megjegyzés (2026-07-03):** ez a fejezet és a
+> `M03_L3` "ProjectManager — teljes API" szakasza a **régi, v1 `.dronefly.json`**
+> sémát írja le. A `ProjectManager.java` időközben (M06/M07 fejlesztések során)
+> egy jóval bővebb **`.flightprogram.json`** sémára állt át (GeoJSON `parcel`,
+> `metadata` blokk sync-állapottal, `flight_settings`, `block_grid` stb. —
+> ld. `ProjectManager.buildJson()`/`loadNew()`). A teljes doc-frissítés a régi
+> sémáról az újra külön feladat; ez a fejezet a **7. pontban** csak a most
+> (2026-07-03) azonosított hiányosságot dokumentálja, a **valós, jelenlegi**
+> séma alapján.
+
 Az M03 modul kétféle adatkezelési igényt lát el:
 
 ### 1a. Projekt mentés / betöltés (offline, belső)
@@ -231,3 +241,25 @@ Crystal Sky-on:
 | M01 Misszió Tervező | **Közvetlen hívó** — exportCsv(), exportKmz(), importCsv() |
 | M02 Grid Engine | **Adat forrás** — WaypointData lista input |
 | M04 DJI Integráció | **Alternatív út** — exportált fájl helyett közvetlen feltöltés |
+
+---
+
+## 7. Mintavételi beállítások és kamera-formátum mentése — hiányosság — ✅ Javítás implementálva (2026-07-03), eszközön még nem tesztelve
+
+**Terepi megfigyelés (2026-07-03):** a felhasználó jelezte, hogy egy
+mintavételi misszió elmentése után a mintavételi beállítások (mintapontok
+száma, elosztási algoritmus, hover-idő, repülési magasságok) és a kamera
+fájlformátum (JPEG/RAW) **nem** állnak vissza betöltéskor.
+
+**Megerősítve:** a `ProjectManager.buildJson()`/`loadNew()` jelenleg
+kizárólag a hagyományos grid-beállításokat (GSD, overlap, sebesség stb.)
+menti — a `MissionConfig` mintavételi mezői és a teljes `CameraSettings`
+objektum kimarad. Részletes hibaleírás, tervezett JSON-séma és a
+visszafelé-kompatibilitási garancia: **`M03_L3_ALLAPOTGEP_ES_ENGINE.md`**
+→ "Séma-hiányosság — mintavételi beállítások és kamera-formátum nem
+mentődik" szakasz.
+
+**Röviden:** a bővítés **additív** (új `sampling` és `camera_settings` JSON
+blokk), a meglévő `opt*()`-alapú betöltési minta miatt a régi tervek
+módosítás/migráció nélkül továbbra is betölthetők maradnak, és a Hetzner
+szinkron (M06) automatikusan magával viszi az új mezőket is.

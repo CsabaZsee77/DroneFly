@@ -221,3 +221,49 @@ Fix (MINDEN proxy InvocationHandlerben kötelező):
   DJIHelper$DroneBatteryCallback
   DJIHelper$FlightStateCallback
 ```
+
+---
+
+## 10. Mintavételi fotó-trigger retry és megerősítés — ✅ Implementálva (2026-07-03), eszközön még nem tesztelve
+
+**Kontextus:** M04_L1 §18, M04_L2 §10, M04_L3 (`triggerSamplePhoto()`) — a
+terepi tesztben megbízhatatlannak bizonyult `START_TAKE_PHOTO` WaypointAction
+kiváltása app-vezérelt, visszaigazolt hívással.
+
+**Nem szükséges dinamikus proxy (9. pont mintája nem alkalmazandó itt):** a
+`Camera.startShootPhoto(CommonCallbacks.CompletionCallback)` egy **publikus,
+rendes Java interfész** — közvetlen lambdával implementálható, **nincs
+szükség** a §9-ben leírt `InvocationHandler`-alapú dinamikus proxyra (az csak
+ott kell, ahol a metódus/interfész maga is csak reflexióval érhető el). Itt a
+reflexió kizárólag a `startShootPhoto` metódus felkeresésére szolgál (mert a
+projekt konvenciója szerint a build-idejű MSDK API-verzió-eltérések elleni
+védelemhez mindenhol reflexióval hívjuk a kamera metódusait — ld. M04_L3).
+
+**Újrapróbálkozási szabály:**
+
+```
+attemptCount = 0 (első kísérlet), max 1 újrapróbálkozás (attemptCount < 2 → retry)
+Késleltetés próbálkozások között: 1000 ms (elegendő idő, hogy egy esetleges
+  "kamera foglalt" (előző fotó még mentődik) állapot lezáruljon)
+2 sikertelen kísérlet után: FAILED — nem blokkoló, csak naplózott állapot
+```
+
+**Miért csak 1 újrapróbálkozás, nem több?** A mintavételi misszió maga is
+véges idejű (a drón a következő waypointra vár) — túl sok újrapróbálkozás
+feleslegesen késleltetné a misszió folytatását. Egy (összesen 2 kísérlet)
+a tapasztalat szerint (más MSDK kameravezérlési hibáknál, pl. `CameraConfigurator`
+kameramód-váltás) elegendő a tranziens hibák (pl. előző írás még folyamatban)
+lefedésére, anélkül hogy a hover-időt jelentősen megnyújtaná.
+
+**Szálkezelés:** a `triggerSamplePhoto()` és a retry `Handler.postDelayed()`
+hívásai a **main thread-en** futnak (konzisztensen a projekt többi
+MSDK-callback kezelésével, ld. 1. és 4. pont) — nincs szükség külön
+worker threadre, mert a kamera-parancs maga is aszinkron (SDK belső szálon
+fut, a callback a main threadre érkezik vissza).
+
+**Részleges hiba nem blokkolja a missziót:** ha egy mintapont fotója
+véglegesen (2 kísérlet után is) sikertelen, a misszió **folytatódik** a
+következő waypointra — ez konzisztens a §3 "Misszió atomiság" elvével
+(egy komponens hibája nem szakítja meg az egész folyamatot feleslegesen),
+és a `session.json` `trigger_confirmed: false` mezője (M04_L3) utólag
+jelzi, mely pontot érdemes esetleg kézzel pótolni.

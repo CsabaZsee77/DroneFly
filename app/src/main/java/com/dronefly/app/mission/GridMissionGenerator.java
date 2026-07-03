@@ -26,10 +26,26 @@ public class GridMissionGenerator {
 
     private static final int MAX_WAYPOINTS_PER_MISSION = 99;
 
+    // ── M10 — Sűrű rács (2026-07-03) ─────────────────────────────────────
+    /** STAY időtartam minden sűrű-rács waypointon (M10_L2 §4 — csak annyi,
+     *  hogy a triggerSamplePhoto() stabilizációja + expozíció lefusson,
+     *  NEM a mintavételi misszió hosszabb hoverje). */
+    private static final float DENSE_GRID_HOVER_SECONDS = 1.2f;
+    /** Becsült többletidő waypointonként (fékezés+gyorsítás) a sűrű rács
+     *  repülésiidő-becsléséhez (M10_L1 §5 — durva becslés, terepi validáció
+     *  szükséges). */
+    private static final double DENSE_GRID_OVERHEAD_SEC = 3.0;
+    /** Tipikus P4P v1 akkumulátoronkénti hasznos repülési idő (M07_L1 §1). */
+    private static final double TYPICAL_BATTERY_MINUTES = 16.0;
+
     public static class GeneratorResult {
         public List<List<WaypointData>> segments = new ArrayList<>();
         public int totalWaypoints;
         public int estimatedPhotoCount; // kamera intervallum alapján becsült fotószám
+        /** Igaz, ha a kamera 2 mp-es hardveres minimum-intervalluma aktív, azaz
+         *  a valós fotótávolság nagyobb lesz a beállított frontlap-nél (terepi
+         *  javítás, 2026-07-03 — ld. M02_L1 §8, M02_L2 §10). */
+        public boolean cameraIntervalLimited = false;
         public double areaM2;
         public double estimatedMinutes;
         public double altitudeM;
@@ -51,6 +67,15 @@ public class GridMissionGenerator {
         public boolean isSamplingMission = false;
         /** Mintapontok száma (0, ha nem mintavételi misszió) */
         public int sampleCount = 0;
+
+        // ── Sűrű rács mezők (M10, 2026-07-03) ───────────────────────────
+        /** Igaz, ha config.denseGridMode alapján NORMAL-módú, minden
+         *  fotópozíción megálló rács generálódott (nem CURVED+intervallum). */
+        public boolean isDenseGridMission = false;
+        /** Becsült akkumulátorszükséglet (TYPICAL_BATTERY_MINUTES alapján) —
+         *  minden módnál számolva, de sűrű rácsnál különösen fontos a
+         *  jelentősen megnövekedett repülési idő miatt (M10_L2 §2). */
+        public int estimatedBatteryCount = 1;
     }
 
     public static GeneratorResult generate(List<GeoPoint> polygon, MissionConfig config) {
@@ -108,18 +133,20 @@ public class GridMissionGenerator {
 
         double off = (config.offsetM > 0) ? config.offsetM : 0.0;
 
+        boolean denseMode = config.denseGridMode;
+
         // Első rács (flightAngleDeg)
         List<WaypointData> allWaypoints = new ArrayList<>(
                 runGridPass(px, py, centLat, centLon, mPerDegLat, mPerDegLon,
                         stripSpacing, altM, off, config.obstacles,
-                        config.flightAngleDeg, result));
+                        config.flightAngleDeg, result, photoDist, denseMode));
 
         // Keresztrács (crosshatch) — második rács
         if ("crosshatch".equals(config.gridMode)) {
             GeneratorResult dummy = new GeneratorResult();
             allWaypoints.addAll(runGridPass(px, py, centLat, centLon, mPerDegLat, mPerDegLon,
                     stripSpacing, altM, off, config.obstacles,
-                    config.crosshatchHeadingDeg, dummy));
+                    config.crosshatchHeadingDeg, dummy, photoDist, denseMode));
             result.skippedByObstacle += dummy.skippedByObstacle;
         }
 
@@ -129,11 +156,37 @@ public class GridMissionGenerator {
         }
 
         result.totalWaypoints = allWaypoints.size();
-        result.estimatedPhotoCount = (int)(result.areaM2 / stripSpacing / photoDist);
-        if ("crosshatch".equals(config.gridMode)) result.estimatedPhotoCount *= 2;
-        result.estimatedMinutes = GsdCalculator.estimatedFlightMinutes(
-                result.areaM2, altM, config.sidelapPercent, config.speedMs, config.droneProfile);
-        if ("crosshatch".equals(config.gridMode)) result.estimatedMinutes *= 2;
+        result.isDenseGridMission = denseMode;
+
+        if (denseMode) {
+            // M10 — minden waypoint pontosan egy fotó, nincs kamera-időzítési
+            // bizonytalanság (a fotó akkor készül, amikor a drón megérkezik).
+            result.estimatedPhotoCount = result.totalWaypoints;
+            result.cameraIntervalLimited = false; // nem releváns ebben a módban
+            double baseMinutes = GsdCalculator.estimatedFlightMinutes(
+                    result.areaM2, altM, config.sidelapPercent, config.speedMs, config.droneProfile);
+            if ("crosshatch".equals(config.gridMode)) baseMinutes *= 2;
+            // Minden waypointnál fékezés+gyorsítás többlet (M10_L1 §5, durva becslés)
+            double overheadMinutes = (result.totalWaypoints * DENSE_GRID_OVERHEAD_SEC) / 60.0;
+            result.estimatedMinutes = baseMinutes + overheadMinutes;
+        } else {
+            // Terepi javítás (2026-07-03, M02_L1 §8 / M02_L2 §10): a fotó-becslés eredetileg
+            // tisztán távolság-alapú volt (photoDist), de a kamera ténylegesen IDŐALAPÚ,
+            // 2 mp-es hardveres alsó korláttal triggerel (CameraConfigurator.startIntervalShooting).
+            // Ha photoDist/speedMs < 2 mp, a valós fotótávolság speedMs×2 méterre nő —
+            // ezt kell a becslésnek is figyelembe vennie, különben (alacsony magasság +
+            // szoros átfedés esetén) akár 4×-es túlbecslés adódik.
+            double intervalFloorSpacingM = config.speedMs * 2.0;
+            double effectivePhotoDist = Math.max(photoDist, intervalFloorSpacingM);
+            result.cameraIntervalLimited = photoDist < intervalFloorSpacingM;
+            result.estimatedPhotoCount = (int)(result.areaM2 / stripSpacing / effectivePhotoDist);
+            if ("crosshatch".equals(config.gridMode)) result.estimatedPhotoCount *= 2;
+            result.estimatedMinutes = GsdCalculator.estimatedFlightMinutes(
+                    result.areaM2, altM, config.sidelapPercent, config.speedMs, config.droneProfile);
+            if ("crosshatch".equals(config.gridMode)) result.estimatedMinutes *= 2;
+        }
+        result.estimatedBatteryCount = (int) Math.max(1,
+                Math.ceil(result.estimatedMinutes / TYPICAL_BATTERY_MINUTES));
 
         for (int start = 0; start < allWaypoints.size(); start += MAX_WAYPOINTS_PER_MISSION) {
             int end = Math.min(start + MAX_WAYPOINTS_PER_MISSION, allWaypoints.size());
@@ -154,7 +207,9 @@ public class GridMissionGenerator {
             double stripSpacing, double altM, double off,
             List<ObstacleData> obstacles,
             double angleDeg,
-            GeneratorResult result) {
+            GeneratorResult result,
+            double photoDistM,
+            boolean denseMode) {
 
         double angle = Math.toRadians(angleDeg);
         double cosA  = Math.cos(-angle);
@@ -244,24 +299,60 @@ public class GridMissionGenerator {
                     double xExit  = reverse ? sub[0] : sub[1];
                     if (Math.abs(xExit - xEnter) < 0.5) continue;
 
-                    double lx1 = xEnter * cosB - scanY * sinB;
-                    double ly1 = xEnter * sinB + scanY * cosB;
-                    waypoints.add(new WaypointData(
-                            centLat + ly1 / mPerDegLat,
-                            centLon + lx1 / mPerDegLon,
-                            (float) altM, false));
-
-                    double lx2 = xExit * cosB - scanY * sinB;
-                    double ly2 = xExit * sinB + scanY * cosB;
-                    waypoints.add(new WaypointData(
-                            centLat + ly2 / mPerDegLat,
-                            centLon + lx2 / mPerDegLon,
-                            (float) altM, false));
+                    addStripWaypoints(waypoints, xEnter, xExit, scanY, cosB, sinB,
+                            centLat, centLon, mPerDegLat, mPerDegLon, altM,
+                            photoDistM, denseMode);
                 }
             }
             stripIndex++;
         }
         return waypoints;
+    }
+
+    /**
+     * Egy [xEnter, xExit] substrip waypointokra bontása.
+     * denseMode == false (M02, CURVED — jelenlegi/alap viselkedés): csak a
+     *   két végpont, a fotózást a kamera intervallum-időzítője adja.
+     * denseMode == true (M10 — sűrű rács, 2026-07-03): minden fotópozíció
+     *   saját waypont, photoDistM lépésközzel, rövid STAY akcióval — a
+     *   fotózást app-vezérelt trigger adja minden ponton (ld. M10_L1/L2).
+     */
+    private static void addStripWaypoints(List<WaypointData> waypoints,
+            double xEnter, double xExit, double scanY,
+            double cosB, double sinB,
+            double centLat, double centLon, double mPerDegLat, double mPerDegLon,
+            double altM, double photoDistM, boolean denseMode) {
+
+        if (!denseMode) {
+            addWaypointAtX(waypoints, xEnter, scanY, cosB, sinB,
+                    centLat, centLon, mPerDegLat, mPerDegLon, altM, 0f);
+            addWaypointAtX(waypoints, xExit, scanY, cosB, sinB,
+                    centLat, centLon, mPerDegLat, mPerDegLon, altM, 0f);
+            return;
+        }
+
+        double length = Math.abs(xExit - xEnter);
+        int n = Math.max(1, (int) Math.round(length / Math.max(0.1, photoDistM)));
+        double step = (xExit - xEnter) / n;
+        for (int i = 0; i <= n; i++) {
+            double x = xEnter + step * i;
+            addWaypointAtX(waypoints, x, scanY, cosB, sinB,
+                    centLat, centLon, mPerDegLat, mPerDegLon, altM, DENSE_GRID_HOVER_SECONDS);
+        }
+    }
+
+    private static void addWaypointAtX(List<WaypointData> waypoints, double x, double scanY,
+            double cosB, double sinB,
+            double centLat, double centLon, double mPerDegLat, double mPerDegLon,
+            double altM, float hoverSeconds) {
+        double lx = x * cosB - scanY * sinB;
+        double ly = x * sinB + scanY * cosB;
+        WaypointData wp = new WaypointData(
+                centLat + ly / mPerDegLat,
+                centLon + lx / mPerDegLon,
+                (float) altM, false);
+        wp.hoverSeconds = hoverSeconds;
+        waypoints.add(wp);
     }
 
     /**

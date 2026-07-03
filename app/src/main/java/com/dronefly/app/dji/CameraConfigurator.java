@@ -294,8 +294,8 @@ public class CameraConfigurator {
     /**
      * Kamera beállítása mintavételi misszióhoz: SHOOT_PHOTO mód + SINGLE
      * fotó-mód. A fotó triggerelése — a folyamatos intervallum-fotózással
-     * ellentétben — a waypoint-akció (START_TAKE_PHOTO, NORMAL flightPathMode)
-     * felelőssége, ezért itt NEM hívunk startShootPhoto()-t.
+     * ellentétben — app-vezérelt, visszaigazolt hívás (ld. triggerSamplePhoto()),
+     * ezért itt NEM hívunk startShootPhoto()-t (csak a kamerát készítjük elő rá).
      */
     public static void prepareForSamplingMission(ConfigCallback callback) {
         Camera camera = getCamera();
@@ -314,6 +314,56 @@ public class CameraConfigurator {
                 Log.i(TAG, "Kamera mintavételi misszióhoz előkészítve (SHOOT_PHOTO + SINGLE)");
                 if (callback != null) callback.onComplete(true, "Kamera kész (SINGLE mód)");
             });
+        });
+    }
+
+    // ── Mintavételi fotó-trigger, visszaigazolással + retry (terepi javítás, ─
+    // ── 2026-07-03 — ld. M04_L1 §18, M04_L2 §10) ──────────────────────────────
+
+    public interface PhotoTriggerListener {
+        void onPhotoConfirmed();
+        void onPhotoFailed(String reason);
+    }
+
+    private static final int STABILIZE_DELAY_MS = 500;
+    private static final int RETRY_DELAY_MS     = 1000;
+    private static final int MAX_ATTEMPTS       = 2; // 1 próbálkozás + 1 újrapróbálkozás
+
+    /**
+     * Egy mintavételi ponton a fotó triggerelése — a korábbi, néma
+     * START_TAKE_PHOTO WaypointAction helyett. A Camera.startShootPhoto()-nak
+     * VAN SDK-szintű siker/hiba callback-je, ezért hiba esetén újrapróbálható
+     * (ellentétben a WaypointAction fire-and-forget viselkedésével, ami a
+     * terepi tesztben 10 mintapontból 4-nél nem eredményezett fotót).
+     *
+     * A hívás elé egy rövid stabilizációs késleltetést iktatunk, hogy a hover
+     * utáni maradék lengés lecsengjen, mielőtt a kamera exponál.
+     */
+    public static void triggerSamplePhoto(PhotoTriggerListener listener) {
+        new android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed(() -> triggerSamplePhotoAttempt(1, listener), STABILIZE_DELAY_MS);
+    }
+
+    private static void triggerSamplePhotoAttempt(int attemptNumber, PhotoTriggerListener listener) {
+        Camera camera = getCamera();
+        if (camera == null) {
+            if (listener != null) listener.onPhotoFailed("Kamera nem elérhető");
+            return;
+        }
+        camera.startShootPhoto(err -> {
+            if (err == null) {
+                if (listener != null) listener.onPhotoConfirmed();
+                return;
+            }
+            Log.w(TAG, "Fotó trigger hiba (" + attemptNumber + ". próbálkozás): "
+                    + err.getDescription());
+            if (attemptNumber < MAX_ATTEMPTS) {
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                        () -> triggerSamplePhotoAttempt(attemptNumber + 1, listener),
+                        RETRY_DELAY_MS);
+            } else if (listener != null) {
+                listener.onPhotoFailed(err.getDescription());
+            }
         });
     }
 

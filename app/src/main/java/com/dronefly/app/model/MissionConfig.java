@@ -38,6 +38,14 @@ public class MissionConfig {
     public double sampleAltitudeM = 8.0;            // fotózási magasság (GSD-ből számítható)
     public float hoverSeconds = 2.5f;               // megállás időtartama fotózás előtt
 
+    // ── Sűrű rács (M10, 2026-07-03) ─────────────────────────────────────
+    // Ha true, a GridMissionGenerator minden fotópozícióhoz külön waypointot
+    // generál (NORMAL flightPathMode + app-vezérelt trigger minden ponton),
+    // a CURVED+intervallum mód helyett — alacsony magasságon (< kb. 20 m,
+    // 80% frontlapnál) ez garantálja a beállított átfedést, a CURVED mód
+    // strukturális korlátja (M02_L1 §8.3) miatt.
+    public boolean denseGridMode = false;
+
     public MissionConfig() {
         this.droneProfile = DroneProfiles.getDefault();
     }

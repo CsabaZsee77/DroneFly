@@ -323,3 +323,119 @@ intent.putExtra(Intent.EXTRA_STREAM, uri);
 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 startActivity(Intent.createChooser(intent, "Exportálás"));
 ```
+
+---
+
+## Séma-hiányosság — mintavételi beállítások és kamera-formátum nem mentődik — ✅ Javítás implementálva (2026-07-03), eszközön még nem tesztelve
+
+> **A fenti "ProjectManager — teljes API" és "JSON formátum (v1)" szakaszok
+> a régi `.dronefly.json` sémát írják le** (ld. fájl elején lévő
+> figyelmeztetés is). A `ProjectManager.java` jelenlegi, valódi `buildJson()`/
+> `loadNew()` implementációja ma már a **`.flightprogram.json`** sémát
+> használja: `metadata` (id, name, sync_pending), `parcel` (GeoJSON geometry),
+> `drone` (profil + kamera paraméterek), `flight_settings`, `obstacles`,
+> `block_grid`/`block_states` (M07). Az alábbi hiányosság ezen, **valós**
+> sémán azonosítva.
+
+### Az azonosított hiányosság
+
+A `ProjectManager.buildJson()` `flight_settings` blokkja
+([ProjectManager.java:240-253](../../app/src/main/java/com/dronefly/app/mission/ProjectManager.java))
+**nem** menti az alábbi, `MissionConfig`-ban már létező mezőket:
+
+```java
+// model/MissionConfig.java — mintavételi mezők (33-39. sor), NINCS mentve:
+samplingMode        // boolean
+nSamplePoints       // int
+samplingMethod      // "stratified" | "halton" | "random"
+samplingSeed        // long
+transitAltitudeM    // double
+sampleAltitudeM     // double
+hoverSeconds        // float
+
+// model/MissionConfig.java:20 — a teljes CameraSettings objektum, NINCS mentve:
+cameraSettings.fileFormat      // JPEG | JPEG_AND_RAW | ... (a felmerült probléma!)
+cameraSettings.photoMode, iso, aperture, shutterSpeed, whiteBalance, ...
+```
+
+A megfelelő `loadNew()` olvasó ([ProjectManager.java:369-383](../../app/src/main/java/com/dronefly/app/mission/ProjectManager.java))
+és a `ProjectData` osztály sem tartalmazza ezeket a mezőket — tehát mentéskor
+elvesznek, betöltéskor mindig az alapértelmezett érték (`samplingMode=false`,
+`cameraSettings=CameraSettings.getAgricultureDefaults()`) áll vissza.
+
+### Tervezett javítás — additív JSON blokkok
+
+```java
+// buildJson() kiegészítés, a "flight_settings" blokk UTÁN:
+if (config.samplingMode) {
+    JSONObject sampling = new JSONObject();
+    sampling.put("enabled",          true);
+    sampling.put("n_sample_points",  config.nSamplePoints);
+    sampling.put("method",           config.samplingMethod);
+    sampling.put("seed",             config.samplingSeed);
+    sampling.put("transit_altitude_m", config.transitAltitudeM);
+    sampling.put("sample_altitude_m",  config.sampleAltitudeM);
+    sampling.put("hover_seconds",      config.hoverSeconds);
+    root.put("sampling", sampling);
+}
+
+JSONObject camSettings = new JSONObject();
+camSettings.put("file_format",   config.cameraSettings.fileFormat.name());
+camSettings.put("photo_mode",    config.cameraSettings.photoMode.name());
+camSettings.put("iso",           config.cameraSettings.iso.name());
+camSettings.put("aperture",      config.cameraSettings.aperture.name());
+camSettings.put("shutter_speed", config.cameraSettings.shutterSpeed.name());
+camSettings.put("white_balance", config.cameraSettings.whiteBalance.name());
+camSettings.put("white_balance_kelvin", config.cameraSettings.whiteBalanceKelvin);
+root.put("camera_settings", camSettings);
+```
+
+```java
+// loadNew() kiegészítés — az "obstacles" / "block_grid" opcionális-blokk
+// mintáját követve (optJSONObject + optX alapértékkel):
+JSONObject sampling = root.optJSONObject("sampling");
+if (sampling != null && sampling.optBoolean("enabled", false)) {
+    data.samplingMode      = true;
+    data.nSamplePoints     = sampling.optInt("n_sample_points", 30);
+    data.samplingMethod    = sampling.optString("method", "stratified");
+    data.samplingSeed      = sampling.optLong("seed", 0L);
+    data.transitAltitudeM  = sampling.optDouble("transit_altitude_m", 60.0);
+    data.sampleAltitudeM   = sampling.optDouble("sample_altitude_m", 8.0);
+    data.hoverSeconds      = (float) sampling.optDouble("hover_seconds", 2.5);
+}
+// samplingMode alapértéke false marad, ha a "sampling" blokk hiányzik
+// (régi terv) — ez MEGEGYEZIK a MissionConfig alapértékkel, tehát a régi
+// tervek betöltése változatlanul, hibamentesen működik (ld. lentebb).
+
+JSONObject camSettings = root.optJSONObject("camera_settings");
+if (camSettings != null) {
+    data.cameraSettings = new CameraSettings();
+    data.cameraSettings.fileFormat = CameraSettings.FileFormat.valueOf(
+        camSettings.optString("file_format", "JPEG_AND_RAW"));
+    // ... többi mező hasonlóan, optString + valueOf + alapérték
+}
+// ha a "camera_settings" blokk hiányzik (régi terv), data.cameraSettings
+// a ProjectData saját alapértéke marad (CameraSettings.getAgricultureDefaults()
+// — ugyanaz, mint amit a MissionConfig is használ)
+```
+
+### Visszafelé kompatibilitás — NINCS szükség migrációra
+
+A `ProjectManager.loadNew()` már most is mindenhol `opt*()` mintát használ
+(nem `get*()`), pontosan ezért a régi tervek **hiba nélkül** betölthetők
+maradnak az új mezőkkel bővített sémával is — ha egy blokk (`sampling`,
+`camera_settings`) hiányzik a fájlból, a kód egyszerűen az alapértéket veszi,
+nem dob kivételt. Ennek már van pontos precedense a kódban: a `block_grid`
+(M07) blokk is pontosan így lett utólag, additívan hozzáadva
+(`bgJson.optBoolean("enabled", false)` — [ProjectManager.java:405](../../app/src/main/java/com/dronefly/app/mission/ProjectManager.java)),
+és az M07 előtti tervek ma is problémamentesen betölthetők, csak `block_grid`
+nélkül. A mintavétel/kamera-formátum bővítés ugyanezt az elvet követi —
+**nincs szükség sem migrációs szkriptre, sem a tableten lévő fájlok utólagos
+átalakítására.**
+
+### M06 szinkron — nincs szükség külön munkára
+
+A `SyncManager` (M06) nem végez saját szerializációt — a `pushToServer()`/
+`fetchProgram()` pontosan azt a JSON-t továbbítja, amit a `ProjectManager`
+előállít. Ha a fenti séma bővül, a Hetzner-szinkron **automatikusan**
+magával viszi az új mezőket, külön M06-oldali módosítás nélkül.

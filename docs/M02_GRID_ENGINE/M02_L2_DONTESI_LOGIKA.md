@@ -235,3 +235,52 @@ double turnTimeMin = numStrips * 5.0 / 60.0;
 
 return flightTimeMin + turnTimeMin;
 ```
+
+---
+
+## 10. Fotószám-becslés — kamera időintervallum-korlát figyelembevétele — ✅ Implementálva (2026-07-03), eszközön még nem tesztelve
+
+**Ok:** terepi teszt (M02_L1 §8) — a jelenlegi becslés távolság-alapú, a
+tényleges triggerelés időalapú 2 mp-es padlóval (`CameraConfigurator.java:235`).
+
+```
+Jelenlegi (HIBÁS) döntés:
+  estimatedPhotoCount = areaM2 / stripSpacing / photoDistanceM
+  → hallgatólagosan feltételezi, hogy a kamera minden photoDistanceM
+    méterenként pontosan egyszer exponál — FIGYELMEN KÍVÜL HAGYJA a
+    kamera 2 mp-es minimum intervallumát
+
+Javított döntés:
+  effektívPhotoDistM = MAX(photoDistanceM, speedMs × 2.0)
+  estimatedPhotoCount = areaM2 / stripSpacing / effektívPhotoDistM
+
+  IF photoDistanceM < speedMs × 2.0:
+    → a 2 mp-es kameракorlát aktív (a tervezettnél ritkábban fotózik)
+    → UI figyelmeztetés megjelenítése (M02_L1 §8.2 szövege)
+    → az estimatedMinutes NEM változik (a repülési idő a sebességtől/
+      útvonalhossztól függ, nem a fotószámtól) — csak a fotószám-becslés
+      és a hozzá tartozó figyelmeztetés érintett
+
+  ELSE:
+    → a tervezett sűrűség ténylegesen elérhető, nincs figyelmeztetés
+```
+
+**Példa (a terepi esethez hasonló beállítás — illusztráció, a pontos
+0,15 ha-s repülés valós GSD/sebesség/frontlap értékei terepi validációval
+pontosíthatók):**
+
+```
+Ha altM = 8 m, frontlap = 85%, speedMs = 3 m/s (alacsony repülés, tőszámláláshoz):
+  photoDistanceM = footprintHeight × (1 - 0.85) ≈ 1.2 m  (kis GSD → kis footprint)
+  photoDistanceM / speedMs = 1.2 / 3 ≈ 0.4 mp  ≪ 2.0 mp  → a korlát AKTÍV
+
+  effektívPhotoDistM = MAX(1.2, 3 × 2.0) = 6.0 m
+  → az effektív fotótávolság 5×-öse a tervezettnek → a becsült fotószám is
+    kb. 5×-ösére csökken a javítás után — nagyságrendileg egyezik a
+    terepen tapasztalt kb. 4×-es eltéréssel
+```
+
+**Kapcsolódó:** M02_L1 §8 (business-folyamat leírás), M04_L2 §... — a
+`CameraConfigurator.startIntervalShooting()` maga NEM változik (a 2 mp-es
+korlát hardveres/firmware-szintű, nem kerülhető meg) — csak a **becslés**
+igazodik hozzá.

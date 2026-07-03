@@ -285,6 +285,20 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private long   samplingMissionStartTimeMs = 0L;
     private String currentSamplingSessionId   = null;
     private final MediaSessionDownloader mediaSessionDownloader = new MediaSessionDownloader();
+    // Terepi javítás (2026-07-03, M04_L1 §18): app-vezérelt fotó-trigger, a
+    // WaypointAction helyett — a médialetöltés a TÉNYLEGESEN megerősített
+    // pontok listájával dolgozik, nem a nyers mintapontszámmal. A cursor
+    // szegmens-határoktól függetlenül, a mintapontok eredeti sorrendjében
+    // követi, melyik pontnál tartunk (onWaypointReached szegmensenként is
+    // szigorúan sorban hívódik).
+    private int samplePointCursor = 0;
+    private int samplingPhotosFailed = 0;
+    private final List<GeoPoint> confirmedSamplePointsForSession = new ArrayList<>();
+
+    // M10 — Sűrű rács (NORMAL mód, alacsony magasságú mozaikoláshoz, 2026-07-03)
+    private Switch   switchDenseGridMode;
+    private int      denseGridPhotosConfirmed = 0;
+    private int      denseGridPhotosFailed    = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -660,6 +674,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         initTerrainControls();
         initCrosshatchControls();
         initSamplingControls();
+        initDenseGridControls();
         initSyncControls();
         initStatusBar();
         // Az updateLabels nem írja az etAltitude-ot (a felhasználói magasság-érték
@@ -1435,6 +1450,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
         spinnerSamplingMethod.setSelection(0);
 
         switchSamplingMode.setOnCheckedChangeListener((btn, isChecked) -> {
+            // M10: a mintavételi és a sűrű rács mód kölcsönösen kizárja egymást
+            if (isChecked && switchDenseGridMode != null && switchDenseGridMode.isChecked()) {
+                switchDenseGridMode.setChecked(false);
+            }
             samplingParamsPanel.setVisibility(isChecked ? View.VISIBLE : View.GONE);
             // Mód váltásnál a korábbi eredmény (másik móddal generálva) már
             // nem érvényes — töröljük, hogy ne lehessen felkeverni a két típust.
@@ -1448,6 +1467,23 @@ public class MissionPlannerActivity extends AppCompatActivity {
         });
 
         btnDownloadSession.setOnClickListener(v -> triggerSessionDownload());
+    }
+
+    // ── Sűrű rács panel (M10, 2026-07-03) ─────────────────────────────────
+
+    private void initDenseGridControls() {
+        switchDenseGridMode = findViewById(R.id.switchDenseGridMode);
+        if (switchDenseGridMode == null) return;
+
+        switchDenseGridMode.setOnCheckedChangeListener((btn, isChecked) -> {
+            // A mintavételi és a sűrű rács mód kölcsönösen kizárja egymást
+            if (isChecked && switchSamplingMode != null && switchSamplingMode.isChecked()) {
+                switchSamplingMode.setChecked(false);
+            }
+            lastResult = null;
+            tvStats.setText("");
+            autoGenerateIfReady();
+        });
     }
 
     // ── Szinkronizáció panel ──────────────────────────────────────────────
@@ -2496,6 +2532,41 @@ public class MissionPlannerActivity extends AppCompatActivity {
         // hív, ne legyen dupla generálás.
         setAltitudeAndSyncGsd(altInt, false);
 
+        // ── Mintavételi beállítások visszaállítása (terepi javítás, 2026-07-03) ──
+        if (switchSamplingMode != null) {
+            switchSamplingMode.setChecked(data.samplingMode);
+        }
+        if (data.samplingMode) {
+            if (etSampleCount != null) etSampleCount.setText(String.valueOf(data.nSamplePoints));
+            if (etTransitAlt != null) etTransitAlt.setText(String.valueOf(data.transitAltitudeM));
+            if (etSampleAlt != null) etSampleAlt.setText(String.valueOf(data.sampleAltitudeM));
+            if (etHoverSeconds != null) etHoverSeconds.setText(String.valueOf(data.hoverSeconds));
+            if (spinnerSamplingMethod != null) {
+                String[] methods = {"stratified", "halton", "random"};
+                for (int i = 0; i < methods.length; i++) {
+                    if (methods[i].equals(data.samplingMethod)) {
+                        spinnerSamplingMethod.setSelection(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ── Kamera beállítások visszaállítása (terepi javítás, 2026-07-03) ───────
+        if (data.cameraSettings != null) {
+            if (switchCameraAuto != null) switchCameraAuto.setChecked(data.cameraSettings.autoMode);
+            if (spinnerFileFormat != null) spinnerFileFormat.setSelection(data.cameraSettings.fileFormat.ordinal());
+            if (spinnerPhotoMode != null) spinnerPhotoMode.setSelection(data.cameraSettings.photoMode.ordinal());
+            if (spinnerIso != null) spinnerIso.setSelection(data.cameraSettings.iso.ordinal());
+            if (spinnerShutter != null) spinnerShutter.setSelection(data.cameraSettings.shutterSpeed.ordinal());
+            if (spinnerWhiteBalance != null) spinnerWhiteBalance.setSelection(data.cameraSettings.whiteBalance.ordinal());
+        }
+
+        // ── Sűrű rács mód visszaállítása (M10, 2026-07-03) ───────────────────────
+        if (switchDenseGridMode != null) {
+            switchDenseGridMode.setChecked(data.denseGridMode);
+        }
+
         updateLabels();
     }
 
@@ -2775,6 +2846,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
             lastResult.estimatedPhotoCount, lastResult.segments.size(),
             lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
             (double) config.speedMs, lastResult.estimatedMinutes));
+        if (lastResult.cameraIntervalLimited) {
+            sb.append("\n⚠ Kamera 2 mp-es hardverkorlátja aktív — a valós átfedés " +
+                    "kisebb lesz a beállítottnál. Csökkentsd a sebességet vagy növeld a frontlapot.");
+        }
         if (lastResult.skippedByObstacle > 0) {
             sb.append(String.format("\n⚠ Akadaly miatt kihagyva: %d wp", lastResult.skippedByObstacle));
         }
@@ -2890,14 +2965,33 @@ public class MissionPlannerActivity extends AppCompatActivity {
             }
         } else {
             double recSpd = GsdCalculator.recommendedSpeedMs(config.gsdCm, config.droneProfile);
-            sbStats.append(String.format(
-                "Terulet: %.2f ha | ~%d foto (%d szegmens)\n" +
-                "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
-                "Sebesseg: %.0f m/s (ajanl: %.0f m/s) | Ido: ~%.0f perc",
-                lastResult.areaM2 / 10000.0,
-                lastResult.estimatedPhotoCount, lastResult.segments.size(),
-                lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
-                (double) config.speedMs, (double) recSpd, lastResult.estimatedMinutes));
+            if (lastResult.isDenseGridMission) {
+                // M10 — Sűrű rács: minden waypoint pontosan egy fotó (nincs
+                // kamera-időzítési bizonytalanság), de a repülési idő/akkuszám
+                // jelentősen nagyobb, mint a szokásos CURVED módnál (M10_L1 §5).
+                sbStats.append(String.format(
+                    "Terulet: %.2f ha | %d foto (pontos, %d szegmens)\n" +
+                    "Magassag: %.0f m | Fototav (waypoint-koz): %.1f m\n" +
+                    "Ido: ~%.0f perc | Becsult akku: ~%d db — 🐢 Sűrű rács mód",
+                    lastResult.areaM2 / 10000.0,
+                    lastResult.estimatedPhotoCount, lastResult.segments.size(),
+                    lastResult.altitudeM, lastResult.photoDistM,
+                    lastResult.estimatedMinutes, lastResult.estimatedBatteryCount));
+            } else {
+                sbStats.append(String.format(
+                    "Terulet: %.2f ha | ~%d foto (%d szegmens)\n" +
+                    "Magassag: %.0f m | Savkoz: %.1f m | Fototav: %.1f m\n" +
+                    "Sebesseg: %.0f m/s (ajanl: %.0f m/s) | Ido: ~%.0f perc",
+                    lastResult.areaM2 / 10000.0,
+                    lastResult.estimatedPhotoCount, lastResult.segments.size(),
+                    lastResult.altitudeM, lastResult.stripSpacingM, lastResult.photoDistM,
+                    (double) config.speedMs, (double) recSpd, lastResult.estimatedMinutes));
+                if (lastResult.cameraIntervalLimited) {
+                    sbStats.append("\n⚠ Kamera 2 mp-es hardverkorlátja aktív — a valós átfedés " +
+                            "kisebb lesz a beállítottnál. Kapcsold be a 🐢 Sűrű rács módot a " +
+                            "beállított átfedés garantálásához (lassabb repülés, több akku).");
+                }
+            }
             if (lastResult.altitudeM > MAX_ALTITUDE_LEGAL) {
                 Toast.makeText(this,
                     String.format("Figyelem: %.0fm > 120m (EU határ)! Csokkentsd a GSD-t.",
@@ -3037,6 +3131,17 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 currentSegmentIndex + 1, total, segment.size())
             : String.format("%d waypoint feltöltése a drónra?", segment.size());
 
+        // M10_L2 §2 — kötelező megerősítés sűrű rács módnál, ha a becsült
+        // idő/akkuszám jelentősen meghaladja egy szokásos misszióét.
+        if (lastResult.isDenseGridMission && currentSegmentIndex == 0
+                && (lastResult.estimatedMinutes > 20 || lastResult.estimatedBatteryCount > 3)) {
+            msg += String.format(
+                "\n\n🐢 Sűrű rács mód: a teljes misszió becsült ideje ~%.0f perc, " +
+                "kb. %d akkumulátor szükséges — ez jelentősen több, mint egy hasonló " +
+                "területű normál (CURVED) misszió lenne. Folytatod?",
+                lastResult.estimatedMinutes, lastResult.estimatedBatteryCount);
+        }
+
         new AlertDialog.Builder(this)
             .setTitle("Misszió feltöltése")
             .setMessage(msg)
@@ -3105,9 +3210,13 @@ public class MissionPlannerActivity extends AppCompatActivity {
             }
         };
 
-        // M04 §15 — mintavételi misszió: NORMAL mód + waypoint-akciók, a
-        // meglévő CURVED+intervallum-fotózás útvonal helyett.
-        if (lastResult != null && lastResult.isSamplingMission) {
+        // M04 §15 — mintavételi misszió, és M10 — sűrű rács: mindkettő NORMAL
+        // mód + STAY akció waypointonként, a fotót app-vezérelt trigger adja
+        // (nem waypoint-akció, nem kamera-intervallum) — uploadSamplingMission()
+        // logikája változtatás nélkül mindkettőhöz megfelelő.
+        boolean needsNormalMode = lastResult != null
+                && (lastResult.isSamplingMission || lastResult.isDenseGridMission);
+        if (needsNormalMode) {
             uploader.uploadSamplingMission(segment, buildConfig(), uploadCallback);
         } else {
             uploader.uploadMission(segment, buildConfig(), uploadCallback);
@@ -3158,10 +3267,12 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 Toast.makeText(this, "Gimbal hiba: " + gimbalMsg, Toast.LENGTH_SHORT).show();
             }
             // 3. Kamera beállítások alkalmazása
-            // Mintavételi misszió (M04 §15): SHOOT_PHOTO + SINGLE mód — a fotó
-            // triggerelése a waypoint-akció (START_TAKE_PHOTO) felelőssége, NEM
-            // az intervallum-időzítő (ami CURVED módban is figyelmen kívül maradna).
-            boolean sampling = lastResult != null && lastResult.isSamplingMission;
+            // Mintavételi misszió (M04 §15/§18) ÉS sűrű rács (M10): SHOOT_PHOTO +
+            // SINGLE mód — a fotó triggerelése app-vezérelt (CameraConfigurator.
+            // triggerSamplePhoto(), onWaypointReached-ből), NEM az intervallum-
+            // időzítő (ami CURVED módban is figyelmen kívül maradna).
+            boolean sampling  = lastResult != null && lastResult.isSamplingMission;
+            boolean denseGrid = lastResult != null && lastResult.isDenseGridMission;
             Toast.makeText(this, "Kamera beállítása...", Toast.LENGTH_SHORT).show();
             CameraConfigurator.ConfigCallback cameraPrepCallback = (success, msg) ->
                 runOnUiThread(() -> {
@@ -3172,16 +3283,23 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     }
                     if (sampling) {
                         samplingMissionStartTimeMs = System.currentTimeMillis();
+                        samplePointCursor = 0;
+                        samplingPhotosFailed = 0;
+                        confirmedSamplePointsForSession.clear();
                         currentSamplingSessionId = new java.text.SimpleDateFormat(
                             "yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
                         btnDownloadSession.setVisibility(View.GONE);
+                    }
+                    if (denseGrid) {
+                        denseGridPhotosConfirmed = 0;
+                        denseGridPhotosFailed    = 0;
                     }
                     // 4. Misszió indítása — grid misszióban az intervallum fotózás
                     //    csak az 1. WP elérésekor indul (lásd
                     //    startMissionListener.onWaypointReached), hogy a felszállás
                     //    és felemelkedés közben ne készüljenek felvételek.
-                    //    Mintavételi misszióban a fotózást a waypoint-akciók
-                    //    vezérlik, itt nincs teendő.
+                    //    Mintavételi/sűrű rács misszióban a fotózást az
+                    //    onWaypointReached-ből hívott app-vezérelt trigger adja.
                     uploader.startMission(new MissionUploader.UploadCallback() {
                         @Override public void onSuccess() {
                             runOnUiThread(() -> {
@@ -3198,7 +3316,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     });
                 });
 
-            if (sampling) {
+            if (sampling || denseGrid) {
                 CameraConfigurator.prepareForSamplingMission(cameraPrepCallback);
             } else {
                 CameraSettings camSettings = buildCameraSettings();
@@ -3363,11 +3481,36 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     updateProgressUI(actualIndex, totalSize);
                     updateCompletedOverlay(actualIndex);
 
-                    // Mintavételi misszióban a fotózást a waypoint-akciók (STAY +
-                    // START_TAKE_PHOTO, M04 §15) vezérlik — az intervallum-fotózás
-                    // itt nem alkalmazandó (CURVED-specifikus mechanizmus).
-                    boolean sampling = lastResult != null && lastResult.isSamplingMission;
-                    if (!sampling) {
+                    // Mintavételi misszióban és sűrű rácsnál (M10) az intervallum-
+                    // fotózás nem alkalmazandó (CURVED-specifikus mechanizmus) —
+                    // a fotó-triggert helyette az app-vezérelt trigger adja (terepi
+                    // javítás, 2026-07-03, M04_L1 §18 / M04_L2 §10), a STAY akció
+                    // (M04 §15) csak a hover-pozícióban tartásért felel.
+                    boolean sampling  = lastResult != null && lastResult.isSamplingMission;
+                    boolean denseGrid = lastResult != null && lastResult.isDenseGridMission;
+                    if (sampling) {
+                        // A SamplingMissionGenerator (M02 §7) minden mintaponthoz
+                        // pontosan 3 waypointot generál, fix sorrendben: [érkezés,
+                        // mintavétel, emelkedés] — a mintavételi waypoint indexe
+                        // mindig 3×k+1. Mivel a MAX_WAYPOINTS_PER_MISSION (99)
+                        // osztható 3-mal, a szegmenshatárok mindig hármas-határra
+                        // esnek, tehát az "actualIndex % 3" szabály szegmensenként
+                        // (resume esetén is) helyesen azonosítja a mintavételi pontot.
+                        if (actualIndex % 3 == 1) {
+                            int pointIdx = samplePointCursor++;
+                            GeoPoint point = (lastSamplePoints != null && pointIdx < lastSamplePoints.size())
+                                    ? lastSamplePoints.get(pointIdx) : null;
+                            triggerSamplePointPhoto(point);
+                        }
+                    } else if (denseGrid) {
+                        // M10 — sűrű rács: MINDEN waypoint egy fotópozíció (nem
+                        // csak minden 3.), ezért itt minden onWaypointReached
+                        // hívás triggerel — nincs GeoPoint-korreláció, mert a
+                        // sűrű rács fotói nem a mintavételi session-flow-n (M04
+                        // §16) mennek keresztül, hanem a szokásos SD-kártyáról
+                        // dolgozunk fel, mint egy normál grid misszió.
+                        triggerDenseGridPhoto();
+                    } else {
                         // Intervallum fotózás indítása az 1. WP elérésekor —
                         // ezzel kerüljük el a felszállás közbeni felesleges felvételeket
                         if (index == 0) {
@@ -3394,13 +3537,30 @@ public class MissionPlannerActivity extends AppCompatActivity {
             @Override
             public void onMissionFinished(boolean completedSuccessfully, int lastIndex) {
                 runOnUiThread(() -> {
-                    boolean sampling = lastResult != null && lastResult.isSamplingMission;
+                    boolean sampling  = lastResult != null && lastResult.isSamplingMission;
+                    boolean denseGrid = lastResult != null && lastResult.isDenseGridMission;
                     if (completedSuccessfully) {
                         resumeWaypointIndex = -1;
                         resumeSegmentIndex  = -1;
                         clearResumeState();
-                        Toast.makeText(MissionPlannerActivity.this,
-                            "Misszió befejezve!", Toast.LENGTH_LONG).show();
+                        if (sampling) {
+                            // Terepi javítás (2026-07-03): a visszaigazolt trigger-eredmény
+                            // alapján a felhasználó azonnal látja, hány fotó készült el
+                            // ténylegesen — nem kell a médialetöltésig várni ennek kiderüléséhez.
+                            int confirmedCount = confirmedSamplePointsForSession.size();
+                            String summary = confirmedCount + "/"
+                                    + (confirmedCount + samplingPhotosFailed) + " fotó megerősítve";
+                            Toast.makeText(MissionPlannerActivity.this,
+                                "Misszió befejezve! " + summary, Toast.LENGTH_LONG).show();
+                        } else if (denseGrid) {
+                            String summary = denseGridPhotosConfirmed + "/"
+                                    + (denseGridPhotosConfirmed + denseGridPhotosFailed) + " fotó megerősítve";
+                            Toast.makeText(MissionPlannerActivity.this,
+                                "Misszió befejezve! " + summary, Toast.LENGTH_LONG).show();
+                        } else {
+                            Toast.makeText(MissionPlannerActivity.this,
+                                "Misszió befejezve!", Toast.LENGTH_LONG).show();
+                        }
                         // M04 §16 — mintavételi misszió után a "Fotók letöltése" gomb
                         // aktívvá válik (nem automatikus — a felhasználó dönt, mikor
                         // váltson a kamera MEDIA_DOWNLOAD módba).
@@ -3410,6 +3570,61 @@ public class MissionPlannerActivity extends AppCompatActivity {
                     }
                     // Ha megszakadt: resumeWaypointIndex + SharedPreferences megmarad a folytatáshoz
                     setMissionRunning(false);
+                });
+            }
+        });
+    }
+
+    /**
+     * Egy mintavételi ponton a fotó triggerelése, visszaigazolt eredménnyel
+     * (terepi javítás, 2026-07-03 — ld. M04_L1 §18, M04_L2 §10, M04_L4 §10).
+     * A CameraConfigurator.triggerSamplePhoto() saját retry-logikával rendelkezik
+     * (1 újrapróbálkozás) — a hiba nem blokkolja a misszió folytatását.
+     *
+     * @param point a mintapont GeoPoint-ja (a lastSamplePoints-beli pozíciója
+     *              alapján, a samplePointCursor szerint) — csak SIKERES trigger
+     *              esetén kerül a confirmedSamplePointsForSession listába, hogy
+     *              egy esetleges sikertelen pont ne tolja el a további pontok
+     *              geo-taggelését a médialetöltésnél (M04 §16).
+     */
+    private void triggerSamplePointPhoto(GeoPoint point) {
+        CameraConfigurator.triggerSamplePhoto(new CameraConfigurator.PhotoTriggerListener() {
+            @Override
+            public void onPhotoConfirmed() {
+                runOnUiThread(() -> {
+                    if (point != null) confirmedSamplePointsForSession.add(point);
+                });
+            }
+            @Override
+            public void onPhotoFailed(String reason) {
+                runOnUiThread(() -> {
+                    samplingPhotosFailed++;
+                    Toast.makeText(MissionPlannerActivity.this,
+                        "⚠ Mintapont fotó sikertelen: " + reason, Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
+    }
+
+    /**
+     * Egy sűrű rács waypointon a fotó triggerelése (M10, 2026-07-03) —
+     * ugyanaz a megbízható, visszaigazolt trigger, mint a mintavételi
+     * misszióban (CameraConfigurator.triggerSamplePhoto()), csak itt nincs
+     * GeoPoint-korreláció (a sűrű rács fotói a szokásos SD-kártyáról kerülnek
+     * feldolgozásra, nem a mintavételi session-flow-n, M04 §16, keresztül).
+     */
+    private void triggerDenseGridPhoto() {
+        CameraConfigurator.triggerSamplePhoto(new CameraConfigurator.PhotoTriggerListener() {
+            @Override
+            public void onPhotoConfirmed() {
+                runOnUiThread(() -> denseGridPhotosConfirmed++);
+            }
+            @Override
+            public void onPhotoFailed(String reason) {
+                runOnUiThread(() -> {
+                    denseGridPhotosFailed++;
+                    Toast.makeText(MissionPlannerActivity.this,
+                        "⚠ Waypoint fotó sikertelen: " + reason, Toast.LENGTH_SHORT).show();
                 });
             }
         });
@@ -3673,6 +3888,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
             try { c.hoverSeconds = Float.parseFloat(etHoverSeconds.getText().toString().trim()); }
             catch (NumberFormatException ignored) {}
         }
+
+        // M10 — Sűrű rács (2026-07-03)
+        c.denseGridMode = switchDenseGridMode != null && switchDenseGridMode.isChecked();
+
         return c;
     }
 
@@ -3732,16 +3951,36 @@ public class MissionPlannerActivity extends AppCompatActivity {
             Toast.makeText(this, "Nincs elérhető mintavételi session", Toast.LENGTH_SHORT).show();
             return;
         }
+        // Terepi javítás (2026-07-03, M04_L1 §18): a TÉNYLEGESEN visszaigazolt
+        // pontok listáját használjuk a nyers mintapontlista helyett, ha van erre
+        // adatunk az épp lezajlott misszióból — így (a) a "last N file"
+        // kiválasztás (M04 §16) nem vesz be véletlenül régebbi, a misszió előtti
+        // fájlokat, ha kevesebb fotó készült el, mint amennyi mintapont volt, és
+        // (b) egy sikertelen pont nem tolja el a többi pont geo-taggelését.
+        boolean haveTriggerStats = !confirmedSamplePointsForSession.isEmpty() || samplingPhotosFailed > 0;
+        List<GeoPoint> pointsForDownload = haveTriggerStats
+                ? confirmedSamplePointsForSession : lastSamplePoints;
+        if (haveTriggerStats && samplingPhotosFailed > 0) {
+            Toast.makeText(this, samplingPhotosFailed
+                + " mintaponton nem sikerült a fotó — csak a megerősített "
+                + confirmedSamplePointsForSession.size() + " fotó letöltése történik.",
+                Toast.LENGTH_LONG).show();
+        }
+        if (pointsForDownload.isEmpty()) {
+            Toast.makeText(this, "Nincs megerősített fotó ebből a sessionből", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         android.app.ProgressDialog progress = new android.app.ProgressDialog(this);
         progress.setTitle("Fotók letöltése");
         progress.setMessage("Session médiafájlok letöltése...");
-        progress.setMax(lastSamplePoints.size());
+        progress.setMax(pointsForDownload.size());
         progress.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
         progress.setCancelable(false);
         progress.show();
 
-        mediaSessionDownloader.downloadSessionMedia(this, lastSamplePoints.size(),
-            samplingMissionStartTimeMs, lastSamplePoints, currentSamplingSessionId,
+        mediaSessionDownloader.downloadSessionMedia(this, pointsForDownload.size(),
+            samplingMissionStartTimeMs, pointsForDownload, currentSamplingSessionId,
             new MediaSessionDownloader.SessionDownloadListener() {
                 @Override
                 public void onFileProgress(int fileIndex, int totalFiles, long current, long total) {

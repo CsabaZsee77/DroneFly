@@ -5,7 +5,7 @@
 **Drón:** Phantom 4 Pro v1
 **SDK:** DJI Mobile SDK v4.18
 **Verzió:** v2.1.0
-**Utolsó frissítés:** 2026-04-21
+**Utolsó frissítés:** 2026-07-03
 
 ---
 
@@ -13,13 +13,15 @@
 
 | Modul | Leírás | Státusz |
 |-------|--------|---------|
-| [M01 Misszió Tervező](M01_MISSZIO_TERVEZO/) | Térképes UI, polygon rajzolás, paraméter beállítás | ✅ Implementálva (v1.0.0) — + ✅ Mintavételi misszió mód (§10), eszközön még nem tesztelve (2026-07-02) |
-| [M02 Grid Engine](M02_GRID_ENGINE/) | GSD kalkulátor, rácsútvonal generátor (kígyózó minta), crosshatch kettős rács | ✅ Implementálva (v1.0.0) — + ✅ SamplingMissionGenerator (§7), eszközön még nem tesztelve (2026-07-02) |
-| [M03 Export / Import](M03_EXPORT_IMPORT/) | Litchi CSV export, KMZ export, CSV import | ✅ Implementálva (v1.0.0) |
-| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés | ✅ Implementálva — telemetria, kamera, misszió feltöltés/indítás, isFlying állapot, intervallum fotózás — + ✅ NORMAL-módú mintavételi végrehajtás és session-alapú médialetöltés (§15–16), eszközön még nem tesztelve (2026-07-02) |
+| [M01 Misszió Tervező](M01_MISSZIO_TERVEZO/) | Térképes UI, polygon rajzolás, paraméter beállítás | ✅ Implementálva (v1.0.0) — + ✅ Mintavételi misszió mód (§10). Terepi teszt 2026-07-03: 3 hiba azonosítva (ld. M02/M03/M04) — javítások implementálva, eszközön még nem tesztelve |
+| [M02 Grid Engine](M02_GRID_ENGINE/) | GSD kalkulátor, rácsútvonal generátor (kígyózó minta), crosshatch kettős rács | ✅ Implementálva (v1.0.0) — + ✅ SamplingMissionGenerator (§7). Terepi teszt 2026-07-03: fotószám-becslés akár 4×-esen túlbecsült (kamera 2 mp-es intervallum-korlát figyelmen kívül hagyása miatt) — ✅ javítva (§8, effektív fotótávolság + UI figyelmeztetés), eszközön még nem tesztelve |
+| [M03 Export / Import](M03_EXPORT_IMPORT/) | Litchi CSV export, KMZ export, CSV import | ✅ Implementálva (v1.0.0). Terepi teszt 2026-07-03: mintavételi beállítások + kamera-formátum (JPEG/RAW) nem mentődött projekt-mentéskor — ✅ javítva (§7, additív séma, migráció nélkül), eszközön még nem tesztelve |
+| [M04 DJI Integráció](M04_DJI_INTEGRACIO/) | MSDK v4 feltöltés, misszió vezérlés, kamera feed PiP, tap-to-expose, kézi felszállás utáni indítás, folyamatos repülés (CURVED), gimbal nadir, SD kártya ellenőrzés | ✅ Implementálva — telemetria, kamera, misszió feltöltés/indítás, isFlying állapot, intervallum fotózás — + ✅ NORMAL-módú mintavételi végrehajtás és session-alapú médialetöltés (§15–16). Terepi teszt 2026-07-03: fotó-trigger megbízhatósági hiba (10 mintapontból 6 fotó) — ✅ javítva (§18, app-vezérelt trigger + retry `CameraConfigurator`-ban), eszközön még nem tesztelve |
 | [M05 Kamera Konfigurátor](M05_KAMERA_KONFIGURATOR/) | Manuális expozíció (ISO/rekesz/zár/WB/fókusz), élő hisztogram, EV csúszka smart prioritással, kamera profilok | 🔲 Tervezve |
 | [M06 Dronterapia Szinkron](M06_DRONTERAPIA_SYNC/) | NetworkMonitor, AuthManager (username+jelszó), SyncManager (kétirányú .flightprogram.json szinkronizáció), Sync UI | ✅ Implementálva (v2.1.0) |
 | [M07 Blokk-felosztás](M07_BLOKK_FELOSZTAS/) | Nagy területű AOI felbontása rácscellákra (W×H + dőlés + átfedés-puffer), blokk-tap kiválasztás, blokkonkénti misszió generálás, állapotkövetés | ✅ Kézi UI-verifikáció OK Crystal Sky-n (2026-07-02) |
+| [M09 Edge AI Tőszámlálás](M09_EDGE_AI_TOSZAMLALAS/) | Mintavételi session fotóin tabletes YOLO (TFLite) inferencia, azonnali db/ha sűrűség + teljes területre extrapolált összlétszám, offline (M04 médialetöltésre épül) | 🔲 Tervezve — L1–L4 spec kész (2026-07-02), implementáció nem kezdődött el |
+| [M10 Sűrű Rács (alacsony repülés)](M10_SURU_ALACSONY_RACS/) | NORMAL-módú, sűrű waypoint-rács + app-vezérelt trigger minden fotópozíción — a CURVED+intervallum mód 20 m alatti strukturális korlátjára (M02 §8.3) ad megoldást teljes ortomozaikhoz | ✅ Implementálva (2026-07-03), eszközön még nem tesztelve |
 | Kp-index (státuszsáv) | NOAA geomágneses aktivitás lekérő, 10 percenként frissül, MAG: 0–9 színkódolva | ✅ Implementálva (v1.9.3) |
 | Offline térkép | OSMDroid cache, automatikus offline mód WiFi nélkül, letöltés gomb (hosszú nyomás SAT/MAP gombon), réteg guard offline módban | ✅ Implementálva (v1.9.5) |
 | GPS gomb | Drón GPS (DJI telemetria) / tablet GPS prioritás, zoom 15 (~1 km), forrás toast | ✅ Implementálva (v1.9.6) |
@@ -63,7 +65,15 @@ app/src/main/java/com/dronefly/app/
     │   jumpToCurrentPosition()       ← (MissionPlannerActivity) drón/tablet GPS, zoom 15
     ├── DroneVideoWidget.java         ← M04 kamera feed PiP + tap-to-expose
     ├── MissionUploader.java          ← M04 feltöltés + vezérlés (stub)
-    └── CameraConfigurator.java       ← M04 kamera beállítások
+    ├── CameraConfigurator.java       ← M04 kamera beállítások
+    └── MediaSessionDownloader.java   ← M04 §16 session-alapú médialetöltés
+
+ai/                                    ← M09 — TERVEZETT, még nem létezik
+├── YoloModelManager.java             ← .tflite + sidecar .json betöltés/validáció
+├── ModelMetadata.java                ← modell-metaadat POJO
+├── YoloInferenceEngine.java          ← TFLite Interpreter wrapper, NMS
+├── Detection.java                    ← detekció POJO
+└── SamplingResultCalculator.java     ← db/ha sűrűség + teljes területi extrapoláció
 
 app/src/main/res/
 ├── layout/
@@ -180,3 +190,11 @@ app/src/main/res/
 - [M07 L2 Blokk-felosztás döntési logika](M07_BLOKK_FELOSZTAS/M07_L2_DONTESI_LOGIKA.md)
 - [M07 L3 Blokk-felosztás állapotgép és engine](M07_BLOKK_FELOSZTAS/M07_L3_ALLAPOTGEP_ES_ENGINE.md)
 - [M07 L4 Blokk-felosztás tranzakciók](M07_BLOKK_FELOSZTAS/M07_L4_TRANZAKCIOS_ES_PARHUZAMOS.md)
+- [M09 L1 Edge AI Tőszámlálás üzleti folyamat](M09_EDGE_AI_TOSZAMLALAS/M09_L1_UZLETI_FOLYAMAT.md)
+- [M09 L2 Edge AI Tőszámlálás döntési logika](M09_EDGE_AI_TOSZAMLALAS/M09_L2_DONTESI_LOGIKA.md)
+- [M09 L3 Edge AI Tőszámlálás állapotgép és engine](M09_EDGE_AI_TOSZAMLALAS/M09_L3_ALLAPOTGEP_ES_ENGINE.md)
+- [M09 L4 Edge AI Tőszámlálás tranzakciók](M09_EDGE_AI_TOSZAMLALAS/M09_L4_TRANZAKCIOS_ES_PARHUZAMOS.md)
+- [M10 L1 Sűrű Rács üzleti folyamat](M10_SURU_ALACSONY_RACS/M10_L1_UZLETI_FOLYAMAT.md)
+- [M10 L2 Sűrű Rács döntési logika](M10_SURU_ALACSONY_RACS/M10_L2_DONTESI_LOGIKA.md)
+- [M10 L3 Sűrű Rács állapotgép és engine (vázlat)](M10_SURU_ALACSONY_RACS/M10_L3_ALLAPOTGEP_ES_ENGINE.md)
+- [M10 L4 Sűrű Rács tranzakciók (vázlat)](M10_SURU_ALACSONY_RACS/M10_L4_TRANZAKCIOS_ES_PARHUZAMOS.md)

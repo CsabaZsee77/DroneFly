@@ -181,5 +181,5 @@ lemezre — a szinkronizálás a következő online alkalommal automatikusan elv
 | Modul | Kapcsolat típusa |
 |-------|-----------------|
 | M01 Misszió Tervező | **Felhasználó** — Sync UI elemek (btnLogin, btnSync, tvSyncStatus) itt jelennek meg |
-| M03 Export/Import | **Formátum** — `.flightprogram.json` fájl, amit ProjectManager ment/tölt |
+| M03 Export/Import | **Formátum** — `.flightprogram.json` fájl, amit ProjectManager ment/tölt. Séma-bővítés esetén (ld. M03 §7, 2026-07-03 — mintavételi/kamera-formátum mezők) a SyncManager **nem igényel módosítást**: nem végez saját szerializációt, a ProjectManager JSON-ját változatlanul továbbítja, tehát az új mezők automatikusan szinkronizálódnak |
 | M04 DJI Integráció | **Precondition** — missionRunning állapot blokkolja a syncet |

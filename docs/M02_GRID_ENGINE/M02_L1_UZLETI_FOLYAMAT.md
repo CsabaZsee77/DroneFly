@@ -158,6 +158,7 @@ Maximum: 12 m/s (MSDK v4 waypoint limit)
   GeneratorResult:
     segments:          List<List<WaypointData>>
     totalWaypoints:    int
+    estimatedPhotoCount: int  (⚠ pontatlan becslés — ld. §8)
     areaM2:            double
     estimatedMinutes:  double
     altitudeM:         double
@@ -305,3 +306,135 @@ public class WaypointData {
 | M01 Misszió Tervező | **Közvetlen felhasználó** — új "Mintavételi misszió" mód hívja |
 | M04 DJI | **Kimenet** — a `hoverSeconds > 0` waypontokhoz NORMAL-módú, akció-alapú feltöltés szükséges (nem a meglévő CURVED útvonal) |
 | Dronterapia `utils/sampling_plan.py` | **Referencia-implementáció** — azonos algoritmus, Python↔Java portolás, nem futásidejű függőség |
+
+---
+
+## 8. Fotószám-becslés pontatlansága — terepi teszt lelet — ✅ Javítás implementálva (2026-07-03), eszközön még nem tesztelve
+
+**Terepi megfigyelés (2026-07-03):** ~0,15 ha területre a tervezés során a UI
+**190 fotót** becsült, a valóságban **48 fotó** készült (kb. 4×-es túlbecslés).
+A felhasználó szerint ez régóta visszatérő jelenség, nem új hiba, és nem függ
+láthatóan a terület méretétől.
+
+### 8.1 Root cause
+
+A becslés ([GridMissionGenerator.java:132](../../app/src/main/java/com/dronefly/app/mission/GridMissionGenerator.java)):
+
+```java
+result.estimatedPhotoCount = (int)(result.areaM2 / stripSpacing / photoDist);
+```
+
+Ez **távolság-alapú** feltételezéssel számol: minden `photoDist`
+([GsdCalculator.photoDistanceM()](../../app/src/main/java/com/dronefly/app/mission/GsdCalculator.java),
+frontlap%-ból) méterenként egy fotót vár.
+
+A tényleges triggerelés viszont **időalapú**, és van egy kemény alsó korlátja
+([CameraConfigurator.java:235](../../app/src/main/java/com/dronefly/app/dji/CameraConfigurator.java)):
+
+```java
+float intervalSec = Math.max(2.0f, photoDistM / speedMs);
+```
+
+Ha `photoDist / speedMs < 2.0` mp (ez pontosan a mintavételhez/tőszámláláshoz
+szükséges **alacsony repülés + szoros átfedés** kombinációnál tipikus — minél
+kisebb a GSD, annál kisebb `photoDist`, miközben a sebesség nem csökkenthető
+arányosan a UI minimum korlátai miatt), a kamera ténylegesen **2 másodpercenként**
+fotóz a tervezettnél ritkábban — az effektív fotótávolság `speedMs × 2` méter,
+nem a becslésben feltételezett `photoDist` méter.
+
+**Ez az arány a terület méretétől független** — csak a magasság/átfedés/
+sebesség kombinációjától függ — ami megmagyarázza, miért nem függ a
+túlbecslés láthatóan a tábla méretétől, és miért régóta fennálló, visszatérő
+jelenség (bármikor jelentkezik, ha a beállítások mellett a `photoDist/speedMs`
+2 mp alá esik). A `GsdCalculator.java:62-64` kódkommentje már korábban
+rögzítette ezt a kockázatot (a 2 mp-es kamerakorlátot alacsony repülésnél),
+csak a becslő képlet nem vette figyelembe.
+
+### 8.2 Tervezett javítás
+
+```
+javított_becslés:
+  effektívPhotoDist = max(photoDistanceM, speedMs × 2.0)
+  estimatedPhotoCount = areaM2 / stripSpacing / effektívPhotoDist
+
+UI figyelmeztetés, ha photoDistanceM / speedMs < 2.0:
+  "⚠ A kamera 2 mp-es hardverkorlátja aktív ezekkel a beállításokkal —
+   a tervezettnél ritkábban fog fotózni. Csökkentsd a sebességet vagy
+   növeld a frontlap átfedést a tervezett sűrűség eléréséhez."
+```
+
+Ez a képlet-javítás a `GridMissionGenerator.java:132` sorban és a hozzá
+tartozó `estimatedMinutes` számításban (ha az is a photoDist-re épül,
+ellenőrizendő) alkalmazandó — részletes döntési logika: M02_L2 §10.
+
+### 8.3 Súlyosabb következmény — ortomozaik-hézagok, nem csak hibás UI-szám (terepi teszt, 2026-07-03)
+
+**Terepi megfigyelés:** napraforgó tábláról ~10 m magasságon, 75/80%
+átfedéssel készült felvételekből az ortomozaik **a terület kevesebb, mint
+10%-áról** állt csak össze, hézagosan. Egy **korábbi, 18 m-es magasságon**
+készült felmérésből viszont sikeres volt a mozaikolás — ez a különbség
+**pontosan** a 8.1-ben leírt mechanizmussal magyarázható, nem csak a
+becslés hibás száma, hanem a **ténylegesen repült átfedés** is a beállított
+alá esik.
+
+**Súlyosság (elveszett átfedés-százalékpont) képlete:**
+
+```
+r = max(1, 2×speedMs / (altitudeM × (1-frontlap)))   ← "mennyivel ritkábban
+                                                          fotóz a valóság"
+veszteség (százalékpont) = (r - 1) × (1 - frontlap)
+```
+
+**Ha az app ajánlott sebességét követi a pilóta** (`recommendedSpeedMs ≈
+0,11 × magasság`, de a UI-csúszka minimuma 2 m/s — ez a két szabály
+**18,25 m-nél metszi egymást**, ami feltűnően közel esik a felhasználó
+egyetlen sikeres (18 m-es) missziójához):
+
+```
+18,25 m ALATT (sebesség a UI-minimumon, 2 m/s, ragad):
+  A hiba küszöb-magassága = 4,0 / (1 - frontlap)
+
+  | Frontlap | Küszöb (ez alatt súlyos a hézag) |
+  |----------|-----------------------------------|
+  | 70%      | < 13,3 m                          |
+  | 75%      | < 16,0 m                          |
+  | 80%      | < 20,0 m                          |
+  | 85%      | < 26,7 m                          |
+  | 90%      | < 40,0 m                           |
+
+  Minél alacsonyabb a magasság a küszöb alatt, annál gyorsabban nő a
+  veszteség (pl. 10 m / 80% frontlap → kb. 20-27 százalékpont veszteség,
+  a canopy-magasságtól függően — ld. 8.4).
+
+18,25 m FELETT (ajánlott sebesség arányosan nő a magassággal → a magasság
+KIESIK a képletből, csak a frontlap% számít):
+  veszteség konstans marad, függetlenül a magasságtól:
+    80% frontlap → kb. 2 százalékpont (80%→78%) — valószínűleg tolerálható
+    90% frontlap → kb. 12 százalékpont (90%→78%) — határeset
+    95% frontlap → kb. 17 százalékpont (95%→78%) — kockázatos
+```
+
+**Gyakorlati következtetés:** a hiba **kifejezetten az alacsony (< ~20 m,
+80% frontlap mellett) magasságú, nagyfelbontású tőszámláló-jellegű
+missziókra** koncentrálódik — ezek épp a legutóbb bevezetett képesség
+(mintavételi/nagyfelbontású tőszámlálás) miatt kerültek elő. A **magasabb
+(pl. NDVI/általános térképezési célú, 40+ m-es) korábbi missziók** valós
+átfedés-vesztesége az ajánlott sebesség követése esetén valószínűleg csak
+néhány százalékpont — ezek retrospektíven feltehetően **nem** érintettek
+súlyosan, de ellenőrzésük a fenti képlettel (a ténylegesen használt
+magasság/sebesség/frontlap alapján) javasolt, mielőtt ezt kizárnánk.
+
+**Textúra-érzékenység (napraforgó-specifikus faktor):** a lombkorona
+homogén/ismétlődő textúrája miatt a fotogrammetriai feature-matching
+algoritmusok **magasabb** minimális átfedést igényelnek, mint kontrasztos
+felületeken (talaj, épület) — ezért ugyanaz a százalékpont-veszteség
+napraforgónál/kukoricánál súlyosabb következménnyel járhat, mint egy
+kevésbé homogén felszínű táblánál.
+
+### 8.4 Kapcsolódó modulok
+
+| Modul | Kapcsolat típusa |
+|-------|-----------------|
+| M04 DJI (`CameraConfigurator.startIntervalShooting`) | **A valós korlát forrása** — a 2 mp-es `Math.max()` floor itt van, ez ellen kell a becslésnek védekeznie |
+| M01 Misszió Tervező | **UI fogyasztó** — a jobb alsó sarokban megjelenő "becsült képszám" innen származik; a 8.3 szerinti súlyossági figyelmeztetés is itt jelenne meg |
+| Dronterapia ODM/ortomozaik feldolgozás | **Downstream érintett** — a valós (nem a beállított) átfedés határozza meg, sikerül-e a rekonstrukció |

@@ -5,6 +5,7 @@ import android.content.Context;
 import com.dronefly.app.model.Block;
 import com.dronefly.app.model.BlockGridConfig;
 import com.dronefly.app.model.BlockStatus;
+import com.dronefly.app.model.CameraSettings;
 import com.dronefly.app.model.MissionConfig;
 import com.dronefly.app.model.ObstacleData;
 
@@ -250,7 +251,38 @@ public class ProjectManager {
         fs.put("offset_m",              config.offsetM);
         fs.put("return_home",           config.returnHome);
         fs.put("start_corner",          config.startCorner);
+        fs.put("dense_grid_mode",       config.denseGridMode); // M10, 2026-07-03
         root.put("flight_settings", fs);
+
+        // ── Mintavétel (M01 §10 / M02 §7) — opcionális, csak samplingMode esetén ─
+        // Terepi javítás (2026-07-03): korábban ezek a mezők NEM kerültek mentésre.
+        if (config.samplingMode) {
+            JSONObject sampling = new JSONObject();
+            sampling.put("enabled",            true);
+            sampling.put("n_sample_points",    config.nSamplePoints);
+            sampling.put("method",             config.samplingMethod);
+            sampling.put("seed",               config.samplingSeed);
+            sampling.put("transit_altitude_m", config.transitAltitudeM);
+            sampling.put("sample_altitude_m",  config.sampleAltitudeM);
+            sampling.put("hover_seconds",      config.hoverSeconds);
+            root.put("sampling", sampling);
+        }
+
+        // ── Kamera beállítások — opcionális, mindig mentve ────────────────────
+        // Terepi javítás (2026-07-03): korábban a fájlformátum (JPEG/RAW) és a
+        // többi kamera-beállítás sem került mentésre.
+        if (config.cameraSettings != null) {
+            JSONObject cam = new JSONObject();
+            cam.put("auto_mode",            config.cameraSettings.autoMode);
+            cam.put("photo_mode",           config.cameraSettings.photoMode.name());
+            cam.put("iso",                  config.cameraSettings.iso.name());
+            cam.put("aperture",             config.cameraSettings.aperture.name());
+            cam.put("shutter_speed",        config.cameraSettings.shutterSpeed.name());
+            cam.put("white_balance",        config.cameraSettings.whiteBalance.name());
+            cam.put("white_balance_kelvin", config.cameraSettings.whiteBalanceKelvin);
+            cam.put("file_format",          config.cameraSettings.fileFormat.name());
+            root.put("camera_settings", cam);
+        }
 
         // ── Akadályok ─────────────────────────────────────────────────────────
         JSONArray obsArr = new JSONArray();
@@ -380,6 +412,7 @@ public class ProjectManager {
             data.offsetM             = fs.optDouble("offset_m",               0.0);
             data.returnHome          = fs.optBoolean("return_home",           true);
             data.startCorner         = fs.optString("start_corner",          "auto");
+            data.denseGridMode       = fs.optBoolean("dense_grid_mode",       false); // M10, 2026-07-03
         }
 
         JSONArray obsArr = root.optJSONArray("obstacles");
@@ -398,6 +431,43 @@ public class ProjectManager {
                     (float) oj.optDouble("height_m",  5.0)
                 ));
             }
+        }
+
+        // ── Mintavétel (M01 §10 / M02 §7) — opcionális, régi tervekben hiányzik ─
+        // Terepi javítás (2026-07-03). Ha a blokk hiányzik (régi mentés),
+        // data.samplingMode az alapértéken (false) marad — hibamentes betöltés.
+        JSONObject sampling = root.optJSONObject("sampling");
+        if (sampling != null && sampling.optBoolean("enabled", false)) {
+            data.samplingMode     = true;
+            data.nSamplePoints    = sampling.optInt("n_sample_points", 30);
+            data.samplingMethod   = sampling.optString("method", "stratified");
+            data.samplingSeed     = sampling.optLong("seed", 42L);
+            data.transitAltitudeM = sampling.optDouble("transit_altitude_m", 60.0);
+            data.sampleAltitudeM  = sampling.optDouble("sample_altitude_m", 8.0);
+            data.hoverSeconds     = (float) sampling.optDouble("hover_seconds", 2.5);
+        }
+
+        // ── Kamera beállítások — opcionális, régi tervekben hiányzik ────────────
+        // Terepi javítás (2026-07-03). Ha a blokk hiányzik, az agro-alapértelmezés
+        // marad érvényben (ugyanaz, amit a MissionConfig is használna).
+        JSONObject camSettings = root.optJSONObject("camera_settings");
+        if (camSettings != null) {
+            CameraSettings cs = new CameraSettings();
+            cs.autoMode           = camSettings.optBoolean("auto_mode", true);
+            cs.photoMode          = parseEnum(CameraSettings.PhotoMode.class,
+                    camSettings.optString("photo_mode", null), CameraSettings.PhotoMode.SINGLE_SHOT);
+            cs.iso                = parseEnum(CameraSettings.IsoValue.class,
+                    camSettings.optString("iso", null), CameraSettings.IsoValue.AUTO);
+            cs.aperture           = parseEnum(CameraSettings.ApertureValue.class,
+                    camSettings.optString("aperture", null), CameraSettings.ApertureValue.F_8);
+            cs.shutterSpeed       = parseEnum(CameraSettings.ShutterSpeed.class,
+                    camSettings.optString("shutter_speed", null), CameraSettings.ShutterSpeed.AUTO);
+            cs.whiteBalance       = parseEnum(CameraSettings.WhiteBalanceValue.class,
+                    camSettings.optString("white_balance", null), CameraSettings.WhiteBalanceValue.AUTO);
+            cs.whiteBalanceKelvin = camSettings.optInt("white_balance_kelvin", 5600);
+            cs.fileFormat         = parseEnum(CameraSettings.FileFormat.class,
+                    camSettings.optString("file_format", null), CameraSettings.FileFormat.JPEG_AND_RAW);
+            data.cameraSettings = cs;
         }
 
         // ── Block grid (M07) — opcionális, v1.1+ ──────────────────────────────
@@ -541,6 +611,16 @@ public class ProjectManager {
                    .replaceAll("[/\\\\:*?\"<>|]", "_");
     }
 
+    /** Enum biztonságos feloldása — ismeretlen/hiányzó érték esetén alapérték, nem kivétel. */
+    private static <T extends Enum<T>> T parseEnum(Class<T> type, String value, T fallback) {
+        if (value == null) return fallback;
+        try {
+            return Enum.valueOf(type, value);
+        } catch (IllegalArgumentException e) {
+            return fallback;
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     //  Adatstruktúra
     // ─────────────────────────────────────────────────────────────────────────
@@ -572,7 +652,18 @@ public class ProjectManager {
         public double  offsetM             = 0.0;
         public boolean returnHome          = true;
         public boolean terrainFollowing    = false;
+        public boolean denseGridMode       = false; // M10, 2026-07-03
         public String  droneProfileName    = "";
+        // Mintavétel (M01 §10 / M02 §7) — opcionális, terepi javítás 2026-07-03
+        public boolean samplingMode      = false;
+        public int     nSamplePoints     = 30;
+        public String  samplingMethod    = "stratified";
+        public long    samplingSeed      = 42L;
+        public double  transitAltitudeM  = 60.0;
+        public double  sampleAltitudeM   = 8.0;
+        public float   hoverSeconds      = 2.5f;
+        // Kamera beállítások — opcionális, terepi javítás 2026-07-03
+        public CameraSettings cameraSettings = CameraSettings.getAgricultureDefaults();
         // Akadályok
         public List<ObstacleData> obstacles = new ArrayList<>();
         // M07 — blokk-felosztás (opcionális)

@@ -273,3 +273,63 @@ P4P v1 hardver korlát:
   A setFocusTarget() mégis hasznos: expozíciót / AE mérési pontot állítja
   Viselkedés: azonos a DJI Go 4 "tap-to-focus" funkciójával P4P-n
 ```
+
+---
+
+## 10. Mintavételi fotó-trigger döntés — WaypointAction vs. app-vezérelt Camera hívás — ✅ Implementálva (2026-07-03)
+
+**Kontextus:** terepi teszt (2026-07-03) kimutatta, hogy a §15 szerinti
+`WaypointAction(START_TAKE_PHOTO)` nem megbízható (M04_L1 §18). Az alábbi
+döntési logika a javítás irányát rögzíti.
+
+```
+Fotó-trigger mechanizmus választás mintavételi waypointon:
+
+  Opció A — WaypointAction (jelenlegi, MEGBÍZHATATLANNAK bizonyult):
+    Előny:  egyszerű, a misszió-motor "magától" végrehajtja
+    Hátrány: nincs siker/hiba visszaigazolás, nincs újrapróbálkozási lehetőség,
+             a DJI firmware csendben eldobhatja az akciót
+
+  Opció B — app-vezérelt Camera.startShootPhoto() (VÁLASZTOTT):
+    Előny:  van SDK-szintű onResult/hiba callback → újrapróbálkozás lehetséges,
+            a §9 (tap-to-expose) reflection-mintája újrahasznosítható
+            (Camera metódus keresés reflexióval, proxy callback hashCode/equals/
+            toString kezeléssel)
+    Hátrány: az app-nak pontosan tudnia kell, MELYIK onWaypointReached esemény
+             tartozik mintavételi (nem transit) ponthoz
+
+  → Opció B választva, mert a megbízhatóság (retry-képesség) fontosabb, mint
+    az egyszerűség — egy mezőgazdasági felmérésnél a hiányzó fotó közvetlen
+    adatvesztés (az adott mintapont teljes egészében kiesik a tőszámlálásból).
+
+Melyik waypoint a "mintavételi" pont?
+  A SamplingMissionGenerator (M02 §7) minden mintaponthoz pontosan 3 waypointot
+  generál, FIX sorrendben: [érkezés, mintavétel, emelkedés].
+  → mintavételi waypoint index = 3×k + 1  (k = 0, 1, 2, ... mintapont sorszáma)
+  → onWaypointReached(index, total) callback-ben:
+      IF (index % 3 == 1): ez egy mintavételi pont → fotó-trigger indítása
+      ELSE: transit waypoint → nincs teendő
+
+Fotó-trigger + retry állapotgép (egy mintavételi ponton):
+  ÁLLAPOT: WAITING_STABILIZE (rövid, pl. 500 ms késleltetés a hover-lengés
+           lecsengéséhez, mielőtt a kamera exponál)
+      │
+      ▼
+  ÁLLAPOT: SHOOTING (Camera.startShootPhoto() hívás, reflexióval)
+      │
+      ├─ onResult(error == null) → ÁLLAPOT: CONFIRMED (naplózva: "mintapont #k OK")
+      │
+      └─ onResult(error != null) →
+            attemptCount < 2?
+              │ IGEN → 1 mp késleltetés → vissza SHOOTING (attemptCount++)
+              │ NEM  → ÁLLAPOT: FAILED (naplózva: "mintapont #k — fotó sikertelen,
+                        kézi ellenőrzés szükséges" — nem blokkolja a misszió
+                        folytatását, csak jelöl)
+```
+
+**Miért nem blokkoló a FAILED állapot:** egy mintavételi misszió jellemzően
+20–50 pontot érint — egyetlen pont kiesése a statisztikai extrapolációt (ld.
+tervezett M09 Edge AI modul) minimálisan torzítja, míg a teljes misszió
+megszakítása minden eddig sikeresen lefotózott pontot is elveszítene. A
+felhasználó a CONFIRMED/FAILED jelölésekből utólag látja, mely pontokat
+érdemes esetleg külön, kézi repüléssel pótolni.

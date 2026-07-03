@@ -426,7 +426,7 @@ mivel az MSDK belső Set gyűjteményekbe teszi a callback-eket, amelyek
 
 ---
 
-## 15. Mintavételi misszió végrehajtása (NORMAL mód) — ✅ Implementálva, eszközön még nem tesztelve (2026-07-02)
+## 15. Mintavételi misszió végrehajtása (NORMAL mód) — ✅ Implementálva, terepi teszt: fotó-trigger megbízhatósági hiba azonosítva (2026-07-03, ld. §18)
 
 **Üzleti kontextus:** M01 §10, M02 §7. A meglévő grid-misszió `CURVED` (folyamatos,
 megállás nélküli) repülési módban, kamera-időintervallum alapú fotózással fut — ez
@@ -484,6 +484,11 @@ loadMission() → uploadMission() → startMission()  (a meglévő pause/resume/
 lefotózott kép = az N-edik mintapont), a médialetöltésnél (§16) **nem kell** a fájlnevet
 vagy GPS-koordinátát elemezni a hozzárendeléshez — elég az utolsó N fájlt kapcsolatba
 hozni a mintapontok sorrendjével.
+
+> **⚠ Terepi teszt (2026-07-03) megcáfolta ezt a feltevést:** a `START_TAKE_PHOTO`
+> waypoint-akció önmagában **nem garantálja** a fotó tényleges elkészültét — ld.
+> részletesen §18. A determinisztikus 1:1 megfeleltetés csak akkor áll fenn, ha
+> minden akció ténylegesen lefut, ami MSDK-szinten nem biztosított.
 
 ---
 
@@ -596,3 +601,117 @@ mintaponton belüli redundanciához), ezt a mechanizmust felül kell vizsgálni
 |-------|-----------------|
 | M01 Misszió Tervező | **Közvetlen hívó** — uploadMission(), pause, stop, videoWidget; §15 esetén uploadSamplingMission() |
 | M02 Grid Engine | **Adat forrás** — WaypointData lista input; §15 esetén SamplingMissionGenerator kimenete |
+
+---
+
+## 18. Fotó-trigger megbízhatóság — terepi teszt lelet — ✅ Javítás implementálva (2026-07-03), eszközön még nem tesztelve
+
+**Terepi megfigyelés (2026-07-03):** 10 mintapontos misszió, mind a 10 leszállás/hover
+megtörtént (pilóta által vizuálisan megerősítve), **de csak 6 fotó** került a
+memóriakártyára. A fotók JPEG formátumban készültek (nem RAW), és a mintapontok
+között hosszú volt az idő (a hover-idő nem volt szűk) — tehát **nem** írási
+sebesség/időzítés kérdése.
+
+### 18.1 Root cause
+
+A §15 szerinti fotó-trigger egy **"tűzz és felejtsd el" (fire-and-forget) waypoint-akció**:
+
+```java
+waypoint.addAction(new WaypointAction(WaypointActionType.STAY, hoverMs));
+waypoint.addAction(new WaypointAction(WaypointActionType.START_TAKE_PHOTO, 0));
+```
+
+A DJI MSDK v4 **nem ad vissza semmilyen visszaigazolást** arra, hogy egy adott
+waypointon a `START_TAKE_PHOTO` akció ténylegesen lefutott-e — a
+`WaypointMissionOperatorListener` csak waypoint-elérést és misszió-befejezést
+jelez (§14, `executionListener`), **akció-szintű** siker/hiba callback nincs.
+Ez egy ismerten megbízhatatlan MSDK-viselkedés: a waypoint-akciók (főleg
+kameravezérlés) firmware-szintű végrehajtása nem garantált, és ha egy akció
+"elveszik", az app-nak **nincs módja észlelni vagy újrapróbálni**.
+
+Ez felülírja a §15 alján tett kijelentést ("a fotó sorrendje determinisztikus,
+minden mintapont pontosan egy fotót eredményez") — ez **tervezési feltételezés
+volt, amit a terepi teszt megcáfolt.** A `MediaSessionDownloader` (§16)
+"utolsó N fájl" kiválasztási logikája ráadásul akkor is pontosan N fájlt vesz
+be, ha ezek közül nem mindegyik az adott misszióból származik — ha csak 6 új
+fotó készült, a §16.1 4. lépése ettől függetlenül megpróbálja az utolsó 10-et
+kiválasztani (4 régebbi, a misszió előtti fájllal kiegészítve), és csak
+**figyelmeztet**, nem blokkol, ha egy kiválasztott fájl a misszió kezdete
+előttről származik.
+
+### 18.2 Javítás — ✅ Implementálva (2026-07-03), app-vezérelt trigger, visszaigazolással és újrapróbálkozással
+
+A fotó-triggert **kivettük a néma `WaypointAction`-ből**, és az app oldalán, a
+már meglévő `onWaypointReached()` callback alapján, közvetlen kameraparanccsal
+váltottuk ki — ennek **van** SDK-szintű siker/hiba callback-je, tehát hiba
+esetén újrapróbálható:
+
+```
+Waypoint-szekvencia mintázata VÁLTOZATLAN maradt (érkezés/mintavétel/emelkedés,
+3 waypoint/mintapont — SamplingMissionGenerator, M02 §7) — csak a fotó-trigger
+mechanizmusa változott:
+
+  waypoint.addAction(STAY, hoverMs)   ← MARADT (a hover pozícióban tartáshoz
+                                          továbbra is szükséges NORMAL módban)
+  waypoint.addAction(START_TAKE_PHOTO) ← TÖRÖLVE (megbízhatatlan)
+
+onWaypointReached(index, total):
+  actualIndex = offset + index
+  IF actualIndex % 3 == 1 (mintavételi waypoint, ld. M02 §7 sorrend):
+      → CameraConfigurator.triggerSamplePhoto(listener) hívás
+        → 500 ms stabilizációs várakozás, majd Camera.startShootPhoto()
+          KÖZVETLEN hívás (nem reflection — ld. megvalósítási megjegyzés lent)
+        → SIKER callback → a pont GeoPoint-ja bekerül a
+          confirmedSamplePointsForSession listába (Activity-szintű)
+        → HIBA callback → 1× újrapróbálkozás 1000 ms késleltetéssel
+        → ha az újrapróbálkozás is hibázik → samplingPhotosFailed++,
+          Toast figyelmeztetés (nem blokkolja a misszió folytatását)
+```
+
+**Megvalósítási eltérés a tervtől — közvetlen hívás, nem reflection:** az
+eredeti terv a `DroneVideoWidget` tap-to-expose mintáját (dinamikus
+`InvocationHandler` proxy) javasolta a `Camera.startShootPhoto()` hívásához.
+A kódolás közben kiderült, hogy ez **nem szükséges**: a `CameraConfigurator`
+már ma is **közvetlenül** hívja a `camera.startShootPhoto(callback)`-ot
+(`startShootPhotoInternal()`, az intervallum-fotózás indításánál) — ez egy
+stabil, régóta változatlan publikus MSDK v4 API, nem igényli a
+verzió-bizonytalanság elleni reflection-védelmet (amit a `DroneVideoWidget`
+a kevésbé stabil fókusz/expozíció API-knál alkalmaz). Az új
+`CameraConfigurator.triggerSamplePhoto()` metódus ugyanezt a közvetlen,
+egyszerűbb mintát követi — ld. `CameraConfigurator.java` "Mintavételi
+fotó-trigger" szakasz.
+
+**Megvalósítási eltérés — pontonkénti azonosítás index-számítás helyett:**
+a terv a `session.json` `trigger_confirmed` mezőjével (per-pont index alapján)
+számolt volna. A tényleges megvalósítás egyszerűbb és robusztusabb: az
+`Activity` egy `samplePointCursor`-t növel minden mintavételi waypoint
+elérésekor (szegmenshatároktól függetlenül, mert a mintapontok szigorúan
+sorban látogatottak), és **csak a sikeresen megerősített pontok GeoPoint-ját**
+gyűjti egy `confirmedSamplePointsForSession` listába. A médialetöltés
+(§16, `triggerSessionDownload()`) ezt a **szűrt** listát adja át a
+`MediaSessionDownloader`-nek a nyers `lastSamplePoints` helyett — így egy
+sikertelen pont nem tolja el a rákövetkező pontok geo-taggelését, és a "last
+N file" kiválasztás is a valós, megerősített darabszámmal dolgozik.
+
+**Miért jobb ez a §15 eredeti tervénél:** a `Camera.startShootPhoto()` hívásnak
+**van** SDK-szintű `onResult`/hiba callback-je (ellentétben a `WaypointAction`
+néma végrehajtásával) — ez teszi lehetővé az újrapróbálkozást és a pontos,
+mintapontonkénti visszajelzést. A `MediaSessionDownloader` (§16) így egy
+pontosabb elvárt-darabszámot kap (a ténylegesen megerősített fotók száma,
+nem a nyers mintapontszám), ami a §16.1 4. lépésének biztonsági ellenőrzését
+is megbízhatóbbá teszi.
+
+**Kapcsolódó modulváltozás:** M02 `SamplingMissionGenerator` **nem** változott
+(a waypoint-szekvencia mintázata ugyanaz maradt) — a `MissionUploader.java`-ban
+csak a `START_TAKE_PHOTO` akció lett törölve, az új trigger-logika a
+`CameraConfigurator.java`-ban és a `MissionPlannerActivity.java`
+`onWaypointReached()`/`onMissionFinished()`/`triggerSessionDownload()`
+metódusaiban él (ld. M04_L2 §10, M04_L3, M04_L4 §10 a részletes tervhez).
+
+**Terepi validáció még szükséges:** a javítás kódszinten kész és lefordul
+(`./gradlew compileDebugJavaWithJavac` sikeres, 2026-07-03), de valódi
+Crystal Sky + Phantom 4 Pro v1 eszközön még nincs kipróbálva. Érdemes lenne
+megnézni a `session.json` `capture_time_ms` mezőit
+([MediaSessionDownloader.java:243-277](../../app/src/main/java/com/dronefly/app/dji/MediaSessionDownloader.java))
+egy következő repülés flight logjával összevetve, hogy a retry ténylegesen
+javítja-e a korábban tapasztalt 10-ből-6-os arányt.

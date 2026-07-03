@@ -46,8 +46,12 @@ Az L1–L4 az egyetlen forrása az implementációs specifikációnak.
 - **M01** — Misszió Tervező UI (MissionPlannerActivity, térkép, polygon, paraméterek)
 - **M02** — Grid Engine (GsdCalculator, GridMissionGenerator)
 - **M03** — Export / Import (MissionExporter, CsvMissionParser)
-- **M04** — DJI Integráció (MissionUploader, DJIHelper)
+- **M04** — DJI Integráció (MissionUploader, DJIHelper, MediaSessionDownloader)
 - **M05** — Kamera Konfigurátor (HistogramView, CameraConfigurator, panel_camera_config.xml)
+- **M06** — Dronterapia Szinkron (NetworkMonitor, AuthManager, SyncManager)
+- **M07** — Blokk-felosztás (BlockGridGenerator, PolygonClipper)
+- **M08** — Akku-statisztika (jövőbeli, lefoglalva az M07 dokumentációban, nincs terv még)
+- **M09** — Edge AI Tőszámlálás (YoloInferenceEngine, SamplingResultCalculator — tervezve, nincs implementáció)
 
 ## Platformspecifikus megjegyzések
 
