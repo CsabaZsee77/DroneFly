@@ -566,6 +566,26 @@ Misszió befejeződött (MissionProgressListener.onMissionFinished, siker)
      a session.json és a képek alapján kézzel kitöltve a GSD-t mintaponkénti)
 ```
 
+**M09 előfeltétel (2026-07-03, ld. M09_L1 §6):** a ténylegesen implementált
+`writeSessionJson()` a fentebbi tervezett sémánál egyszerűbb mezőket ír
+(`session_id`, `sample_count`, `downloaded_count`, `created_at`, `points[]`)
+— ehhez járult hozzá 3 új mező, amit az M09 (Edge AI Tőszámlálás) igényel a
+footprint-terület tableten történő kiszámításához:
+
+```json
+{
+  "sample_altitude_m": 6.0,
+  "drone_profile_name": "Phantom 4 Pro v1",
+  "aoi_area_m2": 100000.0
+}
+```
+
+A `downloadSessionMedia()` hívás ezért 3 új paramétert kapott
+(`sampleAltitudeM`, `droneProfileName`, `aoiAreaM2`) — a hívó
+(`MissionPlannerActivity.triggerSessionDownload()`) a `lastResult.altitudeM`
+/ `lastResult.areaM2` (SamplingMissionGenerator kimenete) és
+`getSelectedDrone().name` értékekből tölti ki.
+
 ### 16.2 Miért "utolsó N fájl", nem fájlnév-parsing vagy GPS-egyeztetés?
 
 Mert a §15 szerinti egy-fotó-per-waypoint-akció végrehajtás **garantálja** a

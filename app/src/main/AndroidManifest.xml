@@ -67,6 +67,17 @@
             android:screenOrientation="landscape"
             android:windowSoftInputMode="stateHidden|adjustResize" />
 
+        <activity
+            android:name=".SamplingResultsActivity"
+            android:launchMode="singleTop"
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="stateHidden|adjustResize" />
+
+        <activity
+            android:name=".PhotoImportActivity"
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="stateHidden|adjustResize" />
+
         <!-- Fájlmegosztás exporthoz -->
         <provider
             android:name="androidx.core.content.FileProvider"

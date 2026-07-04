@@ -581,6 +581,10 @@ public class MissionPlannerActivity extends AppCompatActivity {
         });
         btnCameraPanelClose.setOnClickListener(v -> btnCameraConfig.callOnClick());
 
+        // Tőszámláló (M09) — átjárás a tervezőből, repüléstől függetlenül
+        findViewById(R.id.btnOpenCounting).setOnClickListener(v ->
+                startActivity(new Intent(this, SamplingResultsActivity.class)));
+
         // LGT magassági szűrő – egyetlen gomb, koppintásra léptet
         btnAltFilter = findViewById(R.id.btnAltFilter);
         btnAltFilter.setOnClickListener(v -> changeAltPreset());
@@ -3979,8 +3983,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
         progress.setCancelable(false);
         progress.show();
 
+        double sampleAltitudeForSession = lastResult != null ? lastResult.altitudeM : 0.0;
+        double aoiAreaForSession = lastResult != null ? lastResult.areaM2 : 0.0;
+        String droneProfileNameForSession = getSelectedDrone() != null
+                ? getSelectedDrone().name : "";
+
         mediaSessionDownloader.downloadSessionMedia(this, pointsForDownload.size(),
             samplingMissionStartTimeMs, pointsForDownload, currentSamplingSessionId,
+            sampleAltitudeForSession, droneProfileNameForSession, aoiAreaForSession,
             new MediaSessionDownloader.SessionDownloadListener() {
                 @Override
                 public void onFileProgress(int fileIndex, int totalFiles, long current, long total) {
@@ -4002,14 +4012,19 @@ public class MissionPlannerActivity extends AppCompatActivity {
                 public void onSessionComplete(int successCount, int totalCount, File sessionDir) {
                     runOnUiThread(() -> {
                         progress.dismiss();
+                        String finishedSessionId = currentSamplingSessionId;
                         new AlertDialog.Builder(MissionPlannerActivity.this)
                             .setTitle("Letöltés kész")
                             .setMessage(successCount + "/" + totalCount + " fotó letöltve.\n\n"
-                                + "Mappa: " + sessionDir.getAbsolutePath() + "\n\n"
-                                + "A session.json és a képek manuálisan feltölthetők a "
-                                + "Dronterapia Counting oldal \"🎯 Mintavételezéses állományfelmérés\" "
-                                + "expanderébe.")
-                            .setPositiveButton("OK", null)
+                                + "Mappa: " + sessionDir.getAbsolutePath())
+                            .setPositiveButton("Eredmények megtekintése →", (dialog, which) -> {
+                                Intent intent = new Intent(MissionPlannerActivity.this,
+                                        SamplingResultsActivity.class);
+                                intent.putExtra(SamplingResultsActivity.EXTRA_SESSION_ID,
+                                        finishedSessionId);
+                                startActivity(intent);
+                            })
+                            .setNegativeButton("Később", null)
                             .show();
                         btnDownloadSession.setVisibility(View.GONE);
                     });

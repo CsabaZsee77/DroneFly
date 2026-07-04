@@ -61,6 +61,12 @@ public class MediaSessionDownloader {
         void onSessionError(String message);
     }
 
+    /** Drón SD kártya fotólistájának lekérése (M09 fotóimport). */
+    public interface PhotoListListener {
+        void onPhotoList(List<MediaFile> photos);
+        void onError(String message);
+    }
+
     /**
      * @param ctx               Android Context (az app-specifikus külső tárhelyhez)
      * @param sampleCount        a session mintapontjainak száma (N) — ennyi fájlt várunk
@@ -68,10 +74,15 @@ public class MediaSessionDownloader {
      *                           sanity check-hez — nem blokkoló)
      * @param samplePoints       mintapontok (lat, lon) sorrendben — a session.json-hoz
      * @param sessionId          egyedi azonosító (pl. "20260702_143012")
+     * @param sampleAltitudeM    a mintavételi (fotózási) magasság méterben — M09 előfeltétele,
+     *                           enélkül a footprint terület nem számolható a tableten
+     * @param droneProfileName   a misszióhoz használt DroneProfile.name (GSD-számításhoz)
+     * @param aoiAreaM2          a teljes tábla (AOI) területe négyzetméterben
      */
     public void downloadSessionMedia(Context ctx, int sampleCount, long missionStartTimeMs,
                                      List<GeoPoint> samplePoints, String sessionId,
-                                     SessionDownloadListener listener) {
+                                     double sampleAltitudeM, String droneProfileName,
+                                     double aoiAreaM2, SessionDownloadListener listener) {
         Camera camera = getCamera();
         if (camera == null) {
             if (listener != null) listener.onSessionError("Kamera nem elérhető");
@@ -149,18 +160,100 @@ public class MediaSessionDownloader {
                 }
 
                 downloadNext(camera, selected, 0, sessionDir, sessionId, samplePoints,
-                             listener, 0);
+                             sampleAltitudeM, droneProfileName, aoiAreaM2, listener, 0);
             });
         });
+    }
+
+    // ── M09 fotóimport: fájllista + kiválasztott fájlok letöltése ─────────
+
+    /**
+     * A drón SD kártyáján lévő JPG fotók listája, időrendben csökkenő
+     * sorrendben (legújabb elöl). A kameramódot MEDIA_DOWNLOAD-ra váltja
+     * és úgy hagyja — a hívó felelőssége a letöltés után visszaváltani
+     * (a downloadSelectedMedia() ezt megteszi a ciklus végén).
+     */
+    public void listSdCardPhotos(PhotoListListener listener) {
+        Camera camera = getCamera();
+        if (camera == null) {
+            if (listener != null) listener.onError("Kamera nem elérhető — csatlakoztasd a drónt");
+            return;
+        }
+        camera.setMode(SettingsDefinitions.CameraMode.MEDIA_DOWNLOAD, modeErr -> {
+            if (modeErr != null) {
+                if (listener != null)
+                    listener.onError("Kameramód váltási hiba: " + modeErr.getDescription());
+                return;
+            }
+            MediaManager mediaManager = camera.getMediaManager();
+            if (mediaManager == null) {
+                if (listener != null) listener.onError("MediaManager nem elérhető");
+                return;
+            }
+            mediaManager.refreshFileListOfStorageLocation(
+                    SettingsDefinitions.StorageLocation.SDCARD, refreshErr -> {
+                if (refreshErr != null) {
+                    if (listener != null)
+                        listener.onError("Fájllista frissítési hiba: " + refreshErr.getDescription());
+                    return;
+                }
+                List<MediaFile> photos = new ArrayList<>();
+                for (MediaFile f : mediaManager.getSDCardFileListSnapshot()) {
+                    String name = f.getFileName() != null
+                            ? f.getFileName().toLowerCase(Locale.US) : "";
+                    if (name.endsWith(".jpg") || name.endsWith(".jpeg")) photos.add(f);
+                }
+                Collections.sort(photos, new Comparator<MediaFile>() {
+                    @Override
+                    public int compare(MediaFile a, MediaFile b) {
+                        return Long.compare(b.getTimeCreated(), a.getTimeCreated());
+                    }
+                });
+                if (listener != null) listener.onPhotoList(photos);
+            });
+        });
+    }
+
+    /**
+     * Felhasználó által kiválasztott fájlok letöltése egy session mappába
+     * (M09 fotóimport). A session.json-t NEM írja meg — azt a hívó
+     * (PhotoImportActivity) állítja össze a letöltött képek EXIF GPS
+     * adataiból és a kiválasztott repülési terv kontextusából.
+     */
+    public void downloadSelectedMedia(Context ctx, List<MediaFile> files, String sessionId,
+                                      SessionDownloadListener listener) {
+        Camera camera = getCamera();
+        if (camera == null) {
+            if (listener != null) listener.onSessionError("Kamera nem elérhető");
+            return;
+        }
+        if (files == null || files.isEmpty()) {
+            if (listener != null) listener.onSessionError("Nincs kiválasztott fájl");
+            return;
+        }
+        File sessionDir = getSessionDir(ctx, sessionId);
+        if (!sessionDir.exists() && !sessionDir.mkdirs()) {
+            if (listener != null)
+                listener.onSessionError("Nem sikerült létrehozni a session mappát: "
+                        + sessionDir.getAbsolutePath());
+            return;
+        }
+        // samplePoints = null → downloadNext nem ír session.json-t
+        downloadNext(camera, files, 0, sessionDir, sessionId, null, 0, "", 0, listener, 0);
     }
 
     // ── Letöltési ciklus (szekvenciális) ────────────────────────────────
 
     private void downloadNext(Camera camera, List<MediaFile> files, int index,
                               File sessionDir, String sessionId, List<GeoPoint> samplePoints,
+                              double sampleAltitudeM, String droneProfileName, double aoiAreaM2,
                               SessionDownloadListener listener, int successCount) {
         if (index >= files.size()) {
-            writeSessionJson(sessionDir, sessionId, samplePoints, files, successCount);
+            // samplePoints == null: M09 fotóimport útvonal — a session.json-t a hívó írja
+            if (samplePoints != null) {
+                writeSessionJson(sessionDir, sessionId, samplePoints, files, successCount,
+                                 sampleAltitudeM, droneProfileName, aoiAreaM2);
+            }
             // Kameramód visszaváltás a következő misszióhoz
             camera.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, ignored -> {});
             if (listener != null)
@@ -203,14 +296,14 @@ public class MediaSessionDownloader {
                 }
                 if (listener != null) listener.onFileComplete(idx, localPath);
                 downloadNext(camera, files, idx + 1, sessionDir, sessionId, samplePoints,
-                             listener, successCount + 1);
+                             sampleAltitudeM, droneProfileName, aoiAreaM2, listener, successCount + 1);
             }
 
             @Override
             public void onFailure(DJIError error) {
                 if (listener != null) listener.onFileError(idx, error.getDescription());
                 downloadNext(camera, files, idx + 1, sessionDir, sessionId, samplePoints,
-                             listener, successCount);
+                             sampleAltitudeM, droneProfileName, aoiAreaM2, listener, successCount);
             }
         });
     }
@@ -236,12 +329,18 @@ public class MediaSessionDownloader {
     // ── Session mappa + metaadat ────────────────────────────────────────
 
     private File getSessionDir(Context ctx, String sessionId) {
-        File base = new File(ctx.getExternalFilesDir(null), SESSIONS_DIR);
-        return new File(base, sessionId);
+        return new File(getSessionsRootDir(ctx), sessionId);
+    }
+
+    /** A mintavételi session-ök gyökérmappája — M09 (SamplingResultsActivity) is ezt használja. */
+    public static File getSessionsRootDir(Context ctx) {
+        return new File(ctx.getExternalFilesDir(null), SESSIONS_DIR);
     }
 
     private void writeSessionJson(File sessionDir, String sessionId, List<GeoPoint> samplePoints,
-                                  List<MediaFile> downloadedFiles, int successCount) {
+                                  List<MediaFile> downloadedFiles, int successCount,
+                                  double sampleAltitudeM, String droneProfileName,
+                                  double aoiAreaM2) {
         try {
             JSONObject root = new JSONObject();
             root.put("session_id", sessionId);
@@ -250,6 +349,11 @@ public class MediaSessionDownloader {
             SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
             isoFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
             root.put("created_at", isoFormat.format(new java.util.Date()));
+
+            // M09 előfeltétel (M09_L1 §6): footprint terület számításához szükséges adatok
+            root.put("sample_altitude_m", sampleAltitudeM);
+            root.put("drone_profile_name", droneProfileName != null ? droneProfileName : "");
+            root.put("aoi_area_m2", aoiAreaM2);
 
             JSONArray points = new JSONArray();
             for (int i = 0; i < (samplePoints != null ? samplePoints.size() : 0); i++) {

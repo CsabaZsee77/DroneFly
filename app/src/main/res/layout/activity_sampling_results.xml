@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#1a1a2e"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:text="📊 Mintavételi eredmény"
+            android:textSize="22sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/btnImportPhotos"
+            android:text="📂 Fotók importálása"
+            android:backgroundTint="#4444AA"
+            android:textColor="#FFFFFF"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnOpenPlanner"
+            android:text="🗺 Tervező"
+            android:backgroundTint="#2e5a2e"
+            android:textColor="#FFFFFF"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"/>
+    </LinearLayout>
+
+    <!-- Session + modell választó -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp">
+            <TextView android:text="Session"
+                android:textColor="#AAAACC" android:textSize="12sp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Spinner android:id="@+id/spinnerSession"
+                android:layout_width="match_parent" android:layout_height="44dp"
+                android:background="#2a2a4e"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp">
+            <TextView android:text="YOLO modell"
+                android:textColor="#AAAACC" android:textSize="12sp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Spinner android:id="@+id/spinnerModel"
+                android:layout_width="match_parent" android:layout_height="44dp"
+                android:background="#2a2a4e"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content">
+            <TextView android:text="Célosztály"
+                android:textColor="#AAAACC" android:textSize="12sp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Spinner android:id="@+id/spinnerTargetClass"
+                android:layout_width="match_parent" android:layout_height="44dp"
+                android:background="#2a2a4e"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- A kiválasztott session fotóinak előnézete (koppintásra nagyítás) -->
+    <HorizontalScrollView
+        android:id="@+id/thumbScroll"
+        android:layout_width="match_parent"
+        android:layout_height="76dp"
+        android:background="#12122a"
+        android:layout_marginBottom="4dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/thumbStrip"
+            android:orientation="horizontal"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:padding="4dp"/>
+    </HorizontalScrollView>
+
+    <TextView
+        android:id="@+id/tvModelHint"
+        android:text=""
+        android:textColor="#FFAA00"
+        android:textSize="12sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="4dp"/>
+
+    <!-- Futtatási paraméterek (a Dronterapia webes Counting felület mintájára) -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:text="Konfidencia küszöb:"
+            android:textColor="#AAAACC"
+            android:textSize="12sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"/>
+
+        <EditText
+            android:id="@+id/etConfThreshold"
+            android:inputType="numberDecimal"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:minWidth="72dp"
+            android:gravity="center"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="16dp"/>
+
+        <TextView
+            android:text="IoU küszöb (NMS):"
+            android:textColor="#AAAACC"
+            android:textSize="12sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"/>
+
+        <EditText
+            android:id="@+id/etIouThreshold"
+            android:inputType="numberDecimal"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:minWidth="72dp"
+            android:gravity="center"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"/>
+
+        <TextView
+            android:id="@+id/tvParamHint"
+            android:text="(0–1; alapérték a modell metaadatából)"
+            android:textColor="#666688"
+            android:textSize="11sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Indítás / megszakítás + progress -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+
+        <Button
+            android:id="@+id/btnStart"
+            android:text="Számlálás indítása"
+            android:backgroundTint="#FF6600"
+            android:textColor="#FFFFFF"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnCancel"
+            android:text="Mégse"
+            android:backgroundTint="#663333"
+            android:textColor="#FFFFFF"
+            android:visibility="gone"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"/>
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"/>
+
+        <TextView
+            android:id="@+id/tvProgressStatus"
+            android:text=""
+            android:textColor="#CCCCEE"
+            android:textSize="12sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Összefoglaló kártya -->
+    <LinearLayout
+        android:id="@+id/summaryCard"
+        android:orientation="vertical"
+        android:background="#2a2a4e"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvEstimatedTotal"
+            android:text=""
+            android:textColor="#00FF88"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/tvSummaryDetail"
+            android:text=""
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"/>
+
+        <TextView
+            android:id="@+id/tvCvWarning"
+            android:text=""
+            android:textColor="#FFAA00"
+            android:textSize="13sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"/>
+    </LinearLayout>
+
+    <!-- Pontonkénti táblázat -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#12122a">
+
+        <LinearLayout
+            android:id="@+id/tablePoints"
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="4dp"/>
+    </ScrollView>
+
+    <Button
+        android:id="@+id/btnExportCsv"
+        android:text="Export CSV"
+        android:backgroundTint="#4444AA"
+        android:textColor="#FFFFFF"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"/>
+
+</LinearLayout>

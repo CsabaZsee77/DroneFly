@@ -62,4 +62,13 @@
         android:textSize="16sp"
         android:backgroundTint="#FF6600"/>
 
+    <Button
+        android:id="@+id/btnCounting"
+        android:text="Toszamlalas (Edge AI)"
+        android:layout_width="240dp"
+        android:layout_height="56dp"
+        android:layout_marginTop="12dp"
+        android:textSize="16sp"
+        android:backgroundTint="#4444AA"/>
+
 </LinearLayout>

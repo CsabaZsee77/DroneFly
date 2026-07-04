@@ -51,7 +51,7 @@ Az L1–L4 az egyetlen forrása az implementációs specifikációnak.
 - **M06** — Dronterapia Szinkron (NetworkMonitor, AuthManager, SyncManager)
 - **M07** — Blokk-felosztás (BlockGridGenerator, PolygonClipper)
 - **M08** — Akku-statisztika (jövőbeli, lefoglalva az M07 dokumentációban, nincs terv még)
-- **M09** — Edge AI Tőszámlálás (YoloInferenceEngine, SamplingResultCalculator — tervezve, nincs implementáció)
+- **M09** — Edge AI Tőszámlálás (YoloInferenceEngine, SamplingResultCalculator, SamplingResultsActivity — implementálva, eszközön még nem tesztelve)
 
 ## Platformspecifikus megjegyzések
 

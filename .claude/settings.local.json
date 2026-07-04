@@ -231,7 +231,14 @@
       "Bash(./gradlew.bat compileDebugJavaWithJavac --console=plain)",
       "Bash(./gradlew.bat assembleDebug --console=plain)",
       "PowerShell(& \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" devices -l)",
-      "PowerShell(& \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" install -r \"app\\\\build\\\\outputs\\\\apk\\\\debug\\\\app-debug.apk\")"
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" install -r \"app\\\\build\\\\outputs\\\\apk\\\\debug\\\\app-debug.apk\")",
+      "Read(//c/Users/zsigm/OneDrive/Dokumentumok/GitHub/**)",
+      "Read(//c/Users/zsigm/**)",
+      "Bash(sed -i 's/entry\\\\.tfliteFile/entry.modelFile/g' app/src/main/java/com/dronefly/app/SamplingResultsActivity.java)",
+      "Read(//c/c/Users/zsigm/OneDrive/Dokumentumok/GitHub/DroneFly/app/src/main/java/com/dronefly/app/**)",
+      "Bash(ls -la venv/Scripts/python.exe)",
+      "Bash(venv/Scripts/python.exe -c ' *)",
+      "Bash(/c/Users/zsigm/AppData/Local/Android/Sdk/platform-tools/adb.exe push *)"
     ]
   }
 }

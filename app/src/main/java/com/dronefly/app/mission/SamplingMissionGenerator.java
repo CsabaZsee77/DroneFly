@@ -114,8 +114,12 @@ public class SamplingMissionGenerator {
         return result;
     }
 
-    /** Sokszög területe négyzetméterben (Gauss-képlet, helyi XY vetületen) */
-    private static double polygonAreaM2(List<GeoPoint> polygon) {
+    /**
+     * Sokszög területe négyzetméterben (Gauss-képlet, helyi XY vetületen).
+     * Publikus, mert az M09 fotóimport (PhotoImportActivity) is ezt használja
+     * a kiválasztott repülési terv polygonjából AOI-területet számolni.
+     */
+    public static double polygonAreaM2(List<GeoPoint> polygon) {
         double centLat = 0, centLon = 0;
         for (GeoPoint p : polygon) { centLat += p.getLatitude(); centLon += p.getLongitude(); }
         centLat /= polygon.size();

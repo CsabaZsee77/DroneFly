@@ -2,10 +2,10 @@
 
 **Modul:** M09
 **Szint:** L1 – Üzleti Folyamat
-**Verzió:** v0.1.0 (terv, implementáció nem kezdődött el)
+**Verzió:** v1.0.0 (implementálva, eszközön még nem tesztelve)
 **Létrehozva:** 2026-07-02
-**Utolsó módosítás:** 2026-07-02
-**Státusz:** 🔲 Tervezve
+**Utolsó módosítás:** 2026-07-03
+**Státusz:** ✅ Implementálva — build zöld (assembleDebug), terepi/eszköz-teszt hátravan
 
 ---
 
@@ -49,7 +49,8 @@ opcionális, utólagos archiválás/megosztás céljából jön szóba.
   sessionDir: File                    (sampling_sessions/{sessionId}/, M04 kimenete)
     → session.json  (pontok lat/lon, local_file, capture_time)
     → point_000.jpg .. point_NNN.jpg
-  modelFile: File                     (.tflite, a felhasználó által importált/kiválasztott)
+  modelFile: File                     (.onnx, a felhasználó által importált/kiválasztott —
+                                        pl. a Dronterápia modell-regiszteréből kézzel másolva)
   modelMeta: ModelMetadata            (sidecar .json: label, inputSize, confThreshold,
                                         iouThreshold, targetClassIndex, cropType)
 
@@ -95,8 +96,8 @@ opcionális, utólagos archiválás/megosztás céljából jön szóba.
       │  Session-választó (alapértelmezett: legutóbbi), lista a mappákból
       ▼
 3. YOLO modell kiválasztása
-      │  Spinner: /sdcard/DroneFly/models/ tartalma (.tflite fájlok neve/címkéje)
-      │  Ha nincs modell: "Nincs importált modell — másold a .tflite fájlt ide: ..."
+      │  Spinner: /sdcard/DroneFly/models/ tartalma (.onnx fájlok neve/címkéje)
+      │  Ha nincs modell: "Nincs importált modell — másold a .onnx fájlt ide: ..."
       ▼
 4. [Számlálás indítása] gomb
       │  Validáció: session.json tartalmazza-e sample_altitude_m + drone_profile_name-t
@@ -115,7 +116,7 @@ opcionális, utólagos archiválás/megosztás céljából jön szóba.
 7. Eredmény képernyő
       │  ┌─────────────────────────────────────────┐
       │  │  📊 Mintavételi eredmény — 2026-07-02     │
-      │  │  Modell: corn_yolo11n_v3.tflite           │
+      │  │  Modell: corn_yolo11n_v3.onnx              │
       │  │                                           │
       │  │  Becsült összlétszám: 842 000 tő          │
       │  │  (± 68 000, 95% CI)                       │
@@ -135,19 +136,37 @@ opcionális, utólagos archiválás/megosztás céljából jön szóba.
 
 ---
 
-## 4. UI-folyam elhelyezése
+## 4. UI-folyam elhelyezése és belépési pontok
 
-Az "Eredmények" képernyő **nem** az M01 térképes fő nézetbe épül be, hanem
-önálló Activity/Fragment, amit:
+Az "Eredmények" képernyő (`SamplingResultsActivity`) **nem** az M01 térképes
+fő nézetbe épül be, hanem önálló Activity. Ez a szétválasztás azért fontos,
+mert a `MissionPlannerActivity` már 2 797+ soros monolit (ld. projekt
+memória) — egy YOLO-futtató UI-t **nem** érdemes ebbe zsúfolni.
 
-- a mintavételi misszió befejezése után egy toast/gomb ajánl fel
-  ("Misszió kész — 34 fotó letöltve. [Eredmények megtekintése →]"),
-- vagy a főmenüből bármikor elérhető (korábbi session-ök is feldolgozhatók,
-  akár más modellel újra — pl. ha frissült a betanított modell).
+**Belépési pontok (2026-07-03-tól, mind implementálva):**
 
-Ez a szétválasztás azért fontos, mert a `MissionPlannerActivity` már 2 797
-soros monolit (ld. projekt memória) — egy YOLO-futtató UI-t **nem** érdemes
-ebbe zsúfolni.
+1. **Misszió után:** a mintavételi misszió médialetöltésének befejező
+   dialógusa ajánlja fel ("Letöltés kész — [Eredmények megtekintése →]"),
+   a friss session előválasztva.
+2. **A misszió tervezőből bármikor:** a bal oldali gombsor "AI" gombja —
+   ez a fő munka közbeni átjárás, mert a főképernyőre futó appból nem
+   lehet visszalépni. A tőszámláló fejlécének "🗺 Tervező" gombja
+   visszavisz (REORDER_TO_FRONT — a futó tervező-példányt hozza előre,
+   nem hoz létre újat).
+3. **A főképernyőről (app-indításkor):** "Tőszámlálás (Edge AI)" gomb.
+
+Korábbi session-ök bármikor feldolgozhatók, akár más modellel/paraméterekkel
+újra (pl. ha frissült a betanított modell); a fotóimport (9. fejezet) a
+tőszámláló képernyőről érhető el.
+
+**Futtatási paraméterek a UI-n (a Dronterapia webes Counting felület
+mintájára):** a konfidencia küszöb és az IoU (NMS) küszöb futtatás előtt
+módosítható — alapértékük a kiválasztott modell sidecar `.json`-jából
+töltődik, a ténylegesen használt értékek a `results.json`-ba
+(`conf_threshold_used`, `iou_threshold_used`) és az összefoglaló kártyára
+is kikerülnek, így az eredmény mindig reprodukálható. A webes felület
+további paraméterei (sliding window, TTA, sor-detekció, preprocessing
+presetek) v1-ben nem kerülnek a tabletre — ld. M09_L2 §8a döntés.
 
 ---
 
@@ -173,30 +192,78 @@ stdev = sqrt( Σ(density_i - mean)² / (N - 1) )
 CV%  = (stdev / mean) × 100
 ```
 
-### 5.3 Extrapoláció a teljes területre (v1 — homogén becslés)
+### 5.3 Extrapoláció a teljes területre (v1 — mintavételi statisztika, nem térbeli interpoláció)
+
+**Fontos fogalmi elhatárolás:** ez a lépés **nem interpoláció** (nem becsül
+értéket egyes nem-mintázott pontokon), hanem klasszikus **mintavételi
+statisztika (design-based sampling inference)** — a mintapontok közti
+szórásból von le következtetést a *teljes tábla összesített* becslésének
+megbízhatóságáról. Ha valaki a mintapontok közötti *térbeli* értékeket is
+szeretné becsülni (hőtérkép), az IDW/kriging kell — ld. 5.4.
 
 ```
-estimatedTotalCount = mean [db/m²] × totalAreaM2
+mean  = Σ(density_i) / N                              [db/m²]
+stdev = sqrt( Σ(density_i - mean)² / (N - 1) )
+CV%   = (stdev / mean) × 100
 
-95% CI (normál közelítés, N ≥ ~15 mintánál elfogadható):
-  SE = stdev / sqrt(N)
-  CI95 = 1.96 × SE × totalAreaM2
+estimatedTotalCount = mean × totalAreaM2
+
+95% CI — véges populáció korrekcióval (FPC) és Student-t eloszlással:
+  N_plot = totalAreaM2 / footprintAreaM2   (hány mintaponti "parcella" férne
+                                             el összesen a táblán — ez fejezi
+                                             ki a mintavételi arányt)
+  SE      = stdev / sqrt(N)
+  SE_fpc  = SE × sqrt( (N_plot − N) / (N_plot − 1) )    ha N_plot > N
+          = SE                                          egyébként (N_plot ≤ N esetén nincs korrekció)
+  t95     = Student-t kritikus érték, df = N − 1, 95%-os szint (ld. lookup
+            tábla lent — nagy df-nél tart 1.96-hoz)
+  CI95    = t95 × SE_fpc × totalAreaM2
 ```
+
+**Miért ez a két pontosítás a korábbi (fix 1.96, FPC nélküli) képlethez
+képest:**
+- **FPC:** a `SE` önmagában feltételezi, hogy a minta a populáció
+  elhanyagolható hányada. Mezőgazdasági mintavételnél ez tipikusan igaz
+  (pár tucat, egyenként pár m²-es fotó egy több hektáros táblán, tehát
+  `N/N_plot` << 1, a korrekció szinte nem csökkenti a CI-t) — de kisebb
+  táblánál vagy sűrűbb mintavételnél (pl. M10 sűrű rács jellegű mintavétel)
+  a korrekció érdemben szűkíti a hibasávot, tehát nem szabad kihagyni.
+- **Student-t normál (z=1.96) helyett:** 15–40 mintapontos tartományban
+  (a tipikus mintavételi misszió mérete) a t-eloszlás szélesebb, tehát
+  **óvatosabb** (nem alábecsült) CI-t ad, mint a nagy mintára érvényes
+  normál közelítés.
+
+**t95 lookup tábla (df = N − 1):**
+
+| df | 5 | 10 | 15 | 20 | 25 | 30 | 40 | ≥60 |
+|----|---|----|----|----|----|----|----|----|
+| t95 | 2.571 | 2.228 | 2.131 | 2.086 | 2.060 | 2.042 | 2.021 | 2.000→1.96 |
+
+(A `SamplingResultCalculator` a legközelebbi táblázatbeli df-et használja,
+60 fölött a normál 1.96 közelítéssel.)
 
 **Fontos korlát, amit az UI-nak jeleznie kell:** ez a becslés **homogén
-eloszlást tételez fel** a mintapontok között (nincs térbeli interpoláció/
-IDW). Ha CV% > 30%, az UI figyelmeztet: *"A tábla heterogén lehet (CV
-{cv}%) — fontold meg a sűrűbb mintavételt vagy zónánkénti (stratifikált)
-elemzést."* — ez a statisztikai megfontolás már szerepel a
-`FEJLESZTESI_OTLETEK.md`-ben, itt csak a konkrét UI-visszajelzésként
-valósul meg.
+eloszlást tételez fel** a mintapontok között — a CI a *teljes tábla összegére*
+ad megbízhatósági sávot, nem arra, hogy a tábla melyik része sűrűbb/ritkább.
+Ha CV% > 30%, az UI figyelmeztet: *"A tábla heterogén lehet (CV {cv}%) —
+fontold meg a sűrűbb mintavételt vagy zónánkénti (stratifikált) elemzést."*
+— ez a statisztikai megfontolás már szerepel a `FEJLESZTESI_OTLETEK.md`-ben,
+itt csak a konkrét UI-visszajelzésként valósul meg.
 
 ### 5.4 Térbeli interpoláció (IDW heatmap) — **kikerül a v1 hatóköréből**
 
+**Mikor kellene IDW, és mikor nem:** az 5.3 alatti mintavételi statisztika
+egyetlen számot ad (± hibasáv) a *teljes táblára összesítve* — ez a v1 cél
+("azonnal megmondani a tőszámot"). Az IDW ezzel szemben egy **térképet**
+(pixelenkénti/rácsonkénti sűrűségbecslést) ad — az kell, ha a felhasználó
+azt akarja *látni*, hogy a tábla melyik része sűrűbb/ritkább (pl.
+prescription map változó dózisú beavatkozáshoz). A két eszköz különböző
+kérdésre válaszol; a v1 csak az elsőt implementálja.
+
 A Dronterapia (Python) oldalon már létezik IDW-interpoláció
 (`Dronterapia/utils/interpolation.py`). Ennek Java-portja **későbbi
-fázis** (ld. 8. fejezet) — a v1 cél az "azonnali szám", nem a
-prescription-map vizualizáció. Ha mégis szükséges helyszíni heatmap,
+fázis** (ld. 8. fejezet) — csak akkor éri meg, ha terepi visszajelzés
+igazolja a hőtérkép-igényt. Ha mégis szükséges helyszíni heatmap,
 egyszerűbb megoldás: a `results.json`-t szinkronizálni a Dronterapia felé
 (M06 csatorna), és ott a meglévő IDW logikával generálni.
 
@@ -238,10 +305,11 @@ gyakorlatilag egyetlen módosított metódus-szignatúra és 3 új JSON mező.
 1. **Crystal Sky CPU/RAM korlát:** régi, gyenge hardver (Android 5.1) —
    csak könnyű, kvantált (INT8) nano-méretű YOLO modell (YOLOv8n/YOLO11n)
    futtatható elfogadható idő alatt. Részletek: M09_L2.
-2. **Modell-előállítás nem az app feladata:** a felhasználónak a modellt
-   külön (asztali gépen/felhőben, pl. Ultralytics YOLO train + `export
-   format=tflite int8=True`) kell betanítania és a tabletre másolnia. Az
-   app csak **futtatja**, nem tanítja a modellt.
+2. **Modell-előállítás nem az app feladata:** a modellt a Dronterápia
+   rendszer tanítja be (Ultralytics YOLO, `export format=onnx`) — az app
+   csak **futtatja**, nem tanítja a modellt. A betanított `.onnx` fájlt
+   kézzel (fájlkezelő/ADB) kell a tabletre másolni a sidecar `.json`
+   metaadattal együtt.
 2. **Elmosódott/rossz minőségű mintaponti fotó:** hovering pontatlanság
    vagy szél miatt egy-egy kép használhatatlan lehet — az eredmény
    táblázatban ⚠ jelzéssel, de nem blokkolja a többi pont feldolgozását.
@@ -262,7 +330,304 @@ gyakorlatilag egyetlen módosított metódus-szignatúra és 3 új JSON mező.
 |-------|-----------------|
 | M01 Misszió Tervező | **Belépési pont** — "Eredmények megtekintése" gomb a mintavételi misszió befejezése után |
 | M02 Grid Engine (`GsdCalculator`) | **Újrahasznosított logika** — footprint terület számítás (`imageCoverageWidthM/HeightM`) |
-| M04 DJI Integráció (`MediaSessionDownloader`) | **Bemenet forrás** — session.json + fotók; **kis kiegészítés szükséges** (6. fejezet) |
+| M03 Export/Import (`ProjectManager`) | **Kontextus forrás a fotóimportnál** (9. fejezet) — a mentett repülési terv adja a polygont (terület), a mintavételi magasságot és a drónprofilt |
+| M04 DJI Integráció (`MediaSessionDownloader`) | **Bemenet forrás** — session.json + fotók; kiegészítve: fájllista-lekérés + kiválasztott fájlok letöltése (fotóimport) |
 | M06 Dronterapia Szinkron | **Jövőbeli, opcionális kimenet** — results.json archiválás/megosztás, esetleg modell-terjesztés a tabletre |
 | M08 Akku-statisztika (jövőbeli, M07 dokumentumban lefoglalva) | Nincs közvetlen kapcsolat |
 | `FEJLESZTESI_OTLETEK.md` → "Mintavételezéses tőszámlálás" | **Szülő koncepció** — ez a dokumentum ennek a 4. ("Edge AI") lépését bontja ki részletes tervvé |
+
+---
+
+## 9. Fotóimport — tőszámlálás repülés nélkül (2026-07-03)
+
+A felhasználói igény: a számlálás **ne csak** a mintavételi misszió
+lezárása után legyen elérhető — bármikor lehessen (a) a drón SD kártyájáról
+fotókat áttölteni, vagy (b) a tablet tárolójából fotókat kiválasztani, és
+azokon futtatni a modellt.
+
+**Kritikus követelmény — a kontextus:** egy fotóhalom önmagában nem elég a
+db/ha + extrapolált összlétszám számításához: tudni kell, hogy a képek
+**milyen magasságból** készültek (footprint terület) és **mekkora táblát**
+reprezentálnak (extrapolációs cél). Ezért az import kötelező lépése a
+**repülési terv kiválasztása** — a mentett `.flightprogram.json` tervek
+(M03 `ProjectManager`) tartalmazzák a polygont (→ terület), a mintavételi
+magasságot (`sampling.sample_altitude_m`, vagy grid tervnél `altitude_m`)
+és a drónprofilt. Ha nincs megfelelő terv: kézi megadás (magasság + terület).
+
+```
+PhotoImportActivity (a SamplingResultsActivity "📂 Fotók importálása" gombjáról)
+      │
+      ▼
+1. Forrás választása
+      │  [🛸 Drón SD kártya]  — MediaManager fájllista (JPG, legújabb elöl)
+      │  [📱 Tablet tároló]   — beépített mappaböngésző (Crystal Sky-on nincs
+      │                         megbízható rendszer-fájlválasztó)
+      ▼
+2. Fotók kijelölése (checkbox)
+      ▼
+3. Kontextus: repülési terv kiválasztása (Spinner, mentett tervek)
+      │  → terület = polygonAreaM2(terv.polygon), magasság, drónprofil
+      │  → vagy "Kézi megadás": magasság [m] + terület [ha] kézzel
+      ▼
+   (Fejléc: "← Vissza" gomb — importálás nélkül visszalép a tőszámlálóhoz,
+    a tablet fizikai vissza gombjától függetlenül; 2026-07-04)
+      │
+4. Import
+      │  Drón forrás: kiválasztott MediaFile-ok letöltése (M04 bővítés)
+      │  Tablet forrás: fájlok másolása
+      │  → sampling_sessions/import_{yyyyMMdd_HHmmss}/point_000.jpg..
+      ▼
+5. session.json összeállítása
+      │  Pontkoordináták a képek EXIF GPS adataiból (ha nincs geotag: 0,0
+      │  + a pont a táblázatban koordináta nélkül jelenik meg)
+      │  source: "import_drone_sd" | "import_tablet", flight_plan_name
+      ▼
+6. SamplingResultsActivity nyílik az új sessionnel — innen a folyamat
+   azonos a missziós úttal (modellválasztás → számlálás → eredmény)
+```
+
+**Fontos statisztikai megjegyzés:** az importált fotóknál a rendszer nem
+tudja garantálni, hogy a képek a tábla **reprezentatív mintavételével**
+készültek (szemben a generált mintavételi misszióval, ahol a pontkiosztás
+stratifikált/Halton). Ha a felhasználó "kézzel" fotózott pontokat importál,
+az extrapoláció torzulhat — ez felhasználói felelősség, a dokumentáció/súgó
+szintjén jelezni kell.
+
+**Fotó-előnézetek (2026-07-03, terepi visszajelzés alapján):** a felhasználó
+látni akarja, mely képeken fut a számlálás. Három helyen van előnézet:
+- **Tőszámláló képernyő:** a kiválasztott session fotóiból thumbnail-sáv a
+  session-választó alatt (aszinkron betöltés, inSampleSize-zal) — koppintásra
+  teljes képernyős nagyítás.
+- **Eredmény-táblázat — bounding boxos annotált kép:** a pontsorra koppintva
+  a pont fotója a **detektált egyedek zöld bekeretezésével** nyílik meg
+  (a Dronterapia webes Counting felület annotált képének megfelelője),
+  bal felső sarokban a detektálás-számmal. Ez a terepi kalibráció fő
+  eszköze: a felhasználó vizuálisan ellenőrizheti, hogy a konfidencia
+  küszöb jól van-e belőve (kimaradó tövek → küszöb csökkentése; dupla/hamis
+  detektálások → küszöb emelése). A detekciók (normalizált bbox + konfidencia)
+  a `results.json`-ba is mentésre kerülnek (`points[].detections`).
+- **Fotóimport (tablet forrás):** minden fájlsorban thumbnail; a thumbnailre
+  koppintva nagyítás, a sor többi részére koppintva kijelölés. A drón SD
+  fájljaihoz letöltés előtt nem érhető el előnézet (a MediaFile tartalma
+  csak letöltés után olvasható).
+
+**Terepi kalibrációs eredmény (2026-07-03/04):** a Dronterápia
+`kukorica_640px_20260109_221301.onnx` modellel a felhasználó előbb 0.05-ös,
+majd finomítva **0.20 konfidencia + 0.30 IoU** küszöbbel kapott a valósággal
+egyező tőszámot — a modell sidecar `.json` alapértéke ennek megfelelően
+0.20 / 0.30 lett. (A conf 0.05→0.20 közti háromszoros detektálás-különbség
+jelzi, hogy ez a modell nagyon érzékeny a küszöbre ezen az állományon — a
+bounding boxos annotált nézet a vizuális kalibráció eszköze.)
+
+---
+
+## 10. GSD kalibráció — vonalzós skálamérés (2026-07-04)
+
+**Státusz:** ✅ **Implementálva és eszközön verifikálva** (Crystal Sky, 2026-07-04).
+Terepi teszt: importált kukoricatábla-képen a vonalzós mérés footprint 41,6 m²,
+GSD 0,289 cm/px, EXIF-kereszt-ellenőrzés „10,0 m → mérés ~5,3 m (−72%)"; a
+„Csak erre a képre" alkalmazás után a `results.json` pontja `footprint_source:
+MANUAL`, `gsd_cm_px`, `ref_distance_m`, `ref_pixel_length` mezőkkel, a db/ha
+inferencia nélkül újraszámolt (327/41,58 m² = 78 636/ha), a többi pont EXIF-en
+maradt, az összesített CV/CI és a heterogenitás-figyelmeztetés helyesen frissült.
+
+### 10.1 A megoldandó probléma
+
+A db/ha sűrűség és a teljes-területi extrapoláció a **footprint területtől**
+(egy kép valós talaj-lefedettsége) függ. Ezt jelenleg a `sample_altitude_m`
+(EXIF vagy repülési terv) + drónprofil GSD-képletéből számoljuk (§5.1). Az
+alacsony (mintavételi) repüléseknél viszont a **Phantom 4 Pro barometrikus
+magasság-tartása bizonytalan** — a terepi tapasztalat szerint néha a beállított
+magasság **kétszeresére** emelkedett. Mivel a footprint a magasság
+**négyzetével** arányos (szélesség és hosszúság is lineárisan nő), egy 2×-es
+magasság-hiba **4×-es footprint-hibát**, tehát a db/ha becslés **negyedelését**
+okozza. A YOLO számláló akármilyen pontos: rossz footprinttel a hektáronkénti
+eredmény használhatatlan.
+
+> **Megjegyzés a §7.3 korábbi állításához:** ott az szerepel, hogy „a
+> footprint session-szinten egyetlen konstans” — ez a **beállított** magasság
+> feltevése mellett igaz, de a barometrikus hiba pontonként eltérhet, ezért a
+> GSD kalibráció **pontonként felülírható** footprintet vezet be (§10.4).
+
+### 10.2 A módszer: mért skála a következtetett helyett
+
+A GSD közvetlenül **mérhető**, magasság nélkül: a betöltött fotón a felhasználó
+egy **vonalzót** húz ki két pont közé (mint a Google Maps távolságmérője), és
+megadja a valós távolságot (pl. sortáv). A rendszer a vonal **pixelhosszából**
+számol:
+
+```
+GSD [m/px]        = valós_távolság_m / vonal_pixelhossz
+footprint_szél_m  = GSD × kép_szélesség_px
+footprint_hossz_m = GSD × kép_magasság_px
+footprintAreaM2   = footprint_szél_m × footprint_hossz_m
+```
+
+Ez a magasságot teljesen megkerüli — a talaj-skálát közvetlenül egy ismert
+referenciából méri.
+
+### 10.3 Négy korrektsági szabály (a pontosságot ezek döntik el)
+
+1. **A referencia VÍZSZINTES talaj-távolság legyen, ne függőleges.** Nadír
+   képen egy függőleges tárgy (pl. a növény magassága) fentről pontnak látszik,
+   nem képezhető le skálára. A **sortáv** az ideális referencia: a vetőgép
+   pontosan beállította, nadírból jól látszik, és vízszintes. Az UI-nak ezt
+   egyértelműen jeleznie kell (a mező súgója: „vízszintes talaj-távolság, pl.
+   sortáv — NEM növénymagasság”).
+2. **Hosszú, több egységet átfogó alapvonal.** Egyetlen sortáv (~76 cm)
+   pixelben mérve zajos. Ezért a UI ösztönzi a hosszú bázist: a felhasználó
+   kihúzhat pl. 10 sortávot, megadja a sortávot ÉS a darabszámot (10), a
+   rendszer a szorzattal (7.6 m) számol. A fix pixelhiba így nagyobb bázisra
+   oszlik → pontosabb GSD.
+3. **Felbontás-invariancia.** A képet kicsinyítve jelenítjük meg (inSampleSize).
+   A számítás a *méter / megjelenített-pixel* skálát használja, és a
+   *megjelenített* képszélességgel szoroz — a footprint (talajszélesség) így
+   független a megjelenítési felbontástól, nem kell az eredeti 5472 px-re
+   visszakonvertálni. (Ld. M09_L2 §10 döntés és M09_L4 §7 levezetés.)
+
+4. **A mérés a kép KÖZEPÉN történjen (2026-07-04, optikai megfontolás).**
+   Fontos, hogy a képen HOL mérünk. Egy gyakori (intuitív, de pontatlan)
+   indoklás szerint „a szél messzebb van a kamerától, ezért torzít" — valójában
+   **ideális nadír + sík talaj + torzításmentes objektív esetén a GSD az egész
+   képen ÁLLANDÓ**, mert a szenzorsík párhuzamos a talajsíkkal, és két
+   párhuzamos sík között a centrális vetítés egyszerű egyenletes nagyítás
+   (`GSD = H/f` mindenhol); a „távolabbi szél" hatást pontosan kioltja a ferdébb
+   beesési szög. A szélen mérés valós hibaforrásai NEM a távolság, hanem:
+   - **objektív radiális torzítás** — a valódi lencse a sarkokban torzít
+     (a P4P is), ez helyi skálahibát ad;
+   - **maradék gimbal-dőlés** — a gimbal sosem tökéletesen nadír, pár fok dőlés
+     a képen át skála-gradienst okoz (közeli/távoli oldal);
+   - **növénymagasság-parallaxis** — a széleken a növény oldalát, középen a
+     tetejét látjuk, a referencia elcsúszhat.
+
+   **Szintézis (feloldja a 2. szabállyal való feszültséget):** a referenciavonal
+   legyen **hosszú ÉS a képközépre szimmetrikusan elhelyezett** — hosszú a
+   pixelpontosságért, középre szimmetrikus, mert a maradék torzítás/dőlés a
+   közép körül nagyjából antiszimmetrikus, így részben kioltja magát. A
+   `GsdRulerView` mutasson középkeresztet, és figyelmeztessen, ha a vonal a
+   szélek felé csúszik. (Jövőbeli finomítás: a P4P ismert torzítási
+   együtthatóival / az XMP `DewarpData`-val a kép előzetesen kiegyenesíthető,
+   és akkor a szélen mérés is érvényes — v1-ben a „középen mérj" a pragmatikus út.)
+
+### 10.4 Több kép — footprint-módok
+
+**Terepi megfigyelés (fontos, de NEM végleges):** a felhasználó látta, hogy a
+drón repülés közben méterről méterre emelkedett, a hiba képről képre változott
+→ a hiba **NEM rendszeres** volt. **DE ez a megfigyelés IMU-kalibráció ELŐTT
+történt** — azóta a magasság-tartás vélhetően pontosabb, bár ez még nincs
+igazolva. Ezért **egyik módot sem zárjuk ki véglegesen**; a mód-viabilitást a
+poszt-IMU-kalibrációs EXIF-kereszt-ellenőrzés (§10.6) dönti el egy friss
+repülésen.
+
+| Mód | Mit csinál | Státusz |
+|-----|-----------|---------|
+| **EXIF** (jelenlegi) | A magasságból számol (§5.1) | Alapértelmezett; **HA a poszt-IMU-cal kereszt-ellenőrzés kicsi eltérést mutat, ez elég** és alig kell kézi kalibráció |
+| **Képenkénti kézi** | Minden képen külön vonalzós mérés | A **legpontosabb** mód, a biztos tartalék, ha az EXIF megbízhatatlan marad; ergonómia teszi vállalhatóvá (§10.4b) |
+| **Lehorgonyzott (anchor)** | Egy mérés + EXIF-relatív korrekció | 🔲 **Függőben** — ha a hiba poszt-cal *rendszeres* (konstans arány), ez lesz a hatékony mód |
+| **Többpontos interpoláció** | 3–4 kép kézi kalibrációja → GSD interpoláció idő/sorszám mentén | 🔲 **Függőben** — ha a drift *sima* (progresszív emelkedés); a hover-süllyed mintavételi repülésnél kérdéses |
+| **Első kép örökítése** | Egy kép GSD-jét mindre | Csak akkor, ha a magasság stabilan tartott — a kereszt-ellenőrzés igazolja |
+
+**Vagyis: a döntési fa nem előre rögzített, hanem mérés-vezérelt.** Az első
+lépés minden esetben az EXIF-kereszt-ellenőrzés lefuttatása egy poszt-IMU-cal
+repülésen — az eredménye választja ki, melyik mód az optimális.
+
+### 10.4b Hogyan tegyük a képenkénti kézi módot gyorssá (kulcs-ergonómia)
+
+A képenkénti kalibráció 30+ pontnál csak akkor vállalható, ha gyors. A trükk:
+**a referencia-távolság (sortáv) a tábla egészén állandó.** Ezért:
+
+- A felhasználó **egyszer** megadja a referenciát (pl. „76 cm × 10 sortáv”), és
+  ez **megmarad** a következő képekre.
+- Képenként csak **egy vonalat kell húzni** ugyanazon N sortávra → ~2 koppintás/kép.
+- „Következő kép” gomb/swipe a képnézetben → gyors végigpörgetés.
+- 30 pont így ~2–3 perc, teljes pontossággal.
+
+### 10.4c Hibrid gyorsítás: EXIF-kereszt-ellenőrzés az outlierekre
+
+Nem feltétlenül kell mind a 30-at kézzel mérni. Az EXIF-kereszt-ellenőrzés
+(§10.6) minden képnél megmutatja a mért vs. EXIF-GSD eltérést. Munkamenet:
+kalibrálj néhány képet → a rendszer megjelöli, mely további képek EXIF-je
+tér el gyanúsan → csak azokat kalibráld. A „jó” EXIF-ű képeknél marad az EXIF.
+
+### 10.5 A kalibráció szétválik a számlálástól (fontos folyamati döntés)
+
+A footprint **nem befolyásolja a nyers darabszámot** — a YOLO ugyanannyi tövet
+talál, akármekkora a footprint; csak a **sűrűség** (db/terület) és az
+extrapoláció függ tőle. Ezért:
+
+- A kalibráció **a számlálás UTÁN** is elvégezhető, és a db/ha + összlétszám
+  **azonnal újraszámolható** új inferencia nélkül (a drága YOLO-lépés és az
+  olcsó skála-kalibráció szétválik).
+- A felhasználó a footprintet addig hangolhatja, amíg reális eredményt nem kap,
+  másodperc alatt, a bounding boxos képen mérve.
+
+### 10.6 Bónusz: EXIF-kereszt-ellenőrzés
+
+Ha megvan a mért GSD, összevethetjük az EXIF-magasságból számolttal, és
+számszerűsítjük a magasság-hibát:
+
+```
+EXIF szerint: 12 m → GSD 0.33 cm/px
+Mérés szerint: GSD 0.66 cm/px → a drón valójában ~24 m-en repült (+100%)
+```
+
+Ez egyrészt igazolja a felhasználó megfigyelését, másrészt figyelmeztethet, ha
+egy adott kép EXIF-je gyanús (nagy eltérés a mért és következtetett GSD közt).
+
+### 10.7 UI-folyam
+
+```
+Eredmény-táblázat pontsora → bounding boxos előnézet (már kész)
+      │  Új: [📏 Skála kalibrálása] gomb a képnézetben
+      ▼
+1. Vonalzó mód: két húzható végpont a képen (zoom/nagyító a pontos illesztéshez)
+      │  Élőben: vonal pixelhossza
+      ▼
+2. Valós távolság megadása:
+      │  [ 76 ] cm  ×  [ 10 ] egység   (= 7.6 m alapvonal)
+      │  Súgó: "vízszintes talaj-távolság, pl. sortáv"
+      ▼
+3. Élő kijelzés: GSD (cm/px), footprint (m × m = m²), és
+      │  "EXIF szerint X m → mérés szerint ~Y m (±Z%)"
+      ▼
+4. Alkalmazás módja (a §10.4 megfigyelés után egyszerűsítve):
+      │  (•) Csak erre a képre         ← elsődleges (a hiba pontonként eltér)
+      │  ( ) Következő kalibrálatlan képre lépés (referencia megmarad)
+      │  ( ) [haladó] Interpoláció a kalibrált pontok közé (csak sima drift)
+      │  A referencia-távolság MEGMARAD a következő képre (§10.4b)
+      ▼
+5. A db/ha és az összlétszám azonnal újraszámol, results.json frissül
+   (footprint_source + footprint_area_m2 pontonként mentve)
+```
+
+### 10.8 Prioritás
+
+Ez **fontosabb, mint a zónásítás**: a zónásítás a mintavétel *hatékonyságát*
+javítja, ez viszont a végeredmény *helyességét*. Pontatlan footprinttel a
+legszebb zónásítás is rossz db/ha-t ad. Ezért ez az elsőként megvalósítandó
+fejlesztés a jelenlegi M09 v1 után.
+
+### 10.9 A magasság-hiba jellege — ÚJRA NYITOTT (IMU-kalibráció miatt)
+
+A korábbi „erratikus → csak képenkénti" következtetést **fel kell oldani**: az a
+megfigyelés **IMU-kalibráció előtt** történt, azóta a magasság-tartás vélhetően
+javult (de nem igazolt). Ezért a footprint-mód nincs előre rögzítve — az első
+lépés egy **poszt-IMU-cal repülés képein az EXIF-kereszt-ellenőrzés** (§10.6)
+lefuttatása:
+- kis eltérés (EXIF ≈ mért) → az **EXIF mód elég**, alig kell kézi kalibráció;
+- rendszeres eltérés (konstans arány) → a **lehorgonyzott** mód a hatékony;
+- sima drift → a **többpontos interpoláció**;
+- erratikus → a **képenkénti kézi** a biztos, pontos tartalék (§10.4b ergonómia).
+
+Ezért a mérőeszközt (§10.6 kereszt-ellenőrzés) úgy kell megépíteni, hogy elsőként
+ezt a diagnózist adja meg — a kalibrációs UI a mérés mellé mindig kiírja a mért
+vs. EXIF eltérést, több képen összesítve is.
+
+### 10.10 Mélyebb következmény — a mintavételi repülés maga (jövőbeli megfontolás)
+
+Ha a magasság ennyire megbízhatatlan alacsonyan, felvetődik, hogy a *repülési*
+oldalon is javítani kellene (M01/M04 hatókör, nem M09): pl. terepkövetés
+pontosabb magasság-referenciával, lassabb süllyedés a stabilabb hover-magasságért,
+vagy a mintavételi magasság emelése oda, ahol a barométer megbízhatóbb (a footprint
+nő, de a GSD kalibrációval korrigálható). Ez nem ennek a modulnak a feladata, de
+rögzítjük, mert a gyökér-ok a repülésvezérlésben van, nem a kiértékelésben.

@@ -30,6 +30,9 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
+        // ONNX Runtime java.util.Optional-t (API 24+) használ — Android 5.1-en
+        // (API 22) ClassNotFoundException nélkül csak desugaring-gal fut
+        coreLibraryDesugaringEnabled true
     }
 
     packagingOptions {
@@ -66,4 +69,9 @@ dependencies {
 
     // HTTP letöltéshez (CSV/KMZ online import)
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'
+
+    // M09 — Edge AI Tőszámlálás: ONNX Runtime Mobile, CPU-only, API 22-kompatibilis.
+    // A Dronterápia rendszer natívan ONNX-et tanít be — nincs szükség tflite konverzióra.
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.3'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
 }

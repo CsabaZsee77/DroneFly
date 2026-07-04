@@ -20,7 +20,7 @@
 | [M05 Kamera Konfigurátor](M05_KAMERA_KONFIGURATOR/) | Manuális expozíció (ISO/rekesz/zár/WB/fókusz), élő hisztogram, EV csúszka smart prioritással, kamera profilok | 🔲 Tervezve |
 | [M06 Dronterapia Szinkron](M06_DRONTERAPIA_SYNC/) | NetworkMonitor, AuthManager (username+jelszó), SyncManager (kétirányú .flightprogram.json szinkronizáció), Sync UI | ✅ Implementálva (v2.1.0) |
 | [M07 Blokk-felosztás](M07_BLOKK_FELOSZTAS/) | Nagy területű AOI felbontása rácscellákra (W×H + dőlés + átfedés-puffer), blokk-tap kiválasztás, blokkonkénti misszió generálás, állapotkövetés | ✅ Kézi UI-verifikáció OK Crystal Sky-n (2026-07-02) |
-| [M09 Edge AI Tőszámlálás](M09_EDGE_AI_TOSZAMLALAS/) | Mintavételi session fotóin tabletes YOLO (TFLite) inferencia, azonnali db/ha sűrűség + teljes területre extrapolált összlétszám, offline (M04 médialetöltésre épül) | 🔲 Tervezve — L1–L4 spec kész (2026-07-02), implementáció nem kezdődött el |
+| [M09 Edge AI Tőszámlálás](M09_EDGE_AI_TOSZAMLALAS/) | Mintavételi session fotóin tabletes YOLO (**ONNX Runtime Mobile** — a Dronterápia natív ONNX modelljei konverzió nélkül) inferencia, azonnali db/ha sűrűség + FPC/Student-t alapú konfidenciaintervallummal extrapolált összlétszám, offline; önálló `SamplingResultsActivity` + `PhotoImportActivity` (fotóimport drón SD-ről / tablet tárolóból, repülési terv kontextussal, repüléstől függetlenül); állítható konf/IoU küszöb; fotó-előnézetek | ✅ **Eszközön verifikálva Crystal Sky-n (2026-07-03)** — importált kukoricatábla-fotón 178 detektálás, EXIF GPS, extrapolált eredmény + CSV export OK; API 22 Optional-crash javítva (desugaring). ✅ **GSD vonalzós kalibráció** (§10) — mért footprint a bizonytalan barometrikus magasság helyett; eszközön verifikálva (footprint 41,6 m², db/ha inferencia nélkül újraszámol, EXIF-kereszt-ellenőrzés) |
 | [M10 Sűrű Rács (alacsony repülés)](M10_SURU_ALACSONY_RACS/) | NORMAL-módú, sűrű waypoint-rács + app-vezérelt trigger minden fotópozíción — a CURVED+intervallum mód 20 m alatti strukturális korlátjára (M02 §8.3) ad megoldást teljes ortomozaikhoz | ✅ Implementálva (2026-07-03), eszközön még nem tesztelve |
 | Kp-index (státuszsáv) | NOAA geomágneses aktivitás lekérő, 10 percenként frissül, MAG: 0–9 színkódolva | ✅ Implementálva (v1.9.3) |
 | Offline térkép | OSMDroid cache, automatikus offline mód WiFi nélkül, letöltés gomb (hosszú nyomás SAT/MAP gombon), réteg guard offline módban | ✅ Implementálva (v1.9.5) |
@@ -68,12 +68,17 @@ app/src/main/java/com/dronefly/app/
     ├── CameraConfigurator.java       ← M04 kamera beállítások
     └── MediaSessionDownloader.java   ← M04 §16 session-alapú médialetöltés
 
-ai/                                    ← M09 — TERVEZETT, még nem létezik
-├── YoloModelManager.java             ← .tflite + sidecar .json betöltés/validáció
+ai/                                    ← M09, implementálva (2026-07-03)
+├── YoloModelManager.java             ← .onnx + sidecar .json betöltés/validáció
 ├── ModelMetadata.java                ← modell-metaadat POJO
-├── YoloInferenceEngine.java          ← TFLite Interpreter wrapper, NMS
+├── YoloInferenceEngine.java          ← ONNX Runtime (OrtSession) wrapper, NCHW preprocess, NMS
 ├── Detection.java                    ← detekció POJO
-└── SamplingResultCalculator.java     ← db/ha sűrűség + teljes területi extrapoláció
+├── PointResult.java                  ← mintaponti eredmény POJO
+├── SamplingCountResult.java          ← összesített eredmény POJO + results.json (de)szerializáció
+└── SamplingResultCalculator.java     ← db/ha sűrűség + FPC/Student-t extrapoláció
+
+SamplingResultsActivity.java          ← M09 eredmény-képernyő (önálló, nem a MissionPlannerActivity panelje)
+PhotoImportActivity.java              ← M09 fotóimport (drón SD / tablet, repülési terv kontextus, EXIF GPS)
 
 app/src/main/res/
 ├── layout/

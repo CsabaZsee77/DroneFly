@@ -28,6 +28,11 @@ public class MainActivity extends AppCompatActivity {
 
         btnPlan.setOnClickListener(v ->
             startActivity(new Intent(this, MissionPlannerActivity.class)));
+
+        // M09 — tőszámlálás bármikor elérhető, repüléstől függetlenül
+        Button btnCounting = findViewById(R.id.btnCounting);
+        btnCounting.setOnClickListener(v ->
+            startActivity(new Intent(this, SamplingResultsActivity.class)));
     }
 
     @Override

@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#1a1a2e"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:text="📂 Fotók importálása tőszámláláshoz"
+            android:textSize="22sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/btnBack"
+            android:text="← Vissza"
+            android:backgroundTint="#444466"
+            android:textColor="#FFFFFF"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"/>
+    </LinearLayout>
+
+    <!-- Forrás választás -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp">
+
+        <Button
+            android:id="@+id/btnSourceDrone"
+            android:text="🛸 Drón SD kártya"
+            android:backgroundTint="#FF6600"
+            android:textColor="#FFFFFF"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnSourceTablet"
+            android:text="📱 Tablet tároló"
+            android:backgroundTint="#444466"
+            android:textColor="#FFFFFF"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="48dp"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvSourceStatus"
+        android:text=""
+        android:textColor="#AAAACC"
+        android:textSize="12sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="4dp"/>
+
+    <!-- Fájllista -->
+    <ListView
+        android:id="@+id/listPhotos"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#12122a"
+        android:layout_marginBottom="8dp"/>
+
+    <!-- Kontextus: repülési terv -->
+    <TextView
+        android:text="Kontextus — melyik repülési tervhez tartoznak a fotók?"
+        android:textColor="#FFAA00"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="4dp"/>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="4dp">
+
+        <Spinner
+            android:id="@+id/spinnerFlightPlan"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="44dp"
+            android:background="#2a2a4e"
+            android:layout_marginEnd="8dp"/>
+
+        <TextView
+            android:id="@+id/tvPlanInfo"
+            android:text=""
+            android:textColor="#00FF88"
+            android:textSize="12sp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Kézi kontextus (csak "Kézi megadás" esetén látszik) -->
+    <LinearLayout
+        android:id="@+id/manualContextPanel"
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="4dp"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/etManualAltitude"
+            android:hint="Fotózási magasság [m]"
+            android:inputType="numberDecimal"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#666688"
+            android:textSize="13sp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"/>
+
+        <EditText
+            android:id="@+id/etManualAreaHa"
+            android:hint="Tábla területe [ha]"
+            android:inputType="numberDecimal"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#666688"
+            android:textSize="13sp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Import gomb + progress -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/btnImport"
+            android:text="Kiválasztottak importálása"
+            android:backgroundTint="#FF6600"
+            android:textColor="#FFFFFF"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"/>
+
+        <ProgressBar
+            android:id="@+id/importProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:visibility="gone"/>
+
+        <TextView
+            android:id="@+id/tvImportStatus"
+            android:text=""
+            android:textColor="#CCCCEE"
+            android:textSize="12sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+</LinearLayout>

@@ -150,7 +150,20 @@
                 android:textColor="#FF8800"
                 android:textStyle="bold"
                 android:padding="0dp"
-                android:backgroundTint="#CC2e1a00"/>
+                android:backgroundTint="#CC2e1a00"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- Tőszámláló megnyitása (M09) -->
+            <Button
+                android:id="@+id/btnOpenCounting"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="AI"
+                android:textSize="10sp"
+                android:textColor="#88AAFF"
+                android:textStyle="bold"
+                android:padding="0dp"
+                android:backgroundTint="#CC1a1a3e"/>
 
         </LinearLayout>
 
