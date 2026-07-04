@@ -208,7 +208,13 @@ public class MissionUploader {
             public void onExecutionUpdate(WaypointMissionExecutionEvent event) {
                 if (event == null || event.getProgress() == null) return;
                 dji.common.mission.waypoint.WaypointExecutionProgress p = event.getProgress();
-                if (p.isWaypointReached) {
+                // Deduplikálás (M04_L1 §19, terepi teszt 2026-07-04): az
+                // onExecutionUpdate másodpercenként sokszor lefut, és amíg a drón a
+                // waypointon hoverel (STAY akció), az isWaypointReached végig true —
+                // ezért csak akkor tüzeljünk, ha a waypoint-index VÁLTOZOTT az
+                // előzőhöz képest. Enélkül a mintavételi/M10 trigger pontonként
+                // többször exponál (5 pont → 10 fotó).
+                if (p.isWaypointReached && p.targetWaypointIndex != trackedWaypointIndex) {
                     trackedWaypointIndex = p.targetWaypointIndex;
                     if (listener != null) {
                         listener.onWaypointReached(trackedWaypointIndex, totalWaypoints);

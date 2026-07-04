@@ -2954,13 +2954,23 @@ public class MissionPlannerActivity extends AppCompatActivity {
         StringBuilder sbStats = new StringBuilder();
         if (lastResult.isSamplingMission) {
             sbStats.append(String.format(
-                "Terulet: %.2f ha | %d mintapont | %d waypoint (%d szegmens)\n" +
+                "Terulet: %.2f ha | %d/%d mintapont | %d waypoint (%d szegmens)\n" +
                 "Transit magassag: %.0f m | Mintaveteli magassag: %.0f m\n" +
                 "Sebesseg: %.0f m/s | Ido: ~%.0f perc",
-                lastResult.areaM2 / 10000.0, lastResult.sampleCount,
+                lastResult.areaM2 / 10000.0, lastResult.sampleCount, config.nSamplePoints,
                 lastResult.totalWaypoints, lastResult.segments.size(),
                 config.transitAltitudeM, config.sampleAltitudeM,
                 (double) config.speedMs, lastResult.estimatedMinutes));
+            // Tartós, nem elsikló figyelmeztetés a shortfallra (M02_L1 §9) — a
+            // Toast könnyen elsiklik, a stats-szöveg mindig látszik a generálás után.
+            if (lastResult.sampleCount < config.nSamplePoints) {
+                double fpW = GsdCalculator.imageCoverageWidthM(
+                        config.sampleAltitudeM, config.droneProfile);
+                sbStats.append(String.format(
+                    "\n⚠ Csak %d/%d mintapont fér el átfedés nélkül (min. %.0f m tavolsag).\n" +
+                    "   Nagyobb terulet vagy kisebb mintaveteli magassag kell a tobbihez.",
+                    lastResult.sampleCount, config.nSamplePoints, Math.max(1.0, fpW)));
+            }
             if (config.transitAltitudeM > MAX_ALTITUDE_LEGAL) {
                 Toast.makeText(this,
                     String.format("Figyelem: transit magasság %.0fm > 120m (EU határ)!",
@@ -3597,12 +3607,14 @@ public class MissionPlannerActivity extends AppCompatActivity {
             public void onPhotoConfirmed() {
                 runOnUiThread(() -> {
                     if (point != null) confirmedSamplePointsForSession.add(point);
+                    playPhotoBeep();   // hangjelzés: tényleg megtörtént a fotó
                 });
             }
             @Override
             public void onPhotoFailed(String reason) {
                 runOnUiThread(() -> {
                     samplingPhotosFailed++;
+                    playPhotoFailTone();
                     Toast.makeText(MissionPlannerActivity.this,
                         "⚠ Mintapont fotó sikertelen: " + reason, Toast.LENGTH_SHORT).show();
                 });
@@ -3621,17 +3633,57 @@ public class MissionPlannerActivity extends AppCompatActivity {
         CameraConfigurator.triggerSamplePhoto(new CameraConfigurator.PhotoTriggerListener() {
             @Override
             public void onPhotoConfirmed() {
-                runOnUiThread(() -> denseGridPhotosConfirmed++);
+                runOnUiThread(() -> {
+                    denseGridPhotosConfirmed++;
+                    playPhotoBeep();
+                });
             }
             @Override
             public void onPhotoFailed(String reason) {
                 runOnUiThread(() -> {
                     denseGridPhotosFailed++;
+                    playPhotoFailTone();
                     Toast.makeText(MissionPlannerActivity.this,
                         "⚠ Waypoint fotó sikertelen: " + reason, Toast.LENGTH_SHORT).show();
                 });
             }
         });
+    }
+
+    // ── Fotó hangjelzés (DJI GO4-szerű visszajelzés, 2026-07-04) ─────────────
+    // A felhasználó a hangból tudja, tényleg megtörtént-e a fotó. Csak az
+    // app-vezérelt triggerű módoknál szól (mintavételi + M10 sűrű rács), mert
+    // ott van SDK-visszaigazolás (onPhotoConfirmed); intervallum módban a
+    // kamera önállóan időzít, arra nincs per-fotó callback (jövőbeli bővítés:
+    // Camera SystemState shutter/tárolás él-detektálás).
+    private android.media.ToneGenerator photoToneGen;
+
+    private android.media.ToneGenerator toneGen() {
+        if (photoToneGen == null) {
+            try {
+                photoToneGen = new android.media.ToneGenerator(
+                        android.media.AudioManager.STREAM_MUSIC, 100);
+            } catch (Throwable t) {
+                android.util.Log.w("MissionPlanner", "ToneGenerator init hiba: " + t.getMessage());
+            }
+        }
+        return photoToneGen;
+    }
+
+    /** Rövid csippanás sikeres fotónál. */
+    private void playPhotoBeep() {
+        try {
+            android.media.ToneGenerator tg = toneGen();
+            if (tg != null) tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 150);
+        } catch (Throwable ignored) {}
+    }
+
+    /** Eltérő (figyelmeztető) hang sikertelen fotónál. */
+    private void playPhotoFailTone() {
+        try {
+            android.media.ToneGenerator tg = toneGen();
+            if (tg != null) tg.startTone(android.media.ToneGenerator.TONE_PROP_NACK, 350);
+        } catch (Throwable ignored) {}
     }
 
     private void updateProgressUI(int actualIndex, int totalSize) {
@@ -3911,8 +3963,21 @@ public class MissionPlannerActivity extends AppCompatActivity {
     private GridMissionGenerator.GeneratorResult runGeneration(List<GeoPoint> polygon,
                                                                MissionConfig config) {
         if (config.samplingMode) {
+            // Min-távolság a footprint szélességéből (M02_L1 §9.2) — hogy két
+            // mintaponti fotó ne fedjen át. A sample magasság + drónprofil GSD-jéből.
+            double footprintW = GsdCalculator.imageCoverageWidthM(
+                    config.sampleAltitudeM, config.droneProfile);
+            double minDistM = Math.max(1.0, footprintW);
             lastSamplePoints = SamplingPointGenerator.generate(
-                    polygon, config.nSamplePoints, config.samplingMethod, config.samplingSeed);
+                    polygon, config.nSamplePoints, config.samplingMethod,
+                    config.samplingSeed, minDistM);
+            // Figyelmeztetés, ha a terület a min-távolság mellett kevesebbre elég
+            if (lastSamplePoints.size() < config.nSamplePoints) {
+                Toast.makeText(this, "⚠ Csak " + lastSamplePoints.size() + "/"
+                        + config.nSamplePoints + " mintapont fér el átfedés nélkül "
+                        + "(min. " + Math.round(minDistM) + " m távolság). Kisebb magasság "
+                        + "vagy nagyobb terület kell a többhöz.", Toast.LENGTH_LONG).show();
+            }
             drawSamplePointMarkers(lastSamplePoints);
             return SamplingMissionGenerator.generate(lastSamplePoints, polygon, config);
         } else {
@@ -3980,7 +4045,18 @@ public class MissionPlannerActivity extends AppCompatActivity {
         progress.setMessage("Session médiafájlok letöltése...");
         progress.setMax(pointsForDownload.size());
         progress.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        // Megszakítható (M04 §16.5): a Mégse megszakítja a letöltést, elrejti a
+        // dialógust, és a "Fotók letöltése" gomb látható marad → azonnal
+        // újraindítható (nincs app-újraindítás). btnDownloadSession csak SIKERES
+        // letöltéskor tűnik el (onSessionComplete).
         progress.setCancelable(false);
+        progress.setButton(android.app.ProgressDialog.BUTTON_NEGATIVE, "Mégse",
+            (dialog, which) -> {
+                mediaSessionDownloader.cancelDownload();
+                dialog.dismiss();
+                Toast.makeText(this, "Letöltés megszakítva — újraindítható a gombbal",
+                    Toast.LENGTH_SHORT).show();
+            });
         progress.show();
 
         double sampleAltitudeForSession = lastResult != null ? lastResult.altitudeM : 0.0;
@@ -4166,6 +4242,7 @@ public class MissionPlannerActivity extends AppCompatActivity {
         statusHandler.removeCallbacks(statusRunnable);
         if (videoWidget != null) videoWidget.destroy();
         NetworkMonitor.getInstance(this).unregister();
+        if (photoToneGen != null) { photoToneGen.release(); photoToneGen = null; }
     }
 
     // ── Képernyőkép és videórögzítés ──────────────────────────────────────

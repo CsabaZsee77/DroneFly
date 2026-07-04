@@ -102,9 +102,17 @@ elavulna. Az app csak **futtatókörnyezet**, a modell külső, cserélhető fá
   "confThreshold": 0.35,
   "iouThreshold": 0.45,
   "targetClassIndex": 0,
-  "classNames": ["corn_plant"]
+  "classNames": ["corn_plant"],
+  "trainGsdCmPx": 1.0
 }
 ```
+
+**`trainGsdCmPx` (új mező, 2026-07-04, M09_L1 §11.4):** a GSD, amelyre méretezett
+csempéken a modell tanult (cm/px). A GSD-tudatos futtatás ehhez méretezi a
+mintaképet a detektálás előtt. **A Dronterápia webes oldalon** kell a
+betanításkor rögzíteni (külön egyeztetés). **Ha hiányzik a sidecar-ból:** a
+rendszer **1,0 cm/px-t feltételez**, és a UI jelzi, hogy ez feltételezés (a
+jelenlegi `kukorica_640px` modellhez a valós érték nem ismert).
 
 **Döntés:** ha a `.json` hiányzik egy `.onnx` mellett, az app **nem**
 próbál találgatni (nincs "ésszerű alapértelmezés" egy ismeretlen kimeneti
@@ -251,7 +259,7 @@ formában (EditText, 0–1 clamp, alapérték a sidecar-ból, használt érték 
 |-----------------|-----------|----------|
 | Konfidencia küszöb | ✅ állítható | A detektálási érzékenység alap-hangolása — enélkül a modell nem kalibrálható terepen |
 | IoU küszöb (NMS) | ✅ állítható | Sűrű állományban (pl. korai kukorica) kritikus a dupla-detektálás szűréséhez |
-| Sliding window + átfedés | ❌ későbbi fázis | A mintaponti fotó egyetlen kép (nem ortomozaik) — az egész kép egy ablakban feldolgozható; nagy felbontásnál a 640-re skálázás információvesztése valós, de a megoldása (csempézés) jelentős futásidő-többlet a gyenge CPU-n — terepi validáció döntse el, kell-e |
+| Sliding window + átfedés | ✅ **v1-be került (2026-07-04, ld. M09_L1 §11)** | **A korábbi „későbbi fázis" döntés visszavonva.** Nem információvesztési kérdés, hanem **GSD-konzisztencia**: a modell adott betanítási GSD-hez kötött, ezért a mintaképet a betanítási GSD-re kell méretezni, majd sliding window-val csempézni — enélkül a detektálás a skálahiba miatt megbízhatatlan (csak kézi konfidencia-hangolással „stimmel"). A futásidő-többlet valós, de az eredmény helyessége ezt megéri (M09_L1 §11.7) |
 | TTA (Test-Time Augmentation) | ❌ későbbi fázis | 3–8× futásidő-szorzó — Crystal Sky-on percekből tízpercek lennének |
 | Sor-detekció + penalty | ❌ későbbi fázis | Python-oldali (numpy) logika portolása; az azonnali szám-becsléshez nem szükséges |
 | Preprocessing presetek (ExGreen stb.) | ❌ későbbi fázis | Csak akkor releváns, ha a modellt preset-elt képeken tanították — a Dronterapia modellek jellemzően RGB-n tanulnak |
@@ -327,17 +335,28 @@ képenkénti kézi mód — mint a biztos tartalék — legyen ergonomikus (§10
 | Outlier-megjelölés | Az EXIF-kereszt-ellenőrzés (M09_L1 §10.6) megjelöli a gyanús EXIF-ű pontokat | A felhasználó csak az eltérőket kalibrálja, nem mind a 30-at |
 | Nyers mérés tárolása | `ref_distance_m`, `ref_pixel_length`, `gsd_cm_px` a results.json-ba | Reprodukálhatóság + a mérés utólag ellenőrizhető |
 
-### 10.4 Miért a számlálás után kalibrálunk (nem előtte)?
+### 10.4 A kalibráció időzítése — REVIDEÁLVA (2026-07-04, ld. M09_L1 §11)
 
-**Döntés:** a kalibráció a számlálás UTÁN is elvégezhető, a sűrűség azonnal
-újraszámol.
+> **⚠ A korábbi „számlálás UTÁN kalibrálunk" döntés módosítva.** Az akkori
+> indoklás azon állt, hogy a footprint csak a *sűrűséget* befolyásolja, a
+> *darabszámot* nem. Ez a **naiv teljes-kép-resize** mellett igaz volt, de a
+> GSD-tudatos csempézés (M09_L1 §11) mellett a GSD a **detektálási resize-skálát
+> is** meghatározza → befolyásolja a darabszámot. Ezért:
 
-**Indoklás:** a footprint a nyers darabszámot nem befolyásolja (M09_L1 §10.5),
-csak a db/terület hányadost. Ha a kalibrációt a számlálás elé tennénk kötelező
-lépésként, feleslegesen blokkolnánk a drága YOLO-futtatást egy olcsó, utólag is
-elvégezhető lépéssel. Így a felhasználó a footprintet iteratívan hangolhatja
-(bounding boxos képen mérve), és minden alkalommal csak egy gyors
-újraszámítás fut — nem új inferencia.
+**Új döntés:** a **fő GSD-mérés a futtatás ELŐTT** történik (a betöltött
+mintaképeken, nem az eredmény-sorra kattintva). A mért GSD kettős célt szolgál:
+(a) a kép átméretezése a betanítási GSD-re a detektáláshoz, (b) a footprint a
+sűrűséghez. Egy GSD-változás **újrafuttatást** igényel (nem csak
+density-újraszámítást).
+
+**Ami megmaradhat:** a footprint *utólagos* finomítása a sűrűséghez (ha a
+felhasználó egy pont footprintjét pontosítja, a density újraszámolható inferencia
+nélkül) — de ez másodlagos; a fő GSD-t előre mérjük, mert az a detektálás
+feltétele.
+
+**Pragmatikus enyhítés (M09_L1 §11.6):** ha a mért GSD az EXIF-hez közel van
+(kereszt-ellenőrzés kicsi eltérést mutat), az EXIF-GSD elég a futtatáshoz — a
+YOLO ±20-30% skálát tűr. A mérés a biztonság a nagy barometrikus hiba ellen.
 
 ### 10.5 Kerekítés és tárolás
 

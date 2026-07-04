@@ -92,9 +92,28 @@ public class YoloModelManager {
         return result;
     }
 
-    private static File sidecarFor(File modelFile) {
+    /** Az összes .onnx fájl a models mappában (sidecar nélkülieket is) — a metaadat-űrlaphoz. */
+    public static List<File> listAllOnnx() {
+        List<File> result = new ArrayList<>();
+        File dir = getModelsDir();
+        File[] files = dir.exists() ? dir.listFiles() : null;
+        if (files == null) return result;
+        for (File f : files) {
+            if (f.getName().toLowerCase(Locale.US).endsWith(MODEL_EXT)) result.add(f);
+        }
+        Collections.sort(result, new Comparator<File>() {
+            @Override public int compare(File a, File b) {
+                return a.getName().compareToIgnoreCase(b.getName());
+            }
+        });
+        return result;
+    }
+
+    /** Egy .onnx-hoz tartozó sidecar .json fájl (létezhet vagy sem). */
+    public static File sidecarFor(File modelFile) {
         String name = modelFile.getName();
-        String base = name.substring(0, name.length() - MODEL_EXT.length());
+        int dot = name.toLowerCase(Locale.US).lastIndexOf(MODEL_EXT);
+        String base = dot > 0 ? name.substring(0, dot) : name;
         return new File(modelFile.getParentFile(), base + ".json");
     }
 

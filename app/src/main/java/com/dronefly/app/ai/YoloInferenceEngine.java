@@ -2,6 +2,9 @@ package com.dronefly.app.ai;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -64,17 +67,23 @@ public class YoloInferenceEngine {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     /**
-     * @param sessionDir  sampling_sessions/{sessionId}/ mappa (point_*.jpg + session.json)
-     * @param modelFile   kiválasztott .onnx fájl
-     * @param meta        ModelMetadata (sidecar .json betöltve)
-     * @param cancelFlag  true esetén a ciklus a következő kép előtt megáll
+     * @param sessionDir     sampling_sessions/{sessionId}/ mappa (point_*.jpg + session.json)
+     * @param modelFile      kiválasztott .onnx fájl
+     * @param meta           ModelMetadata (sidecar .json betöltve)
+     * @param gsdByFile      per-kép mért GSD (localFile → cm/px, eredeti-felbontás);
+     *                       amelyik kép nincs benne, a fallbackGsdCmPx-t kapja (M09_L1 §11.4a)
+     * @param fallbackGsdCmPx a nem mért képek GSD-je (a mért képek átlaga, vagy EXIF)
+     * @param cancelFlag     true esetén a ciklus a következő kép előtt megáll
      */
     public void runOnSession(File sessionDir, File modelFile, ModelMetadata meta,
+                             java.util.Map<String, Double> gsdByFile, double fallbackGsdCmPx,
                              AtomicBoolean cancelFlag, InferenceListener listener) {
-        executor.execute(() -> runInternal(sessionDir, modelFile, meta, cancelFlag, listener));
+        executor.execute(() -> runInternal(sessionDir, modelFile, meta, gsdByFile,
+                fallbackGsdCmPx, cancelFlag, listener));
     }
 
     private void runInternal(File sessionDir, File modelFile, ModelMetadata meta,
+                             java.util.Map<String, Double> gsdByFile, double fallbackGsdCmPx,
                              AtomicBoolean cancelFlag, InferenceListener listener) {
         List<SessionPoint> points;
         try {
@@ -133,13 +142,14 @@ public class YoloInferenceEngine {
 
             long startMs = System.currentTimeMillis();
             File imgFile = new File(sessionDir, sp.localFile);
-            Bitmap bitmap = null;
+            // Per-kép GSD: saját mérés a map-ból, vagy a fallback (átlag/EXIF) (M09_L1 §11.4a)
+            double imgGsd = (gsdByFile != null && gsdByFile.containsKey(sp.localFile))
+                    ? gsdByFile.get(sp.localFile) : fallbackGsdCmPx;
             try {
-                bitmap = decodeDownsampled(imgFile, meta.inputSize);
-                if (bitmap == null) throw new IOException("decodeFile null eredmény");
-
-                List<Detection> detections = detectSingle(session, env, bitmap, meta,
-                        expectedChannels);
+                // GSD-tudatos, csempézett detektálás (M09_L1 §11, M09_L3):
+                // a képet a betanítási GSD-re méretezi, majd sliding window.
+                List<Detection> detections = detectSingleTiled(session, env, imgFile, meta,
+                        imgGsd);
                 pr.count = detections.size();
                 pr.detections = detections;
                 pr.inferenceMs = System.currentTimeMillis() - startMs;
@@ -153,8 +163,6 @@ public class YoloInferenceEngine {
                 pr.warning = "Kép nem feldolgozható: " + e.getMessage();
                 final String err = pr.warning;
                 mainHandler.post(() -> listener.onImageError(idx, err));
-            } finally {
-                if (bitmap != null) bitmap.recycle();
             }
 
             results.add(pr);
@@ -170,6 +178,33 @@ public class YoloInferenceEngine {
             session.close();
         } catch (OrtException e) {
             Log.e(TAG, "OrtSession close hiba: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Modell-alak kiolvasása a metaadat-űrlaphoz (M09_L1 §11 / M09_L2 §3.2):
+     * a bemeneti tenzor [1,3,H,W] → inputSize (W), a kimeneti [1,4+nc,N] → nc.
+     * @return int[]{inputSize, numClasses}; ha nem olvasható, {0,0}
+     */
+    public static int[] readModelInfo(File onnxFile) {
+        OrtEnvironment env = OrtEnvironment.getEnvironment();
+        OrtSession session = null;
+        try {
+            session = env.createSession(onnxFile.getAbsolutePath(),
+                    new OrtSession.SessionOptions());
+            int inputSize = 0, numClasses = 0;
+            NodeInfo in = session.getInputInfo().values().iterator().next();
+            long[] inShape = ((TensorInfo) in.getInfo()).getShape(); // [1,3,H,W]
+            if (inShape.length == 4 && inShape[3] > 0) inputSize = (int) inShape[3];
+            NodeInfo out = session.getOutputInfo().values().iterator().next();
+            long[] outShape = ((TensorInfo) out.getInfo()).getShape(); // [1,4+nc,N]
+            if (outShape.length == 3 && outShape[1] > 4) numClasses = (int) (outShape[1] - 4);
+            return new int[]{inputSize, numClasses};
+        } catch (Throwable t) {
+            Log.w(TAG, "readModelInfo hiba: " + t.getMessage());
+            return new int[]{0, 0};
+        } finally {
+            if (session != null) try { session.close(); } catch (OrtException ignored) {}
         }
     }
 
@@ -196,25 +231,127 @@ public class YoloInferenceEngine {
         return BitmapFactory.decodeFile(f.getAbsolutePath(), opts);
     }
 
-    // ── Egyetlen kép feldolgozása ─────────────────────────────────────────
+    // ── GSD-tudatos, csempézett feldolgozás (M09_L1 §11, M09_L3, M09_L4 §8) ──
 
-    private List<Detection> detectSingle(OrtSession session, OrtEnvironment env, Bitmap bitmap,
-                                         ModelMetadata meta, int channels) throws OrtException {
-        FloatBuffer input = preprocess(bitmap, meta.inputSize);
+    private static final float TILE_OVERLAP = 0.2f;   // 20% átfedés a csempék közt
+    private static final int MAX_RESIZED_DIM = 4096;  // memória/csempeszám-korlát
+
+    /**
+     * Egy mintakép GSD-tudatos feldolgozása: a képet a betanítási GSD-re méretezi
+     * (f = actualGsd/trainGsd), sliding window csempékre bontja, csempénként
+     * inferál, a detekciókat a resized kép globális koordinátáira vetíti, végül
+     * cross-tile NMS. Ha actualGsd ≤ 0 (nincs GSD): naiv, teljes-kép→inputSize
+     * fallback (aspect-tartó).
+     */
+    private List<Detection> detectSingleTiled(OrtSession session, OrtEnvironment env, File imgFile,
+                                              ModelMetadata meta, double actualGsdCmPx)
+            throws Exception {
+        int inp = meta.inputSize;
+
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(imgFile.getAbsolutePath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0)
+            throw new IOException("decode bounds hiba");
+        int origW = bounds.outWidth, origH = bounds.outHeight;
+
+        double trainGsd = meta.trainGsdCmPx > 0 ? meta.trainGsdCmPx : 1.0;
+        double f = (actualGsdCmPx > 0) ? actualGsdCmPx / trainGsd : (double) inp / origW;
+
+        int targetW = clampDim((int) Math.round(origW * f), inp);
+        int targetH = clampDim((int) Math.round(origH * f), inp);
+
+        Bitmap resized = decodeAndScale(imgFile, targetW, targetH);
+        if (resized == null) throw new IOException("resize hiba");
+        // A valós target a resized bitmap tényleges mérete (a decode/scale után)
+        targetW = resized.getWidth();
+        targetH = resized.getHeight();
+
+        List<Detection> all = new ArrayList<>();
+        int stride = Math.max(1, (int) (inp * (1f - TILE_OVERLAP)));
+        try {
+            for (int ty = 0; ty < targetH; ty += stride) {
+                for (int tx = 0; tx < targetW; tx += stride) {
+                    Bitmap tile = cropTile(resized, tx, ty, inp);
+                    List<Detection> td;
+                    try {
+                        td = detectTile(session, env, tile, meta);
+                    } finally {
+                        tile.recycle();
+                    }
+                    for (Detection d : td) {
+                        float gcx = (tx + d.cx * inp) / (float) targetW;
+                        float gcy = (ty + d.cy * inp) / (float) targetH;
+                        float gw = d.w * inp / (float) targetW;
+                        float gh = d.h * inp / (float) targetH;
+                        all.add(new Detection(d.classIndex, d.confidence, gcx, gcy, gw, gh));
+                    }
+                    if (tx + inp >= targetW) break;   // a jobb szélt lefedtük (padding)
+                }
+                if (ty + inp >= targetH) break;
+            }
+        } finally {
+            resized.recycle();
+        }
+        // Cross-tile NMS a resized kép globális koordinátáin (M09_L4 §8.3)
+        return nonMaxSuppression(all, meta.iouThreshold);
+    }
+
+    /** Egy inputSize×inputSize csempe inferenciája — a raw output → Detection lista. */
+    private List<Detection> detectTile(OrtSession session, OrtEnvironment env, Bitmap tile,
+                                       ModelMetadata meta) throws OrtException {
+        FloatBuffer input = preprocess(tile, meta.inputSize);
         long[] inputShape = {1, 3, meta.inputSize, meta.inputSize};
-
         String inputName = session.getInputNames().iterator().next();
-
         try (OnnxTensor inputTensor = OnnxTensor.createTensor(env, input, inputShape);
              OrtSession.Result result = session.run(Collections.singletonMap(inputName, inputTensor))) {
-            // FONTOS (Android 5.1 / API 22): a result.get(name) java.util.Optional-t
-            // ad vissza, ami API 24+ osztály → ClassNotFoundException Crystal Sky-n
-            // (terepi teszt, 2026-07-03). Az iterátoros hozzáférés nem használ
-            // Optional-t; egyetlen output tenzor van (alak-ellenőrzés a betöltésnél).
+            // API 22: az iterátoros hozzáférés nem használ java.util.Optional-t (§Optional-crash)
             OnnxValue value = result.iterator().next().getValue();
             float[][][] output = (float[][][]) value.getValue();
-            return postprocess(output, meta, channels);
+            return postprocess(output, meta, meta.expectedOutputChannels());
         }
+    }
+
+    /** inputSize×inputSize csempe kivágása a resized képből, széleknél fekete padding. */
+    private Bitmap cropTile(Bitmap resized, int tx, int ty, int inp) {
+        Bitmap tile = Bitmap.createBitmap(inp, inp, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(tile);
+        c.drawColor(Color.BLACK);
+        int sx2 = Math.min(tx + inp, resized.getWidth());
+        int sy2 = Math.min(ty + inp, resized.getHeight());
+        if (sx2 > tx && sy2 > ty) {
+            Rect src = new Rect(tx, ty, sx2, sy2);
+            Rect dst = new Rect(0, 0, sx2 - tx, sy2 - ty);
+            c.drawBitmap(resized, src, dst, null);
+        }
+        return tile;
+    }
+
+    /** A resized dimenzió korlátozása: legalább inputSize, legfeljebb MAX_RESIZED_DIM. */
+    private static int clampDim(int d, int inp) {
+        return Math.max(inp, Math.min(d, MAX_RESIZED_DIM));
+    }
+
+    /** Dekódolás inSampleSize-zal a cél KÖZELÉBE, majd pontos resize (targetW×targetH). */
+    private static Bitmap decodeAndScale(File f, int targetW, int targetH) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getAbsolutePath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+
+        int inSample = 1;
+        while (bounds.outWidth / (inSample * 2) >= targetW
+                && bounds.outHeight / (inSample * 2) >= targetH) {
+            inSample *= 2;
+        }
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = inSample;
+        Bitmap decoded = BitmapFactory.decodeFile(f.getAbsolutePath(), opts);
+        if (decoded == null) return null;
+        if (decoded.getWidth() == targetW && decoded.getHeight() == targetH) return decoded;
+        Bitmap scaled = Bitmap.createScaledBitmap(decoded, targetW, targetH, true);
+        if (scaled != decoded) decoded.recycle();
+        return scaled;
     }
 
     /**

@@ -613,6 +613,43 @@ mintaponton belüli redundanciához), ezt a mechanizmust felül kell vizsgálni
 | M02 Grid Engine | **Adat forrás** — mintapontok száma és sorrendje (session korreláció) |
 | Dronterapia M03 (Counting) | **Downstream, jelenleg manuális** — a session mappa tartalma manuálisan tölthető fel a meglévő mintavételezéses expanderbe |
 
+### 16.5 Megszakíthatóság és beragadás-kezelés — terepi teszt lelet — ✅ Javítás implementálva (2026-07-04), eszközön még nem tesztelve
+
+**Terepi megfigyelés (2026-07-04, éles teszt):** leszállás után a fotóletöltés
+(a) többször **"system busy, try later"** hibával elszállt, és (b) volt, hogy
+egy elindított letöltés **beragadt**, és **csak az app újraindítása** után
+lehetett újra elindítani.
+
+**Root cause:**
+- **"System busy":** közvetlenül leszállás után a kamera még **írja a kártyára
+  az utolsó felvételeket** és/vagy a `MediaManager` másik művelettel foglalt.
+  A jelenlegi `downloadSessionMedia()` ezt nem kezeli — a `setMode` /
+  `refreshFileListOfStorageLocation` hibája egyből `onSessionError`, nincs
+  várakozás + újrapróbálkozás.
+- **Beragadás:** a `MediaFile.fetchFileData()` néha **se `onSuccess`-t, se
+  `onFailure`-t nem hív** (SDK-hang) — ilyenkor a `downloadNext()` rekurzió
+  megáll. A `ProgressDialog` viszont `setCancelable(false)` és nincs
+  időtúllépés, ezért örökre ott marad; a `MissionPlannerActivity`-ben nincs
+  megszakítási út, csak az app-újraindítás.
+
+**Javítás (a felhasználói kérés minimuma: a Mégse indítsa újra):**
+1. **Megszakítási flag** a `MediaSessionDownloader`-ben (`AtomicBoolean cancel`)
+   — a letöltési ciklus képek között ellenőrzi; megszakításkor tiszta
+   kilépés + kameramód-visszaállítás (`SHOOT_PHOTO`).
+2. **Cancelable ProgressDialog** a `triggerSessionDownload()`-ban: a **Mégse**
+   gomb beállítja a flaget, elrejti a dialógust, és **azonnal újraindítható**
+   állapotba hozza (nincs app-újraindítás).
+3. **Per-fájl időtúllépés** (pl. 30–60 mp): ha egy `fetchFileData` ennyin belül
+   nem ad callback-et, a downloader hibaként kezeli az adott fájlt és lép a
+   következőre (vagy megszakít) — nem ragad be.
+4. **System-busy retry:** a `setMode` / `refresh` "busy"-jellegű hibájánál
+   rövid várakozás (2–3 mp) + néhányszori újrapróbálkozás, mielőtt feladná.
+5. **Garantált kameramód-visszaállítás** minden kilépési ágon (hiba, megszakítás,
+   siker) — hogy a kamera ne maradjon MEDIA_DOWNLOAD/busy állapotban.
+
+Részletes állapotgép: M04_L3 (bővítendő); tranzakciós/időtúllépés-kezelés:
+M04_L4 (bővítendő).
+
 ---
 
 ## 17. Kapcsolódó modulok (teljes lista, §15–16 bővítéssel)
@@ -735,3 +772,98 @@ megnézni a `session.json` `capture_time_ms` mezőit
 ([MediaSessionDownloader.java:243-277](../../app/src/main/java/com/dronefly/app/dji/MediaSessionDownloader.java))
 egy következő repülés flight logjával összevetve, hogy a retry ténylegesen
 javítja-e a korábban tapasztalt 10-ből-6-os arányt.
+
+---
+
+## 19. Fotó-trigger DUPLÁZÓDÁS — terepi teszt lelet — ✅ Javítás implementálva (2026-07-04), eszközön még nem tesztelve
+
+**Terepi megfigyelés (2026-07-04, éles teszt):** 5 mintapontos misszió, a drón
+**pontosan 5 helyen** ereszkedett le és fotózott (pilóta által megerősítve), **de
+10 JPEG** került a kártyára — pontonként **kettő**. Mind JPEG (nem RAW —
+a felhasználó azonnal ellenőrizte, a RAW-formátum tehát NEM ok). Ez a §18
+javítás **ellentétes hibája**: ott alultriggerelés volt (10→6 hiányzó), most
+túltriggerelés (5→10 dupla) — ugyanabban az app-vezérelt trigger-folyamban.
+
+### 19.1 Root cause — a waypoint-elérés esemény nincs deduplikálva
+
+A `MissionUploader.onExecutionUpdate()` (a `WaypointMissionOperatorListener`
+végrehajtási callback-je) **másodpercenként sokszor** lefut a misszió alatt.
+A jelenlegi logika:
+
+```java
+public void onExecutionUpdate(WaypointMissionExecutionEvent event) {
+    WaypointExecutionProgress p = event.getProgress();
+    if (p.isWaypointReached) {
+        trackedWaypointIndex = p.targetWaypointIndex;
+        listener.onWaypointReached(trackedWaypointIndex, totalWaypoints); // MINDEN frissítésnél tüzel
+    }
+}
+```
+
+A hiba: amíg a drón a mintaponton **hoverel (STAY akció, §15)**, az
+`isWaypointReached` végig `true` marad, és az `onExecutionUpdate` **többször
+is** meghívja az `onWaypointReached`-et **ugyanarra a waypoint-indexre** —
+nincs ellenőrzés, hogy *új* waypointról van-e szó. A mintavételi ág
+(`MissionPlannerActivity.onWaypointReached`, `actualIndex % 3 == 1`) ilyenkor
+pontonként többször:
+
+```java
+if (actualIndex % 3 == 1) {
+    int pointIdx = samplePointCursor++;   // minden ismételt híváskor NŐ
+    triggerSamplePointPhoto(point);        // minden ismételt híváskor EXPONÁL
+}
+```
+
+→ pontonként ~2× exponálás → **5 pont = 10 JPEG.** (A `samplePointCursor` is
+túllép, ami a geo-taggelést és a "last N file" letöltést is elronthatja.)
+
+**Ez érinti az M10 sűrű rácsot is** (`triggerDenseGridPhoto()`, minden
+waypointon) — ott is duplázódhat, ami magyarázhatja a nagy felbontású
+repülésnél tapasztalt megnövekedett fotószámot (ld. §20).
+
+### 19.2 Javítás — csak index-változásra tüzeljen
+
+```java
+if (p.isWaypointReached && p.targetWaypointIndex != trackedWaypointIndex) {
+    trackedWaypointIndex = p.targetWaypointIndex;
+    listener.onWaypointReached(trackedWaypointIndex, totalWaypoints);
+}
+```
+
+Az `onWaypointReached` így **waypointonként pontosan egyszer** tüzel (az első
+"elérve" pillanatban, amikor az index az előzőhöz képest változik). Ez
+megszünteti a dupla exponálást (§18 mintavételi és M10 sűrű rács ágban is) és
+a `samplePointCursor` túlléptetését. A `trackedWaypointIndex` már ma is
+mezőben tárolt (a resume-hoz), így a dedup-gate természetesen illeszkedik.
+
+**Miért nem derült ki a §18 javításkor:** a §18 a hiányzó fotókat oldotta meg
+(a néma WaypointAction cseréje visszaigazolt app-triggerre), de az új app-trigger
+a nem-deduplikált `onWaypointReached`-re épült — a hover alatti ismételt
+esemény-tüzelés akkor nem volt kipróbálva eszközön (a §18 is "eszközön még nem
+tesztelve" státuszú volt). Az éles teszt most ezt hozta felszínre.
+
+---
+
+## 20. Fotó hangjelzés — DJI GO4-szerű visszajelzés — ✅ Implementálva (2026-07-04), eszközön még nem tesztelve
+
+**Felhasználói igény:** a DJI GO4 hangjelzést ad, amikor a drón fotóz — jó lenne
+a tableten is hallani, hogy **ténylegesen mikor történik fotózás** (a
+`btnDownloadSession` „N/N megerősítve" száma csak a végén látszik, repülés
+közben nem ad valós idejű visszajelzést).
+
+**Megoldás:** az app-vezérelt triggerű módoknál (mintavételi + M10 sűrű rács) az
+`onPhotoConfirmed()` az SDK-visszaigazolás pillanata — ekkor **rövid csippanás**
+szól (`ToneGenerator.TONE_PROP_BEEP`), sikertelen fotónál (`onPhotoFailed()`)
+**eltérő, figyelmeztető hang** (`TONE_PROP_NACK`). Így a pilóta hallja, ha egy
+pont kimaradt, anélkül hogy a képernyőt néznie kellene.
+
+- `ToneGenerator` (STREAM_MUSIC) — nincs szükség hangfájlra, Android 5.1-en is fut.
+- `MissionPlannerActivity.playPhotoBeep()` / `playPhotoFailTone()`; a
+  `ToneGenerator` az `onDestroy()`-ban felszabadul.
+
+**Korlát:** intervallum (CURVED) módban a kamera önállóan időzít, arra nincs
+per-fotó SDK-callback, ezért ott jelenleg nincs hangjelzés. Jövőbeli bővítés:
+a `Camera` SystemState „exponálás/tárolás" jelének él-detektálása (reflection,
+a histogram-mintához hasonlóan) — akkor minden módban szólna. A felhasználó
+jelenlegi munkafolyamata (M10 sűrű rács + mintavételi) viszont app-vezérelt,
+tehát lefedett.

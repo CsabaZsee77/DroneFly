@@ -43,17 +43,28 @@ public class SamplingPointGenerator {
         return r;
     }
 
+    /** Visszafelé kompatibilis változat — nincs min-távolság korlát (minDistM = 0). */
+    public static List<GeoPoint> generate(List<GeoPoint> polygon, int nPoints,
+                                          String method, long seed) {
+        return generate(polygon, nPoints, method, seed, 0.0);
+    }
+
     /**
-     * Mintapontok generálása polygonon belül.
+     * Mintapontok generálása polygonon belül (M02_L1 §9 — backfill +
+     * átfedés-mentesség + útvonal-rendezés, 2026-07-04).
      *
      * @param polygon  legalább 3 GPS pont
      * @param nPoints  kívánt mintapontszám (>0)
      * @param method   "stratified" | "halton" | "random"
      * @param seed     reprodukálhatóság ("random" és "stratified" jitterhez)
-     * @return legfeljebb nPoints db GeoPoint, mind a polygonon belül
+     * @param minDistM minimális távolság két pont közt méterben (átfedés-mentesség,
+     *                 pl. a footprint szélessége); 0 = nincs korlát
+     * @return legfeljebb nPoints db GeoPoint, bejárási sorrendbe rendezve
+     *         (legközelebbi-szomszéd); ha a terület a min-távolság mellett
+     *         kevesebbre elég, annyit ad — a hívó összevetheti nPoints-szal
      */
     public static List<GeoPoint> generate(List<GeoPoint> polygon, int nPoints,
-                                          String method, long seed) {
+                                          String method, long seed, double minDistM) {
         List<GeoPoint> result = new ArrayList<>();
         if (polygon == null || polygon.size() < 3 || nPoints <= 0) {
             return result;
@@ -88,6 +99,7 @@ public class SamplingPointGenerator {
 
         Random rng = new Random(seed);
         List<double[]> pointsXY = new ArrayList<>();
+        double minDist2 = minDistM > 0 ? minDistM * minDistM : 0;
 
         if ("halton".equals(method)) {
             int idx = 1;
@@ -96,7 +108,7 @@ public class SamplingPointGenerator {
             while (pointsXY.size() < nPoints && attempts < maxAttempts) {
                 double x = xMin + (xMax - xMin) * halton(idx, 2);
                 double y = yMin + (yMax - yMin) * halton(idx, 3);
-                if (pointInPolygon(px, py, x, y)) {
+                if (pointInPolygon(px, py, x, y) && farEnough(pointsXY, x, y, minDist2)) {
                     pointsXY.add(new double[]{x, y});
                 }
                 idx++;
@@ -108,7 +120,7 @@ public class SamplingPointGenerator {
             while (pointsXY.size() < nPoints && attempts < maxAttempts) {
                 double x = xMin + rng.nextDouble() * (xMax - xMin);
                 double y = yMin + rng.nextDouble() * (yMax - yMin);
-                if (pointInPolygon(px, py, x, y)) {
+                if (pointInPolygon(px, py, x, y) && farEnough(pointsXY, x, y, minDist2)) {
                     pointsXY.add(new double[]{x, y});
                 }
                 attempts++;
@@ -124,20 +136,86 @@ public class SamplingPointGenerator {
                     if (pointsXY.size() >= nPoints) break outer;
                     double cx = xMin + dx * (i + 0.5 + (rng.nextDouble() - 0.5) * 0.6);
                     double cy = yMin + dy * (j + 0.5 + (rng.nextDouble() - 0.5) * 0.6);
-                    if (pointInPolygon(px, py, cx, cy)) {
+                    if (pointInPolygon(px, py, cx, cy) && farEnough(pointsXY, cx, cy, minDist2)) {
                         pointsXY.add(new double[]{cx, cy});
                     }
                 }
             }
         }
 
-        for (double[] xy : pointsXY) {
+        // ── Backfill a kért pontszámig (M02_L1 §9.2) ────────────────────────
+        // A rács/Halton a polygon szabálytalansága miatt kevesebb pontot adhat,
+        // mint amennyit kértek — elutasításos mintavétellel töltjük fel,
+        // ugyanazzal a min-távolság feltétellel (átfedés-mentesség).
+        int backfillAttempts = 0;
+        int maxBackfill = nPoints * 500;
+        while (pointsXY.size() < nPoints && backfillAttempts < maxBackfill) {
+            double x = xMin + rng.nextDouble() * (xMax - xMin);
+            double y = yMin + rng.nextDouble() * (yMax - yMin);
+            if (pointInPolygon(px, py, x, y) && farEnough(pointsXY, x, y, minDist2)) {
+                pointsXY.add(new double[]{x, y});
+            }
+            backfillAttempts++;
+        }
+
+        // ── Bejárási útvonal rendezése (M02_L1 §9.2, 3. lépés) ──────────────
+        // Legközelebbi-szomszéd a bal-alsó saroktól — hogy a drón ne ugráljon
+        // összevissza a rács + backfill pontok közt.
+        List<double[]> ordered = orderNearestNeighbor(pointsXY);
+
+        for (double[] xy : ordered) {
             double lat = centLat + xy[1] / mPerDegLat;
             double lon = centLon + xy[0] / mPerDegLon;
             result.add(new GeoPoint(lat, lon));
             if (result.size() >= nPoints) break;
         }
         return result;
+    }
+
+    /** Igaz, ha (x,y) minden meglévő ponttól legalább sqrt(minDist2) távol van. */
+    private static boolean farEnough(List<double[]> pts, double x, double y, double minDist2) {
+        if (minDist2 <= 0) return true;
+        for (double[] p : pts) {
+            double dx = p[0] - x, dy = p[1] - y;
+            if (dx * dx + dy * dy < minDist2) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Legközelebbi-szomszéd útvonal-rendezés (nem teljes TSP — O(n²), n ≤ ~60).
+     * Kiindulás: a bal-alsó sarokhoz (min x+y) legközelebbi pont.
+     */
+    private static List<double[]> orderNearestNeighbor(List<double[]> pts) {
+        List<double[]> ordered = new ArrayList<>();
+        if (pts.isEmpty()) return ordered;
+        boolean[] used = new boolean[pts.size()];
+
+        int start = 0;
+        double best = Double.MAX_VALUE;
+        for (int i = 0; i < pts.size(); i++) {
+            double s = pts.get(i)[0] + pts.get(i)[1];
+            if (s < best) { best = s; start = i; }
+        }
+        used[start] = true;
+        ordered.add(pts.get(start));
+        double curX = pts.get(start)[0], curY = pts.get(start)[1];
+
+        for (int k = 1; k < pts.size(); k++) {
+            int next = -1;
+            double bestD = Double.MAX_VALUE;
+            for (int i = 0; i < pts.size(); i++) {
+                if (used[i]) continue;
+                double dx = pts.get(i)[0] - curX, dy = pts.get(i)[1] - curY;
+                double d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; next = i; }
+            }
+            if (next < 0) break;
+            used[next] = true;
+            ordered.add(pts.get(next));
+            curX = pts.get(next)[0]; curY = pts.get(next)[1];
+        }
+        return ordered;
     }
 
     /**

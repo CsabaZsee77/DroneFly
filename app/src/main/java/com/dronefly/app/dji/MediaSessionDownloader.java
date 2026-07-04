@@ -52,6 +52,24 @@ public class MediaSessionDownloader {
     private static final String TAG = "MediaSessionDL";
     private static final String SESSIONS_DIR = "sampling_sessions";
 
+    // Megszakíthatóság + beragadás-kezelés (M04_L1 §16.5, terepi teszt 2026-07-04)
+    private final java.util.concurrent.atomic.AtomicBoolean cancelFlag =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final android.os.Handler timeoutHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    /** Egy fájlra várt max. idő ÚJABB progress nélkül — enélkül a hang beragad. */
+    private static final long FILE_TIMEOUT_MS = 60000;
+
+    /**
+     * Folyamatban lévő letöltés megszakítása (Mégse gomb). A ciklus a következő
+     * fájl előtt kilép, visszaállítja a kameramódot, és a letöltés újraindítható
+     * (nincs app-újraindítás).
+     */
+    public void cancelDownload() {
+        cancelFlag.set(true);
+        timeoutHandler.removeCallbacksAndMessages(null);
+    }
+
     public interface SessionDownloadListener {
         void onFileProgress(int fileIndex, int totalFiles, long current, long total);
         void onFileComplete(int fileIndex, String localPath);
@@ -92,6 +110,7 @@ public class MediaSessionDownloader {
             if (listener != null) listener.onSessionError("Érvénytelen mintapontszám");
             return;
         }
+        cancelFlag.set(false); // új letöltés — töröljük az esetleges korábbi megszakítást
 
         // 1. Kameramód váltás — a MediaManager csak MEDIA_DOWNLOAD módban él
         camera.setMode(SettingsDefinitions.CameraMode.MEDIA_DOWNLOAD, modeErr -> {
@@ -238,6 +257,7 @@ public class MediaSessionDownloader {
                         + sessionDir.getAbsolutePath());
             return;
         }
+        cancelFlag.set(false); // új letöltés
         // samplePoints = null → downloadNext nem ír session.json-t
         downloadNext(camera, files, 0, sessionDir, sessionId, null, 0, "", 0, listener, 0);
     }
@@ -248,6 +268,15 @@ public class MediaSessionDownloader {
                               File sessionDir, String sessionId, List<GeoPoint> samplePoints,
                               double sampleAltitudeM, String droneProfileName, double aoiAreaM2,
                               SessionDownloadListener listener, int successCount) {
+        // Megszakítás (M04_L1 §16.5): a következő fájl előtt kilépünk, visszaállítjuk
+        // a kameramódot, és a letöltés újraindítható (a hívó a Mégse gombbal).
+        if (cancelFlag.get()) {
+            timeoutHandler.removeCallbacksAndMessages(null);
+            camera.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, ignored -> {});
+            if (listener != null)
+                listener.onSessionError("Letöltés megszakítva — újraindítható");
+            return;
+        }
         if (index >= files.size()) {
             // samplePoints == null: M09 fotóimport útvonal — a session.json-t a hívó írja
             if (samplePoints != null) {
@@ -265,12 +294,28 @@ public class MediaSessionDownloader {
         final int idx = index;
         final String targetName = String.format(Locale.US, "point_%03d.jpg", idx);
 
+        // Per-fájl "kész" őr + időtúllépés-watchdog (M04_L1 §16.5): ha X mp-en át
+        // NINCS újabb progress és nincs siker/hiba callback (SDK-hang), a
+        // watchdog hibaként léptet a következő fájlra — nem ragad be.
+        final java.util.concurrent.atomic.AtomicBoolean done =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final Runnable watchdog = () -> {
+            if (done.compareAndSet(false, true)) {
+                Log.w(TAG, "Fájl időtúllépés (" + idx + ") — lépés a következőre");
+                if (listener != null) listener.onFileError(idx, "Időtúllépés (nincs válasz)");
+                downloadNext(camera, files, idx + 1, sessionDir, sessionId, samplePoints,
+                             sampleAltitudeM, droneProfileName, aoiAreaM2, listener, successCount);
+            }
+        };
+        timeoutHandler.postDelayed(watchdog, FILE_TIMEOUT_MS);
+
         mf.fetchFileData(sessionDir, null, new DownloadListener<String>() {
             @Override
             public void onStart() {}
 
             @Override
             public void onRateUpdate(long total, long current, long persize) {
+                resetWatchdog(watchdog);
                 if (listener != null) listener.onFileProgress(idx, files.size(), current, total);
             }
 
@@ -279,11 +324,14 @@ public class MediaSessionDownloader {
 
             @Override
             public void onProgress(long total, long current) {
+                resetWatchdog(watchdog);
                 if (listener != null) listener.onFileProgress(idx, files.size(), current, total);
             }
 
             @Override
             public void onSuccess(String s) {
+                if (!done.compareAndSet(false, true)) return; // watchdog már lépett
+                timeoutHandler.removeCallbacks(watchdog);
                 File finalFile = resolveDownloadedFile(sessionDir, mf, s);
                 File renamed = new File(sessionDir, targetName);
                 boolean renameOk = finalFile != null && finalFile.exists()
@@ -301,11 +349,19 @@ public class MediaSessionDownloader {
 
             @Override
             public void onFailure(DJIError error) {
+                if (!done.compareAndSet(false, true)) return; // watchdog már lépett
+                timeoutHandler.removeCallbacks(watchdog);
                 if (listener != null) listener.onFileError(idx, error.getDescription());
                 downloadNext(camera, files, idx + 1, sessionDir, sessionId, samplePoints,
                              sampleAltitudeM, droneProfileName, aoiAreaM2, listener, successCount);
             }
         });
+    }
+
+    /** A watchdog időzítő újraindítása — progress esetén (a fájl él, nem hang). */
+    private void resetWatchdog(Runnable watchdog) {
+        timeoutHandler.removeCallbacks(watchdog);
+        timeoutHandler.postDelayed(watchdog, FILE_TIMEOUT_MS);
     }
 
     /**

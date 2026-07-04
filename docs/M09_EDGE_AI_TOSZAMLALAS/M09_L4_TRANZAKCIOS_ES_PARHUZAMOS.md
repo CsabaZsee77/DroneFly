@@ -145,3 +145,56 @@ az `N_plot`-hoz a pontonkénti footprintek **átlagát** használjuk
 (`totalAreaM2 / mean(footprint_i)`) — ez a mintavételi arány konzisztens
 közelítése heterogén footprint mellett is. (A pontonkénti `densityPerM2` viszont
 mindig a saját footprintjéből számol — csak az FPC skalár közelítése átlagol.)
+
+---
+
+## 8. GSD-tudatos csempézés — futásidő, memória, cross-tile NMS (2026-07-04, TERVEZETT)
+
+Az M09_L1 §11 / M09_L3 GSD-tudatos futtatás tranzakciós háttere.
+
+### 8.1 Futásidő — a csempézés N-szeres inferenciát jelent
+
+- A resized kép (trainGsd-en) `ceil(W'/stride) × ceil(H'/stride)` csempére bomlik.
+  Pl. 5472 px @ 0,3 cm/px → 1 cm-re méretezve 1642 px → 640-es csempe, 20%
+  átfedés (stride 512) → ⌈1642/512⌉² ≈ 4×3 = **~12 csempe/kép**.
+- Ez képenként ~12× annyi `OrtSession.run()`, mint a mostani egyetlen inferencia.
+  A Crystal Sky gyenge CPU-ján ez érdemi lassulás (a jelenlegi ~pár mp/kép
+  → tízesével nő) — de a mintavételnél kevés a kép (20–50), és a helyes
+  eredmény ezt megéri. **Progress-jelzés csempe-szinten is** (pl. „kép 3/34,
+  csempe 5/12"), hogy a felhasználó lássa a haladást.
+- **A szekvenciális elv marad** (M09_L2 §4): egyszerre egy csempe a memóriában,
+  egy `OrtSession`, nem párhuzamos.
+
+### 8.2 Memória — egyszerre egy csempe + a resized kép
+
+- A resized kép (pl. 1642×1095 ARGB ≈ 7 MB) a feldolgozás alatt a memóriában
+  van; ebből vágjuk ki egyenként a csempéket (inputSize×inputSize ≈ 1,6 MB),
+  minden csempe után `recycle()`. A resized kép a kép végén `recycle()`.
+- **Dekódolási stratégia:** a natív fotót `inSampleSize`-zal a resized célméret
+  KÖZELÉBE dekódoljuk (2-hatvány), majd pontos `f`-re finomítjuk — így soha nem
+  dekódoljuk a teljes 5472×3648-at (OOM-védelem, a meglévő
+  `decodeDownsampled()` elvének kiterjesztése).
+
+### 8.3 Cross-tile NMS — a duplikátumok korrektsége
+
+- A 20%-os átfedés miatt egy csempehatáron ülő tő **két csempében is**
+  detektálódhat. A csempe-lokális detekciókat a **resized kép globális**
+  koordinátáira vetítjük (tx/ty offset), majd **egyetlen globális NMS**-t
+  futtatunk az `iouThreshold`-dal — ez szűri a határ-duplikátumokat.
+- **Fontos:** a NMS a resized kép koordinátáiban (0–1 normalizálva a resized
+  kép méretére) fut, nem csempénként — csak így ismeri fel a két szomszédos
+  csempe azonos tövét.
+- Az átfedés (20%) elég nagy kell legyen, hogy egy egész tő elférjen a
+  határsávban (különben mindkét csempében csonka a bbox, és az NMS nem
+  ismeri fel a duplikátumot). A 20% a P4P mintaponti tő-méretéhez terepi
+  validációval hangolható.
+
+### 8.4 A GSD-mérés mint futtatási előfeltétel (állapotgép)
+
+- A `[Számlálás indítása]` csak akkor enged futni, ha van érvényes
+  session-GSD (`GSD_REQUIRED` kapu, M09_L3). A GSD forrása: mért (GsdRulerView,
+  futtatás előtt) vagy EXIF-fallback.
+- Egy **GSD-változás újrafuttatást** igényel (nem csak density-újraszámítást,
+  szemben a §7.2 footprint-újraszámítással) — mert a resize-skála, tehát a
+  detektálás is változik. A UI ezt jelezze: „A GSD módosult — újra kell futtatni
+  a számlálást."

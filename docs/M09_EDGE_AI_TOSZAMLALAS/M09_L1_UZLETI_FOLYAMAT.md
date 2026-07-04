@@ -423,6 +423,17 @@ bounding boxos annotált nézet a vizuális kalibráció eszköze.)
 
 ## 10. GSD kalibráció — vonalzós skálamérés (2026-07-04)
 
+> **⚠ Kiterjesztve a §11-ben (2026-07-04):** ez a fejezet a GSD-mérést mint a
+> *footprint/sűrűség* korrekcióját írja le, a **számlálás UTÁN** (eredmény-sorra
+> kattintva). A §11 ezt **kiterjeszti**: a GSD-t a **futtatás ELŐTT**, a
+> betöltött mintaképeken kell mérni, mert a GSD nemcsak a sűrűséget, hanem a
+> **detektálást is** befolyásolja (a modell adott betanítási GSD-hez kötött).
+> A vonalzó-eszköz (`GsdRulerView`) ugyanaz, csak korábban hívjuk, és a mért
+> GSD innentől kettős célt szolgál: (a) a kép átméretezése a betanítási GSD-re
+> a detektáláshoz, (b) a footprint a sűrűséghez. A §10 „kattints az
+> eredmény-sorra, kalibrálj utólag" útvonala a §11 bevezetésével elavul (a
+> footprint utólagos finomítása megmaradhat, de a fő mérés előre kerül).
+
 **Státusz:** ✅ **Implementálva és eszközön verifikálva** (Crystal Sky, 2026-07-04).
 Terepi teszt: importált kukoricatábla-képen a vonalzós mérés footprint 41,6 m²,
 GSD 0,289 cm/px, EXIF-kereszt-ellenőrzés „10,0 m → mérés ~5,3 m (−72%)"; a
@@ -631,3 +642,141 @@ pontosabb magasság-referenciával, lassabb süllyedés a stabilabb hover-magass
 vagy a mintavételi magasság emelése oda, ahol a barométer megbízhatóbb (a footprint
 nő, de a GSD kalibrációval korrigálható). Ez nem ennek a modulnak a feladata, de
 rögzítjük, mert a gyökér-ok a repülésvezérlésben van, nem a kiértékelésben.
+
+---
+
+## 11. GSD-tudatos futtatás — mérés ELŐBB, csempézett inferencia (2026-07-04)
+
+**Státusz:** ✅ **Implementálva** (2026-07-04), eszközön még nem tesztelve. Ez a
+korábbi naiv (teljes-kép → 640-re skálázott) futtatás átdolgozása. A
+`YoloInferenceEngine` GSD-tudatos resize + sliding window csempézés + cross-tile
+NMS; a `ModelMetadata` kapott `trainGsdCmPx` mezőt; a `SamplingResultsActivity`
+kapott „📏 GSD mérése" (futtatás előtt) és „⚙ Modell metaadat" (sidecar
+létrehozás/szerkesztés, auto-fill a modellből) gombokat.
+
+### 11.1 A megoldandó probléma — GSD-konzisztencia a betanítás és a futtatás közt
+
+Egy YOLO objektumdetektor a **betanítási GSD-hez** kötött: ha 1 cm/px csempéken
+tanult, a tövek egy adott **pixelméretben** jelennek meg számára, és csak akkor
+detektál jól, ha a bemenet is ugyanabban a pixelméretben (GSD-ben) érkezik. A
+teljes annotáció → tanítás → futtatás láncnak GSD-konzisztensnek kell lennie.
+
+**A jelenlegi hiba (M09_L3 `YoloInferenceEngine.preprocess()`):** az egész
+mintaképet (pl. 5472×3648) naivan a modell bemenetére (640×640) skálázza. Ez
+két dolgot ront:
+- **GSD-eltérés:** a mintakép a mintavétel miatt jellemzően **nagyobb
+  felbontású** (kisebb GSD, pl. 0,3 cm/px) a betanító csempéknél (pl. 1 cm/px).
+  Az egész kép 640-re nyomásával a tövek radikálisan más pixelméretben
+  jelennek meg, mint tanításkor → a modell nem ismeri fel a méretet.
+- **Csempézés hiánya:** a modell csempéken tanult és sliding window-val detektál;
+  egyetlen agresszíven kicsinyített képen a kis (kelő) tövek eltűnnek.
+
+(Az, hogy a kukoricánál mégis „jó" számot kaptunk, a **kézi konfidencia-hangolás**
+műve — elfedi a skálahibát, de nem javítja; más magasságon/táblán újrahangolás
+kellene.)
+
+### 11.2 A helyes futtatási pipeline
+
+```
+Bemenet: mintakép (W×H px, actualGsd cm/px MÉRVE)
+         modell (inputSize pl. 640, trainGsdCmPx pl. 1,0)
+
+1. Átméretezési faktor a betanítási GSD-re (NEM 640-re):
+      f = actualGsd / trainGsd            (pl. 0,3 / 1,0 = 0,3)
+      → a kép f-szeresére kicsinyítve most trainGsd cm/px, mint a tanításnál
+      újGsd = actualGsd / f = trainGsd    (ellenőrzés)
+      resizedW = W × f,  resizedH = H × f
+
+2. Sliding window csempézés a resized képen:
+      inputSize×inputSize csempék, átfedéssel (pl. 20% → stride = inputSize×0,8)
+      csempénként: preprocess (NCHW) → OrtSession.run() → detekciók a csempe
+      koordinátáiban → visszavetítés a resized kép globális koordinátáira
+
+3. Cross-tile NMS: a csempehatárokon átnyúló (két csempében megjelenő) tövek
+      duplikátumainak kiszűrése — globális NMS a resized kép összes detekcióján
+
+4. Count = a merge-elt detekciók száma
+5. Density = count / footprint  (a footprint UGYANEZ a mért GSD-ből — §11.5)
+```
+
+### 11.3 A munkafolyamat átrendezése — GSD MÉRÉS ELŐBB
+
+Mivel a GSD a **detektálást** befolyásolja (nem csak a sűrűséget), a mérésnek a
+futtatás ELŐTT kell megtörténnie — nem az eredmény-sorra kattintva utólag (§10),
+hanem a **betöltött mintaképeken**:
+
+```
+1. Session választás
+2. Modell választás  (sidecar: inputSize, trainGsdCmPx, confThreshold, ...)
+3. 📏 GSD MÉRÉSE (a futtatás ELŐTT) — egy reprezentatív mintaképen a
+      vonalzóval (meglévő GsdRulerView): a felhasználó kihúz egy ismert
+      vízszintes talaj-távolságot (pl. sortáv) → footprint szélesség →
+         actualGsd_cmPerPx = footprintSzélesség_cm / eredetiKépSzélesség_px
+      EXIF-fallback: ha nem mér, az EXIF-magasságból számolt GSD, de a UI
+      jelzi, hogy a mért érték pontosabb (kereszt-ellenőrzés: §10.6)
+4. [Számlálás indítása] — csak ha van érvényes GSD.
+      GSD-tudatos inferencia a §11.2 szerint (resize a trainGsd-re + csempézés)
+5. Eredmény: count, db/ha (footprint a mért GSD-ből), extrapoláció
+```
+
+A GSD-mérés így **egy méréssel kettős célt** szolgál (ahogy a felhasználó
+megfogalmazta: „minden mindennel összefügg"): (a) a detektálási resize-skálát,
+(b) a footprint-területet a sűrűséghez — konzisztensen.
+
+### 11.4 A betanítási GSD (`trainGsdCmPx`) forrása
+
+- **A modell sidecar `.json`-ja új mezőt kap:** `trainGsdCmPx` — milyen GSD-re
+  méretezett csempéken tanult a modell. Ezt a **Dronterápia webes oldalon** kell
+  a betanításkor rögzíteni és a modell-metaadatba tenni (külön egyeztetés tárgya).
+- **Fallback a jelenlegi modellre:** a most használt `kukorica_640px` modellhez
+  a betanítási GSD nem ismert; a felhasználó feltételezése **~1 cm/px**. Ha a
+  sidecar-ból hiányzik a `trainGsdCmPx`, a rendszer **1,0 cm/px-t feltételez**,
+  és a UI-ban **jelzi, hogy ez feltételezés** (a pontossághoz a valós betanítási
+  GSD-t a modellbe kell írni).
+
+### 11.4a Per-kép GSD-feloldás — saját / átlag / EXIF (2026-07-04, felhasználói logika)
+
+A GSD-mérés **per-kép** tárolódik (nem session-szintű egyetlen érték). Egy adott
+kép effektív GSD-je (a detektálási resize-hoz ÉS a footprinthez egyaránt):
+
+| Helyzet | Az adott kép GSD-je |
+|---------|---------------------|
+| A képen **van** mérés | a **saját** mért GSD-je |
+| A képen **nincs** mérés, de más képeken **van** | a **mért képek átlaga** |
+| **Egyetlen** képen sincs mérés | **EXIF**-fallback (a sample magasságból) |
+
+Példa (3 kép): 1 képen mérve → az a kép a saját, a másik 2 az (egyetlen)
+mérést kapja (= átlag); 2 képen mérve → az a 2 a saját, a 3. a két mérés
+átlagát; 3 képen mérve → mind a saját mérését. A felhasználó a „📏 GSD mérése"
+gombbal többször is mérhet (más-más reprezentatív képen); a státusz mutatja,
+hány kép van mérve és mennyi az átlag. Így a magasság pontonkénti eltérése
+(barometrikus drift) képenként korrigálható, ahol a felhasználó mér, a többi
+pedig a legjobb elérhető becslést (a mért képek átlaga) kapja.
+
+Implementáció: `SamplingResultsActivity.measuredGsdByFile` (localFile → cm/px),
+`resolveGsdForFile()`, `averageMeasuredGsd()`; az engine `runOnSession(...,
+gsdByFile, fallbackGsd, ...)`-t kap, és képenként a saját vagy a fallback
+GSD-vel méretez.
+
+### 11.5 Kihat a korábbi döntésekre (revízió)
+
+| Korábbi döntés | Revízió a §11 fényében |
+|----------------|------------------------|
+| M09_L2 §8a: „sliding window kimarad a v1-ből" | **Visszavonva** — a csempézés a GSD-konzisztencia miatt NEM opcionális, hanem a helyes detektálás feltétele, ha a mintakép GSD-je eltér a tanításitól |
+| M09_L2 §10.4: „kalibráció a számlálás UTÁN, azonnali density-újraszámítással" | **Módosítva** — a GSD a **futtatás előtt** kell (a detektálást is befolyásolja); egy GSD-változás **újrafuttatást** igényel, nem csak density-újraszámítást. A footprint utólagos finomítása (density) megmaradhat, de a fő GSD-t előre mérjük |
+
+### 11.6 Pragmatikus enyhítés — YOLO skála-tűrés
+
+A YOLO némileg tűri a skálahibát (~±20-30%). Ezért:
+- Ha a mért GSD az EXIF-hez közel van (kereszt-ellenőrzés kicsi eltérést mutat),
+  az EXIF-GSD-vel futtatott inferencia is elfogadható — a mérés a biztonság.
+- Ha nagy az eltérés (pl. 2×, a barometrikus hiba miatt), a mérés + a helyes
+  resize elengedhetetlen, különben a detektálás romlik.
+
+### 11.7 Teljesítmény-következmény (részletek: M09_L4)
+
+A csempézés miatt egy kép **több inferenciát** jelent (pl. egy 0,3 cm-es kép
+1 cm-re méretezve ~1642 px → ~6 csempe 640-nel → 6× inferencia/kép). A
+Crystal Sky gyenge CPU-ján ez érdemi lassulás, de a mintavételnél kevés kép van
+(20–50), és a helyes eredmény ezt megéri. Memória: egyszerre egy csempe
+(M09_L4 §3 elve kiterjesztve).

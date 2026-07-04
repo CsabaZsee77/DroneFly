@@ -23,12 +23,14 @@ import androidx.core.content.FileProvider;
 
 import com.dronefly.app.ai.FootprintSource;
 import com.dronefly.app.ai.GsdCalibration;
+import com.dronefly.app.ai.ModelMetadata;
 import com.dronefly.app.ai.PointResult;
 import com.dronefly.app.ai.SamplingCountResult;
 import com.dronefly.app.ai.SamplingResultCalculator;
 import com.dronefly.app.ai.YoloInferenceEngine;
 import com.dronefly.app.ai.YoloModelManager;
 import com.dronefly.app.dji.MediaSessionDownloader;
+import com.dronefly.app.mission.GsdCalculator;
 import com.dronefly.app.model.DroneProfile;
 import com.dronefly.app.model.DroneProfiles;
 import com.dronefly.app.ui.GsdRulerView;
@@ -78,6 +80,15 @@ public class SamplingResultsActivity extends AppCompatActivity {
 
     private HorizontalScrollView thumbScroll;
     private LinearLayout thumbStrip;
+    private Button btnMeasureGsd;
+    private TextView tvGsdStatus;
+    private Button btnModelMeta;
+
+    // ── Per-kép GSD (M09_L1 §11) — a futtatás ELŐTT mérve ───────────────────
+    // Kulcs: a kép fájlneve (localFile), érték: mért GSD (cm/px, eredeti-felbontás).
+    // Feloldás futtatáskor/densitynél: saját mérés, ha van; különben a mért képek
+    // ÁTLAGA; ha egyáltalán nincs mérés: EXIF-fallback.
+    private final java.util.Map<String, Double> measuredGsdByFile = new java.util.HashMap<>();
 
     private final YoloInferenceEngine engine = new YoloInferenceEngine();
     private final java.util.concurrent.ExecutorService thumbExecutor =
@@ -125,6 +136,9 @@ public class SamplingResultsActivity extends AppCompatActivity {
         tablePoints = findViewById(R.id.tablePoints);
         thumbScroll = findViewById(R.id.thumbScroll);
         thumbStrip = findViewById(R.id.thumbStrip);
+        btnMeasureGsd = findViewById(R.id.btnMeasureGsd);
+        tvGsdStatus = findViewById(R.id.tvGsdStatus);
+        btnModelMeta = findViewById(R.id.btnModelMeta);
 
         loadSessions();
         loadModels();
@@ -133,10 +147,13 @@ public class SamplingResultsActivity extends AppCompatActivity {
             @Override
             public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
                 loadThumbnails();
+                resetSessionGsd();  // új session → a mért GSD nem érvényes
             }
             @Override
             public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });
+        btnMeasureGsd.setOnClickListener(v -> openGsdMeasureDialog());
+        btnModelMeta.setOnClickListener(v -> showModelMetaPicker());
 
         spinnerModel.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override
@@ -411,8 +428,19 @@ public class SamplingResultsActivity extends AppCompatActivity {
                 && targetClassIndex < entry.metadata.classNames.size())
                 ? entry.metadata.classNames.get(targetClassIndex) : ("osztály " + targetClassIndex);
 
-        engine.runOnSession(sessionDir, entry.modelFile, entry.metadata, cancelFlag,
-                new YoloInferenceEngine.InferenceListener() {
+        // GSD-tudatos futtatás (M09_L1 §11): per-kép GSD (saját mérés / mért
+        // képek átlaga / EXIF-fallback). A modell trainGsdCmPx-éhez méretez az engine.
+        double exifGsd = GsdCalculator.gsdFromAltitude(meta.sampleAltitudeM, drone);
+        double avgMeasured = averageMeasuredGsd();
+        double fallbackGsd = avgMeasured > 0 ? avgMeasured : exifGsd;
+        java.util.Map<String, Double> gsdByFile = new java.util.HashMap<>(measuredGsdByFile);
+        tvProgressStatus.setText(String.format(Locale.getDefault(),
+                "Indítás... (%d kép mérve, a többi %s %.3f cm/px → betanítás %.2f cm/px)",
+                measuredGsdByFile.size(), avgMeasured > 0 ? "átlag" : "EXIF",
+                fallbackGsd, entry.metadata.trainGsdCmPx));
+
+        engine.runOnSession(sessionDir, entry.modelFile, entry.metadata, gsdByFile, fallbackGsd,
+                cancelFlag, new YoloInferenceEngine.InferenceListener() {
                     @Override
                     public void onImageStart(int index, int total, String fileName) {
                         progressBar.setMax(total);
@@ -469,6 +497,28 @@ public class SamplingResultsActivity extends AppCompatActivity {
             return;
         }
 
+        // Per-kép footprint a feloldott GSD-ből (M09_L1 §11.4a): saját mérés /
+        // mért képek átlaga / EXIF — ugyanaz a GSD, ami a detektálási resize-t is adta.
+        double exifGsd = GsdCalculator.gsdFromAltitude(meta.sampleAltitudeM, drone);
+        boolean anyMeasured = !measuredGsdByFile.isEmpty();
+        // Kép-dimenziók (session-szinten azonosak) — az első pont képéből
+        int origW = drone.imageWidthPx, origH = drone.imageHeightPx;
+        int[] dims = readImageDims(new File(sessionDir, pointResults.get(0).localFile != null
+                ? pointResults.get(0).localFile
+                : String.format(Locale.US, "point_%03d.jpg", pointResults.get(0).index)));
+        if (dims[0] > 0) { origW = dims[0]; origH = dims[1]; }
+        for (PointResult p : pointResults) {
+            String file = p.localFile != null ? p.localFile
+                    : String.format(Locale.US, "point_%03d.jpg", p.index);
+            double gsd = resolveGsdForFile(file, exifGsd);
+            double wM = gsd / 100.0 * origW, hM = gsd / 100.0 * origH;
+            p.gsdCmPx = gsd;
+            p.footprintAreaM2 = wM * hM;
+            boolean own = measuredGsdByFile.containsKey(file);
+            p.footprintSource = own ? FootprintSource.MANUAL
+                    : (anyMeasured ? FootprintSource.INHERITED : FootprintSource.EXIF);
+        }
+
         SamplingCountResult result = SamplingResultCalculator.compute(pointResults,
                 meta.sampleAltitudeM, drone, meta.aoiAreaM2, sessionDir.getName(),
                 modelUsed, targetClassName, partial);
@@ -512,6 +562,371 @@ public class SamplingResultsActivity extends AppCompatActivity {
         }
         lastResult = result;
         renderResult(result);
+    }
+
+    // ── Modell metaadat-űrlap (sidecar létrehozás/szerkesztés, M09_L1 §11.4) ──
+
+    /** Az összes .onnx listája (sidecar nélkülieket is) → metaadat-szerkesztő. */
+    private void showModelMetaPicker() {
+        List<File> all = YoloModelManager.listAllOnnx();
+        if (all.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Nincs modell")
+                    .setMessage("Másolj .onnx modellt ide: "
+                            + YoloModelManager.getModelsDir().getAbsolutePath())
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        String[] names = new String[all.size()];
+        for (int i = 0; i < all.size(); i++) {
+            boolean hasMeta = YoloModelManager.sidecarFor(all.get(i)).exists();
+            names[i] = all.get(i).getName() + (hasMeta ? "  ✓" : "  ⚠ nincs metaadat");
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Modell metaadat szerkesztése")
+                .setItems(names, (d, which) -> openModelMetadataDialog(all.get(which)))
+                .setNegativeButton("Mégse", null)
+                .show();
+    }
+
+    /**
+     * Metaadat-űrlap egy .onnx-hoz: a meglévő sidecar-ból vagy alapértékből tölt,
+     * a bemeneti méretet és osztályszámot a modellből olvassa (auto-fill), a
+     * felhasználó megadja a GSD-t stb., és menti a .json sidecart.
+     */
+    private void openModelMetadataDialog(File onnxFile) {
+        File sidecar = YoloModelManager.sidecarFor(onnxFile);
+        ModelMetadata m = new ModelMetadata();
+        if (sidecar.exists()) {
+            try {
+                m = ModelMetadata.fromJson(readFileText(sidecar));
+            } catch (Exception ignored) {}
+        } else {
+            m.label = onnxFile.getName().replace(".onnx", "");
+        }
+        // Auto-fill a modellből (inputSize, osztályszám)
+        int[] info = YoloInferenceEngine.readModelInfo(onnxFile);
+        if (info[0] > 0) m.inputSize = info[0];
+        if (m.classNames.isEmpty()) {
+            int nc = info[1] > 0 ? info[1] : 1;
+            for (int i = 0; i < nc; i++) m.classNames.add("osztály_" + i);
+        }
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(48, 16, 48, 0);
+
+        final EditText etLabel = addFormField(form, "Név / címke", m.label);
+        final EditText etInput = addFormField(form, "Bemeneti méret (px, a modellből)",
+                String.valueOf(m.inputSize));
+        final EditText etClasses = addFormField(form, "Osztálynevek (vesszővel)",
+                android.text.TextUtils.join(", ", m.classNames));
+        final EditText etTarget = addFormField(form, "Cél-osztály index",
+                String.valueOf(m.targetClassIndex));
+        final EditText etConf = addFormField(form, "Konfidencia küszöb",
+                String.format(Locale.US, "%.2f", m.confThreshold));
+        final EditText etIou = addFormField(form, "IoU küszöb",
+                String.format(Locale.US, "%.2f", m.iouThreshold));
+        final EditText etGsd = addFormField(form, "Betanítási GSD (cm/px) — FONTOS!",
+                String.format(Locale.US, "%.2f", m.trainGsdCmPx));
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(form);
+
+        final ModelMetadata base = m;
+        new AlertDialog.Builder(this)
+                .setTitle("Metaadat: " + onnxFile.getName())
+                .setView(scroll)
+                .setPositiveButton("Mentés", (d, w) -> {
+                    ModelMetadata out = new ModelMetadata();
+                    out.label = etLabel.getText().toString().trim();
+                    out.cropType = base.cropType;
+                    try { out.inputSize = Integer.parseInt(etInput.getText().toString().trim()); }
+                    catch (NumberFormatException e) { out.inputSize = base.inputSize; }
+                    out.classNames = new ArrayList<>();
+                    for (String s : etClasses.getText().toString().split(",")) {
+                        String t = s.trim();
+                        if (!t.isEmpty()) out.classNames.add(t);
+                    }
+                    if (out.classNames.isEmpty()) out.classNames.add("objektum");
+                    try { out.targetClassIndex = Integer.parseInt(etTarget.getText().toString().trim()); }
+                    catch (NumberFormatException e) { out.targetClassIndex = 0; }
+                    out.confThreshold = (float) parseDefault(etConf, base.confThreshold);
+                    out.iouThreshold = (float) parseDefault(etIou, base.iouThreshold);
+                    out.trainGsdCmPx = parseDefault(etGsd, base.trainGsdCmPx);
+                    try {
+                        try (java.io.FileWriter fw = new java.io.FileWriter(sidecar)) {
+                            fw.write(out.toJson());
+                        }
+                        Toast.makeText(this, "Metaadat mentve: " + sidecar.getName(),
+                                Toast.LENGTH_SHORT).show();
+                        loadModels(); // frissül a spinner
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Mentési hiba: " + e.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Mégse", null)
+                .show();
+    }
+
+    private EditText addFormField(LinearLayout parent, String label, String value) {
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextColor(0xFFAAAACC);
+        tv.setTextSize(12);
+        parent.addView(tv);
+        EditText et = new EditText(this);
+        et.setText(value);
+        et.setTextColor(0xFFFFFFFF);
+        et.setTextSize(14);
+        parent.addView(et);
+        return et;
+    }
+
+    private static double parseDefault(EditText f, double fallback) {
+        try { return Double.parseDouble(f.getText().toString().trim().replace(',', '.')); }
+        catch (NumberFormatException e) { return fallback; }
+    }
+
+    private static String readFileText(File f) throws IOException {
+        byte[] buf = new byte[(int) f.length()];
+        try (FileInputStream fis = new FileInputStream(f)) {
+            int r = 0; while (r < buf.length) { int n = fis.read(buf, r, buf.length - r); if (n < 0) break; r += n; }
+        }
+        return new String(buf, StandardCharsets.UTF_8);
+    }
+
+    // ── GSD mérése a futtatás ELŐTT (M09_L1 §11.3) ────────────────────────
+
+    private void resetSessionGsd() {
+        measuredGsdByFile.clear();
+        if (tvGsdStatus != null)
+            tvGsdStatus.setText("GSD: nincs mérve — a pontos detektáláshoz mérd meg");
+    }
+
+    /** Kép szélessége/magassága px-ben (inJustDecodeBounds); {0,0} ha nem olvasható. */
+    private static int[] readImageDims(File f) {
+        android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath(), o);
+        return new int[]{Math.max(0, o.outWidth), Math.max(0, o.outHeight)};
+    }
+
+    /** A mért képek GSD-átlaga (cm/px); 0 ha egyetlen kép sincs mérve. */
+    private double averageMeasuredGsd() {
+        if (measuredGsdByFile.isEmpty()) return 0;
+        double sum = 0;
+        for (double g : measuredGsdByFile.values()) sum += g;
+        return sum / measuredGsdByFile.size();
+    }
+
+    /**
+     * Egy kép effektív GSD-je (M09_L1 §11.4a, a felhasználó logikája szerint):
+     * saját mérés, ha van; különben a mért képek átlaga; ha egyáltalán nincs
+     * mérés: exifGsd fallback.
+     */
+    private double resolveGsdForFile(String localFile, double exifGsd) {
+        Double own = measuredGsdByFile.get(localFile);
+        if (own != null) return own;
+        double avg = averageMeasuredGsd();
+        return avg > 0 ? avg : exifGsd;
+    }
+
+    private void updateGsdStatus() {
+        if (tvGsdStatus == null) return;
+        int m = measuredGsdByFile.size();
+        if (m == 0) {
+            tvGsdStatus.setText("GSD: nincs mérve — EXIF-fallback (mérés ajánlott)");
+        } else {
+            tvGsdStatus.setText(String.format(Locale.getDefault(),
+                    "GSD: %d kép mérve · a nem mértek a mért képek átlagát kapják (%.3f cm/px)",
+                    m, averageMeasuredGsd()));
+        }
+    }
+
+    /**
+     * A session GSD-jének mérése egy reprezentatív mintaképen a futtatás ELŐTT
+     * (M09_L1 §11.3). A mért GSD kettős célt szolgál: a detektálási resize-t (a
+     * kép a betanítási GSD-re méretezve) és a footprintet (density).
+     */
+    private void openGsdMeasureDialog() {
+        File session = selectedSession();
+        if (session == null) {
+            Toast.makeText(this, "Válassz sessiont", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        File[] photos = session.listFiles(f ->
+                f.getName().toLowerCase(Locale.US).endsWith(".jpg"));
+        if (photos == null || photos.length == 0) {
+            Toast.makeText(this, "Nincs kép a sessionben", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Arrays.sort(photos, (a, b) -> a.getName().compareTo(b.getName()));
+        // Egyetlen kép → egyből mérés; több kép → válaszd ki a reprezentatívat.
+        // A mérés MINDEN képre érvényes (session-szintű GSD, M09_L1 §11.3).
+        if (photos.length == 1) {
+            showGsdRuler(photos[0]);
+            return;
+        }
+        final File[] fPhotos = photos;
+        String[] names = new String[photos.length];
+        for (int i = 0; i < photos.length; i++) names[i] = photos[i].getName();
+        new AlertDialog.Builder(this)
+                .setTitle("Melyik képen mérsz? (a GSD minden képre érvényes)")
+                .setItems(names, (d, which) -> showGsdRuler(fPhotos[which]))
+                .setNegativeButton("Mégse", null)
+                .show();
+    }
+
+    /** A GSD-vonalzó megnyitása egy adott képen; a mért érték session-szintű. */
+    private void showGsdRuler(final File photo) {
+        android.graphics.BitmapFactory.Options bo = new android.graphics.BitmapFactory.Options();
+        bo.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(photo.getAbsolutePath(), bo);
+        final int origW = bo.outWidth > 0 ? bo.outWidth : 5472;
+
+        Bitmap bmp = YoloInferenceEngine.decodeDownsampled(photo, 1280);
+        if (bmp == null) {
+            Toast.makeText(this, "A kép nem olvasható", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // EXIF-kereszt-ellenőrzéshez a session magasság + drón
+        double exifFootprint = 0;
+        double exifAltM = 0;
+        DroneProfile drone = DroneProfiles.getDefault();
+        try {
+            SessionMeta sm = readSessionMeta(photo.getParentFile());
+            exifAltM = sm.sampleAltitudeM;
+            drone = resolveDrone(sm.droneProfileName);
+            exifFootprint = GsdCalibration.exifFootprintAreaM2(exifAltM, drone);
+        } catch (Exception ignored) {}
+        final double fExifFootprint = exifFootprint;
+        final double fExifAlt = exifAltM;
+        final DroneProfile fDrone = drone;
+
+        android.app.Dialog dialog = new android.app.Dialog(this,
+                android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.HORIZONTAL);
+        root.setBackgroundColor(0xFF000000);
+
+        GsdRulerView ruler = new GsdRulerView(this);
+        ruler.setBitmap(bmp);
+        root.addView(ruler, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.MATCH_PARENT, 2f));
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(0xFF12122a);
+        panel.setPadding(24, 24, 24, 24);
+        root.addView(panel, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+
+        TextView title = new TextView(this);
+        title.setText("📏 GSD mérése (futtatás előtt)");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(18);
+        panel.addView(title);
+
+        TextView hint = new TextView(this);
+        hint.setText("Húzd a vonalat egy ismert VÍZSZINTES talaj-távolságra (pl. sortáv), "
+                + "a kép KÖZEPÉN. A mért GSD adja a detektálási méretezést ÉS a footprintet.");
+        hint.setTextColor(0xFFAAAACC);
+        hint.setTextSize(12);
+        panel.addView(hint);
+
+        LinearLayout refRow = new LinearLayout(this);
+        refRow.setOrientation(LinearLayout.HORIZONTAL);
+        refRow.setPadding(0, 16, 0, 0);
+        final EditText etDist = new EditText(this);
+        etDist.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        etDist.setText(lastRefDistanceCm);
+        etDist.setTextColor(0xFFFFFFFF);
+        addLabeled(refRow, "cm/egység", etDist);
+        final EditText etCount = new EditText(this);
+        etCount.setInputType(InputType.TYPE_CLASS_NUMBER);
+        etCount.setText(lastRefUnitCount);
+        etCount.setTextColor(0xFFFFFFFF);
+        addLabeled(refRow, "× egység", etCount);
+        panel.addView(refRow);
+
+        final TextView live = new TextView(this);
+        live.setTextColor(0xFF00FF88);
+        live.setTextSize(13);
+        live.setPadding(0, 16, 0, 16);
+        panel.addView(live);
+
+        Runnable update = () -> {
+            double dist = parseD(etDist, 0) / 100.0;
+            int count = (int) parseD(etCount, 1);
+            double px = ruler.getLinePixelLength();
+            GsdCalibration.Result res = GsdCalibration.compute(dist, count, px,
+                    ruler.getBitmapWidth(), ruler.getImageAspect());
+            double gsdCmPerOrigPx = res.footprintWidthM * 100.0 / origW;
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format(Locale.getDefault(), "Vonal: %.0f px\n", px));
+            sb.append(String.format(Locale.getDefault(), "GSD: %.3f cm/px\n", gsdCmPerOrigPx));
+            sb.append(String.format(Locale.getDefault(), "Footprint: %.2f × %.2f m = %.1f m²\n",
+                    res.footprintWidthM, res.footprintHeightM, res.footprintAreaM2));
+            if (fExifFootprint > 0 && res.footprintWidthM > 0) {
+                double impliedAlt = GsdCalibration.impliedAltitudeM(res.footprintWidthM, fDrone);
+                double pct = (res.footprintAreaM2 / fExifFootprint - 1.0) * 100.0;
+                sb.append(String.format(Locale.getDefault(),
+                        "EXIF: %.1f m → mérés: ~%.1f m (%+.0f%% terület)",
+                        fExifAlt, impliedAlt, pct));
+            }
+            if (!ruler.isCentered()) sb.append("\n⚠ Mérj a kép közepén");
+            live.setText(sb.toString());
+        };
+        ruler.setOnChangeListener(update::run);
+        android.text.TextWatcher tw = new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { update.run(); }
+            @Override public void afterTextChanged(android.text.Editable s) {}
+        };
+        etDist.addTextChangedListener(tw);
+        etCount.addTextChangedListener(tw);
+        ruler.post(update);
+
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnApply = new Button(this);
+        btnApply.setText("GSD beállítása");
+        btnApply.setBackgroundColor(0xFFFF6600);
+        btnApply.setTextColor(0xFFFFFFFF);
+        Button btnCancel2 = new Button(this);
+        btnCancel2.setText("Mégse");
+        btnCancel2.setBackgroundColor(0xFF663333);
+        btnCancel2.setTextColor(0xFFFFFFFF);
+        btnRow.addView(btnApply);
+        btnRow.addView(btnCancel2);
+        panel.addView(btnRow);
+
+        btnApply.setOnClickListener(v -> {
+            double dist = parseD(etDist, 0) / 100.0;
+            int count = (int) parseD(etCount, 1);
+            double px = ruler.getLinePixelLength();
+            GsdCalibration.Result res = GsdCalibration.compute(dist, count, px,
+                    ruler.getBitmapWidth(), ruler.getImageAspect());
+            if (res.footprintAreaM2 <= 0) {
+                Toast.makeText(this, "Érvénytelen mérés", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            lastRefDistanceCm = etDist.getText().toString().trim();
+            lastRefUnitCount = etCount.getText().toString().trim();
+            double gsdCmPerOrigPx = res.footprintWidthM * 100.0 / origW;
+            measuredGsdByFile.put(photo.getName(), gsdCmPerOrigPx);  // per-kép tárolás
+            updateGsdStatus();
+            dialog.dismiss();
+        });
+        btnCancel2.setOnClickListener(v -> dialog.dismiss());
+
+        dialog.setContentView(root);
+        dialog.setOnDismissListener(d -> bmp.recycle());
+        dialog.show();
     }
 
     // ── GSD kalibrációs dialog (M09_L1 §10.7) ─────────────────────────────
@@ -743,11 +1158,12 @@ public class SamplingResultsActivity extends AppCompatActivity {
                     ? p.localFile
                     : String.format(Locale.US, "point_%03d.jpg", p.index));
             final PointResult point = p;
+            // Bounding boxos előnézet (a GSD-mérés a futtatás ELŐTT történik,
+            // M09_L1 §11 — az utólagos per-pont skálakalibráció megszűnt).
             addTableRow(String.valueOf(p.index + 1), gps, String.valueOf(p.count),
                     String.format(Locale.getDefault(), "%,.0f%s", p.densityPerHa, warn), false,
                     photo.exists()
-                        ? v -> PhotoPreview.show(this, photo, point.detections,
-                            () -> openCalibrationDialog(point, photo))
+                        ? v -> PhotoPreview.show(this, photo, point.detections)
                         : null);
         }
     }

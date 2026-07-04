@@ -438,3 +438,109 @@ kevésbé homogén felszínű táblánál.
 | M04 DJI (`CameraConfigurator.startIntervalShooting`) | **A valós korlát forrása** — a 2 mp-es `Math.max()` floor itt van, ez ellen kell a becslésnek védekeznie |
 | M01 Misszió Tervező | **UI fogyasztó** — a jobb alsó sarokban megjelenő "becsült képszám" innen származik; a 8.3 szerinti súlyossági figyelmeztetés is itt jelenne meg |
 | Dronterapia ODM/ortomozaik feldolgozás | **Downstream érintett** — a valós (nem a beállított) átfedés határozza meg, sikerül-e a rekonstrukció |
+
+---
+
+## 9. Mintapontszám-hiány + átfedés + útvonal — terepi teszt lelet — ✅ Javítás implementálva (2026-07-04), eszközön még nem tesztelve
+
+**Terepi megfigyelés (2026-07-04, éles teszt):** a beállított mintapontszámnál
+**kevesebb pont** generálódott — 5 kérésre 5 lett, de **10 kérésre csak 8**.
+
+### 9.1 Root cause — a stratifikált rács nem pótolja a kieső pontokat
+
+A `SamplingPointGenerator` "stratified" módja `ceil(√n) × ceil(√n)` rácsot tesz
+a polygon **befoglaló téglalapjára**, cellánként egy jitterelt pontot, majd a
+polygonon kívül esőket eldobja — **de nem tölti fel** a hiányt:
+
+```
+n = 10 → side = ceil(√10) = 4 → 4×4 = 16 cellajelölt
+  ha a tábla szabálytalan/keskeny, a befoglaló téglalap sokkal nagyobb a
+  polygonnál → a 16 cellaközépből jitter után csak ~8 esik a táblán belülre
+  → a ciklus 8 ponttal ér véget (nincs backfill)
+n = 5  → side = 3 → 9 cellajelölt → könnyen bent van 5 → megvan mind
+```
+
+### 9.2 Javítás — backfill + átfedés-mentesség + útvonal-rendezés
+
+Három, egymásra épülő lépés:
+
+1. **Backfill a kért pontszámig:** a rács-pass után, ha kevesebb a pont, mint
+   `nPoints`, **elutasításos mintavétellel** (mint a "random" mód) töltsük fel
+   a polygonon belül, amíg el nem éri az `nPoints`-t (véges próbálkozás-korláttal
+   a végtelen ciklus ellen).
+
+2. **Minimális pont-távolság (átfedés-mentesség):** a felhasználói igény, hogy
+   **két mintapont ne essen egymásra / ne fedjenek át a mintaterületek.** Egy
+   új pont (rács vagy backfill) csak akkor kerüljön be, ha minden meglévőtől
+   legalább egy **küszöbtávolságra** van. A küszöb a **footprint átmérőjéből**
+   származik (a mintavételi magasság + drónprofil GSD-jéből számolt kép-lefedettség),
+   hogy a fotózott területek ne fedjenek át — vagy egy egyszerű, felhasználó
+   által állítható minimum (m). Ha a terület túl kicsi a kért ponthoz a
+   min-távolság mellett, a rendszer figyelmeztet és annyit ad, amennyi elfér.
+
+3. **Bejárási útvonal rendezése:** a mostani "sarokból sarokba, négyzeteken
+   belül lépkedő" viselkedés a rács sorrendjéből adódik — a **backfill pontok
+   ezt megtörik** (véletlen sorrendben kerülnek a lista végére). Ezért az összes
+   pont (rács + backfill) együttes összeállítása után **rendezzük bejárási
+   sorrendbe**: egyszerű **legközelebbi-szomszéd** heurisztikával a startponttól
+   (vagy boustrophedon/kígyózó rendezéssel). Nem kell teljes TSP — a
+   legközelebbi-szomszéd olcsó és elég jó, hogy a drón ne ugráljon összevissza.
+
+**Fontos sorrend:** a min-távolság ellenőrzés a generálás közben (backfill
+elfogadásnál) fut; az útvonal-rendezés a végén, a teljes ponthalmazon. A
+`SamplingMissionGenerator` (§7.3) a rendezett listát kapja, így a waypoint-
+szekvencia (érkezés/mintavétel/emelkedés) már optimalizált sorrendben épül.
+
+### 9.3 Kapcsolódó modulok
+
+| Modul | Kapcsolat típusa |
+|-------|-----------------|
+| `SamplingPointGenerator` | **A javítás helye** — backfill, min-távolság, útvonal-rendezés |
+| M02 `GsdCalculator` | **Min-távolság forrás** — a footprint átmérő a magasság+drónprofil GSD-jéből |
+| `SamplingMissionGenerator` (§7.3) | **Fogyasztó** — a rendezett pontlistából építi a waypoint-szekvenciát |
+| M01 Misszió Tervező | **UI** — a beállított pontszám és a ténylegesen generált szám közti eltérésnél figyelmeztet, ha a terület/min-távolság korlátoz |
+
+---
+
+## 10. Nagy felbontású repülés fotószáma (~3×) — terepi teszt lelet — ✅ Mód tisztázva, fő javítás implementálva (2026-07-04)
+
+**Terepi megfigyelés (2026-07-04, éles teszt):** a nagy felbontású (teljes
+lefedettségű) repülésnél a rendszer által **kalkulált képszámhoz képest ~3×
+annyi** kép keletkezett (mind JPEG, nincs RAW).
+
+**Mód tisztázva (2026-07-04):** a felhasználó az **alacsony repülés miatt az
+M10 sűrű rács módot** használta — a drón **minden waypointon megáll és fotóz**
+(app-vezérelt trigger, `triggerDenseGridPhoto()`, nem intervallum). Ezért a
+túlfotózás **fő oka az M04 §19 dupla-trigger** (a nem-deduplikált
+`onWaypointReached` waypointonként ~2× exponált a hover alatt). Az M04 §19
+**dedup-javítás implementálva** → ez felezi a fotószámot; a maradék eltérés (ha
+marad) a becslés pontosítását igényelheti, ezt egy következő repülés
+fájlszáma vs. becslés dönti el.
+
+### 10.1 A két lehetséges mód és az okok
+
+A többlet oka a használt módtól függ (ezt még tisztázni kell — ld. 10.3):
+
+| Ha a mód… | akkor a többlet oka |
+|-----------|---------------------|
+| **M10 sűrű rács** (app-vezérelt, waypointonként trigger) | a fő ok az **M04 §19 dupla-trigger** (a nem-deduplikált `onWaypointReached` → waypointonként ~2× exponálás); az M04 §19 dedup-javítás ezt felezi. A "nem állítható hover" ide is illik, ha a sűrű rács nem hover-alapú |
+| **Intervallum-grid** (CURVED, folyamatos repülés, időzítő) | az **intervallum-időzítő** a fordulókban, gyorsulás/lassítás közben és az átmeneti szakaszokon is folyamatosan sütöget, míg a becslés (§8) jellemzően csak a hasznos survey-vonalakra számol; ha a drón lassabban megy a tervezettnél (szél, kanyar), az időzítő méterenként sűrűbben süt el → többlet. A "nem állítható hover" pontosan erre illik (CURVED nem áll meg) |
+
+### 10.2 Miért "több", nem "kevesebb"
+
+Intervallum módban az időzítő **vakon** süt el (nincs waypoint-visszaigazolás,
+ezért nem is tudjuk pontosan, hol készült a kép) — ezért lesz **túl sok**, nem
+kevés. Waypoint-pontos, garantáltan stabil fotózáshoz az **M10 sűrű rács** való
+(app-vezérelt trigger, §M10) — ott viszont az M04 §19 dedup a feltétele a
+pontos darabszámnak.
+
+### 10.3 Teendő
+
+1. **Először tisztázni a módot:** a felhasználó melyik módot használta (a
+   "nem állítható hover" intervallum-gridre utal). Egy következő repülés
+   flight logja / a kártya fájlszáma vs. a becslés dönti el.
+2. **Ha intervallum-grid:** a §8 fotószám-becslést pontosítani az átmeneti
+   szakaszokra és a tényleges (nem beállított) tempóra; VAGY ahol pontos
+   képszám/pozíció kell, az M10 waypoint-vezérelt módot ajánlani.
+3. **Ha M10 sűrű rács:** az M04 §19 dedup-javítás a fő megoldás; utána
+   újramérni.

@@ -14,8 +14,8 @@
 | Fájl | Szerepkör |
 |------|-----------|
 | `ai/YoloModelManager.java` | `/sdcard/DroneFly/models/` szkennelése, `.onnx` + sidecar `.json` párosítás, `ModelMetadata` betöltés/validáció |
-| `ai/ModelMetadata.java` | POJO: label, cropType, inputSize, confThreshold, iouThreshold, targetClassIndex, classNames |
-| `ai/YoloInferenceEngine.java` | ONNX Runtime (`OrtSession`) wrapper — preprocess (resize+normalize, NCHW), `run()`, raw output → `Detection` lista, NMS |
+| `ai/ModelMetadata.java` | POJO: label, cropType, inputSize, confThreshold, iouThreshold, targetClassIndex, classNames; **+ `trainGsdCmPx` (M09_L1 §11.4, TERVEZETT)** |
+| `ai/YoloInferenceEngine.java` | ONNX Runtime (`OrtSession`) wrapper — preprocess (resize+normalize, NCHW), `run()`, raw output → `Detection` lista, NMS. **TERVEZETT átdolgozás: GSD-tudatos resize + sliding window csempézés + cross-tile NMS (ld. lentebb, M09_L1 §11)** |
 | `ai/Detection.java` | POJO: classIndex, confidence, bbox (cx, cy, w, h — normalizált 0–1) |
 | `ai/SamplingResultCalculator.java` | `PointResult` lista → `SamplingCountResult` (M09_L1 §5 képletek) |
 | `ai/SamplingCountResult.java` / `PointResult.java` | Eredmény POJO-k, `results.json` (de)szerializáció |
@@ -289,6 +289,69 @@ DONE (frissített összefoglaló kártya + results.json felülírva)
 
 A `RECOMPUTING` a main thread-en is lefuthat (csak aritmetika, N ≤ ~60 pont) —
 nincs szükség háttérszálra, szemben a YOLO `RUNNING` állapottal.
+
+---
+
+## GSD-tudatos futtatás — `YoloInferenceEngine` átdolgozás (TERVEZETT, M09_L1 §11)
+
+A jelenlegi `detectSingle()` az egész képet a `meta.inputSize`-ra skálázza
+(naiv). Az átdolgozás a **betanítási GSD-re** méretez, majd **sliding
+window**-val csempéz.
+
+```java
+public class YoloInferenceEngine {
+
+    /**
+     * @param actualGsdCmPx a mintakép mért GSD-je (cm/px, eredeti-felbontás px)
+     *                      — a futtatás ELŐTTI GSD-mérésből (GsdCalibration →
+     *                      footprintWidth_cm / origImageWidthPx)
+     * @param meta          ModelMetadata (inputSize, trainGsdCmPx, conf, iou)
+     */
+    private List<Detection> detectSingleTiled(OrtSession session, OrtEnvironment env,
+            File imgFile, ModelMetadata meta, double actualGsdCmPx) {
+        double trainGsd = meta.trainGsdCmPx > 0 ? meta.trainGsdCmPx : 1.0; // fallback (§11.4)
+        double f = actualGsdCmPx / trainGsd;         // resize-faktor a betanítási GSD-re
+
+        // 1. Dekódolás közel a cél-mérethez (inSampleSize), majd pontos resize f-re
+        //    → a resized kép trainGsd cm/px-en van
+        Bitmap resized = decodeAndResize(imgFile, f);   // W×f, H×f
+        int inp = meta.inputSize;
+        int stride = (int) (inp * 0.8);                 // 20% átfedés
+
+        List<Detection> all = new ArrayList<>();
+        for (int ty = 0; ty < resized.getHeight(); ty += stride) {
+            for (int tx = 0; tx < resized.getWidth(); tx += stride) {
+                Bitmap tile = cropTile(resized, tx, ty, inp);   // inp×inp (szél-padding)
+                float[][][] out = runTile(session, env, tile, meta);
+                List<Detection> tileDet = postprocess(out, meta, ...); // csempe-lokális
+                // Visszavetítés a resized kép koordinátáira (tx,ty offset), majd
+                // normalizálás a resized kép méretére (0–1)
+                offsetToGlobal(tileDet, tx, ty, resized.getWidth(), resized.getHeight());
+                all.addAll(tileDet);
+                tile.recycle();
+            }
+        }
+        resized.recycle();
+        // 3. Cross-tile NMS: a csempehatárokon átnyúló duplikátumok kiszűrése
+        return nonMaxSuppression(all, meta.iouThreshold);   // globális
+    }
+}
+```
+
+**Kulcs-pontok:**
+- **`f = actualGsd / trainGsd`** — a mintakép a betanítási GSD-re méretezve
+  (M09_L1 §11.2). Ha `f < 1` (finomabb kép), kicsinyítés; `f > 1`, nagyítás.
+- **A detekciók normalizálása a resized kép egészére** történik (nem
+  csempénként), hogy a `SamplingResultCalculator` és a bounding boxos előnézet
+  (`PhotoPreview`) változatlan (0–1, teljes kép) koordinátákkal dolgozhasson.
+- **Cross-tile NMS** a globális detekciólistán (nem csempénként) — enélkül egy
+  csempehatáron ülő tövet kétszer számolnánk.
+- **`ModelMetadata.trainGsdCmPx`** új mező; hiánynál 1,0 fallback + UI-jelzés.
+
+**Állapotgép-hatás:** a `VALIDATING → RUNNING` átmenet elé kerül egy
+**`GSD_REQUIRED`** kapu: a `[Számlálás indítása]` csak akkor enged futtatni, ha
+van érvényes session-GSD (mért vagy EXIF-fallback). A GSD-mérés a
+`GsdRulerView`-val, a futtatás előtt (M09_L1 §11.3).
 
 ---
 
